@@ -2,6 +2,8 @@
 
 # HermitUI
 
+![HermitUI Screenshot](screenshot.png)
+
 HermitUI is a lightweight, modern, and highly responsive single-page web interface for interacting with local AI models. It is built entirely in a single `hermit-ui.html` file using vanilla HTML, CSS, and JavaScript. 
 
 No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
