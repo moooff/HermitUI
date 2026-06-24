@@ -1,9 +1,5 @@
 <img width="1000"  alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
 
-# HermitUI
-
-![HermitUI Screenshot](screenshot.png)
-
 HermitUI is a lightweight, modern, and highly responsive single-page web interface for interacting with local AI models. It is built entirely in a single `hermit-ui.html` file using vanilla HTML, CSS, and JavaScript. 
 
 No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
@@ -18,6 +14,10 @@ No build steps, no backend, and no installation required—just open the file in
 - **Markdown & Code Support:** Renders rich Markdown and provides 1-click "Copy" buttons for code blocks.
 - **Chat Export:** Easily download your entire conversation history as a formatted Markdown file.
 - **Customizable Settings:** Quickly adjust the API URL, Model Name, and System Prompt via the on-page settings overlay.
+
+## Screenshot
+
+![HermitUI Screenshot](screenshot.png)
 
 ## 🚀 Quick Start
 
