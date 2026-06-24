@@ -1,4 +1,5 @@
-# HermitUI 🦀
+<img width="2816" height="1536" alt="hermitui-logo" src="https://github.com/user-attachments/assets/729ae07d-0caa-4be2-bb32-431a5f344afd" />
+# HermitUI
 
 HermitUI is a lightweight, modern, and highly responsive single-page web interface for interacting with local AI models. It is built entirely in a single `hermit-ui.html` file using vanilla HTML, CSS, and JavaScript. 
 
