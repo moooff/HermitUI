@@ -1,4 +1,4 @@
-<img width="2816" height="1536" alt="hermitui-logo" src="https://github.com/user-attachments/assets/729ae07d-0caa-4be2-bb32-431a5f344afd" />
+<img width="1000"  alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
 
 # HermitUI
 
