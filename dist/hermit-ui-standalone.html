@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HermitUI - Local AI Chat</title>
     <meta name="description" content="A modern, local AI chat interface with streaming, syntax highlighting, and thinking model support.">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+    <link rel="icon" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0ODAgNDgwIj4KICA8cmVjdCB4PSI1Ljg2OCIgeT0iNi40OTMiIHdpZHRoPSI0NjkuMzg1IiBoZWlnaHQ9IjQ2Ni40NDMiIHJ4PSIxNiIgcnk9IjE2IiBzdHlsZT0ic3Ryb2tlOiByZ2IoMCwgMCwgMCk7IGZpbGw6IHJnYigxMSwgMTEsIDExKTsiLz4KICA8cGF0aCBmaWxsPSIjNzBCREI5IiBvcGFjaXR5PSIxLjAwMDAwMCIgc3Ryb2tlPSJub25lIiBkPSJNIDExNC4yODIgMzMzLjY3OSBDIDExOS44NDUgMzQxLjYzMyAxMjQuNzczIDM1MC4xMzQgMTMxLjA4NCAzNTcuNDQzIEMgMTUzLjc4MiAzODMuNzI5IDE4Mi4zOTMgNDAwLjAyNCAyMTYuNjcgNDA2LjE0MSBDIDIyMC4wMjUgNDA2Ljc0IDIyMy40MzIgNDA3LjA0OSAyMjcuMTc4IDQwNy41NCBDIDIyNy4xNzggNDEyLjUwMiAyMjcuMTc4IDQxNy4wNDYgMjI3LjE3OCA0MjIuNDc2IEMgMjIxLjg0NCA0MjEuODE5IDIxNi44NDggNDIxLjQ1MyAyMTEuOTQ4IDQyMC41NjEgQyAxNzMuMTQ5IDQxMy41MDEgMTQxLjgyMyAzOTMuODEyIDExNi42NzYgMzYzLjgyIEMgOTYuMDY5IDMzOS4yNDMgODMuOTIyIDMxMC44MTQgNzguNzUgMjc5LjMyMyBDIDc3LjcwMSAyNzIuOTM0IDc3LjMzNyAyNjYuNDE5IDc2Ljk0MyAyNTkuOTQ0IEMgNzYuNzggMjU3LjI2NiA3NS45MzUgMjU1LjUyMSA3My42OSAyNTMuOTI1IEMgNTQuMTc4IDI0MC4wNjQgNDUuNTkgMjIwLjQ4NSA0NC4zODUgMTk3LjE0NyBDIDQ0LjI1OSAxOTQuNzE4IDQ0LjMyNyAxOTIuMjY4IDQ0LjQ4IDE4OS44MzkgQyA0NC42MjEgMTg3LjYxNCA0My44MTUgMTg2LjA3NyA0Mi4xMyAxODQuNTg0IEMgMzEuMTM1IDE3NC44NDYgMjYuMTIgMTYyLjM0NSAyNS45NDEgMTQ3Ljg3MiBDIDI1Ljg5MiAxNDMuOTczIDI0Ljc1MyAxNDEuMTMxIDIyLjE4OCAxMzguMTI2IEMgMTUuMTY1IDEyOS44OTkgMTAuNzM0IDEyMC40NjggMTEuMDE4IDEwOS4yODQgQyAxMS4yNDcgMTAwLjMwMyAxNS41MzkgOTMuODI2IDIzLjI2MiA4OS42NjUgQyAzMS4xMTMgODUuNDM1IDM5LjU4OSA4NC45ODggNDguMTQyIDg2LjgyMiBDIDUyLjg0MSA4Ny44MjkgNTYuNzY4IDg3LjcxMSA2MS4yMzEgODQuOTgxIEMgNzQuMDE3IDc3LjE2MSA4Ny43MTkgNzQuOTc0IDEwMS45MzUgODEuMjE0IEMgMTA0LjU1OSA4Mi4zNjUgMTA2LjUzNCA4MS43OTYgMTA4LjcyNSA4MC40MTggQyAxMjAuNzc1IDcyLjg0MSAxMzMuNzI2IDY3LjkwNiAxNDguMDg1IDY3LjExMiBDIDE1OS42MyA2Ni40NzMgMTcwLjg1NyA2Ny45MTIgMTgxLjE3MiA3My4yOTQgQyAxODQuNTQ0IDc1LjA1NCAxODcuMDI0IDc0Ljc3MyAxOTAuMjExIDczLjM4MyBDIDIxNC4xMyA2Mi45NDkgMjM5LjIwMyA1Ny4xODUgMjY1LjI2OCA1Ny4xOTMgQyAzMDkuMzA2IDU3LjIwOCAzNDguOTE1IDcxLjA2NCAzODQuNTEgOTYuOTExIEMgNDE2LjQzMiAxMjAuMDg5IDQzOS40NDkgMTUwLjA5MyA0NTQuMzAxIDE4Ni41MDYgQyA0NTUuMTExIDE4OC40OTQgNDU1LjYzOCAxOTAuNTk3IDQ1Ni42MzMgMTkzLjY5NiBDIDQ1MS41NjQgMTkzLjcxOCA0NDcuMzk1IDE5My43NzIgNDQzLjIyOCAxOTMuNzQxIEMgNDQwLjYxMiAxOTMuNzIxIDQ0MC4xNTUgMTkxLjQ3MyA0MzkuMjc1IDE4OS42OTEgQyA0MzUuNzczIDE4Mi42MDEgNDMyLjYwNiAxNzUuMzIyIDQyOC43MTEgMTY4LjQ1NSBDIDQxMS4zNjYgMTM3Ljg3MyAzODcuMDI0IDExNC4yNiAzNTYuNTk0IDk2Ljc5NiBDIDMzNS41NTUgODQuNzIxIDMxMy4wMDUgNzcuMDE1IDI4OC45OTYgNzMuODEyIEMgMjU4LjMzNyA2OS43MjEgMjI4LjcwMSA3NC4wNjggMjAwLjEwNCA4NS42NDUgQyAxNzUuODAxIDk1LjQ4MyAxNTQuODM2IDExMC4yNjMgMTM3LjIyOSAxMjkuNjA2IEMgMTE0LjM5NyAxNTQuNjg5IDk5LjY1NiAxODMuOTYxIDk0LjIzOCAyMTcuNTIyIEMgOTEuMTQxIDIzNi43MDggOTEuMzg4IDI1NS45OTMgOTYuODA5IDI3NC44NjggQyAxMDMuMzc0IDI5Ny43MjQgMTE2LjcwMyAzMTYuMDA1IDEzNS41MzQgMzMwLjI5MyBDIDE1NC4wOTkgMzQ0LjM3OSAxNzUuMTY1IDM1MS44NiAxOTguNDU2IDM1MS4zMzUgQyAyMzEuMzY5IDM1MC41OTQgMjU2Ljc1NCAzMzYuNDI4IDI3MS41NTcgMzA2LjMwNyBDIDI4MS45NDcgMjg1LjE2NSAyODIuNTM2IDI2My4yMzYgMjczLjA0NCAyNDEuNDkyIEMgMjYxLjY1NSAyMTUuNDAxIDIzMy4wODYgMjAwLjUyNCAyMDYuNjQ1IDIwNy43NTMgQyAxODguMDcgMjEyLjgzMSAxNzUuMTYgMjI0LjQ4OSAxNzAuMzU4IDI0My41NjQgQyAxNjYuNzE1IDI1OC4wMzQgMTY4LjgwNSAyNzEuODE1IDE3OC4yNzggMjgzLjgzOSBDIDE5MC4zMTQgMjk5LjExOCAyMTEuOTEyIDMwMi4yNDMgMjI2LjY0OCAyOTEuMDAzIEMgMjM1LjA5NiAyODQuNTYgMjM5LjUzOCAyNzEuNjk3IDIzNi42ODQgMjYxLjU5IEMgMjM2LjEzOSAyNTkuNjYgMjM1LjM0MyAyNTcuNzIxIDIzNC4yNyAyNTYuMDM2IEMgMjMxLjIyOCAyNTEuMjYgMjI2LjkzMiAyNDguNTk2IDIyMS4wNjkgMjQ4Ljc5NiBDIDIxNS4yNTggMjQ4Ljk5NCAyMTEuODQ0IDI1Mi41MTEgMjA5LjMyMiAyNTcuMTk4IEMgMjA4LjM3MiAyNTguOTY0IDIwNy43NzYgMjYwLjkyMSAyMDYuOTIxIDI2My4wMzEgQyAyMDIuMzI3IDI2My4wMzEgMTk3Ljc5MyAyNjMuMDMxIDE5My4yOTUgMjYzLjAzMSBDIDE5Mi40MTEgMjUxLjgyNCAyMDAuNDgyIDI0MC4yMjEgMjExLjMxOSAyMzUuNjA2IEMgMjI2LjI5OSAyMjkuMjI1IDI0NS4wOTYgMjM4LjA1NSAyNTAuOTQyIDI1NS44OTIgQyAyNTQuODc2IDI2Ny44OTQgMjUzLjE4NSAyNzkuNTAzIDI0Ni45NTIgMjkwLjQ4OCBDIDIzMi43MzMgMzE1LjU1IDIwMC40MDMgMzE3LjQ2NSAxODEuMjYxIDMwNS44NjUgQyAxNjUuNTE1IDI5Ni4zMjIgMTU2LjM5OCAyODIuMyAxNTMuODI5IDI2NC4xMSBDIDE0OS44NTcgMjM1Ljk4NCAxNTguNjI5IDIxMS40ODcgMTc2LjMxMiAxOTAuMDkgQyAxOTEuNzk4IDE3MS4zNTQgMjExLjcxNyAxNTkuMTYxIDIzNS42NjggMTU0LjI3MSBDIDI2NS40ODEgMTQ4LjE4NSAyOTIuOTY0IDE1NC4xNzIgMzE3Ljc0NSAxNzEuNzE2IEMgMzI0LjMzMiAxNzYuMzggMzMwLjE1NCAxODIuMTM3IDMzNi4yMTUgMTg3LjUxOSBDIDMzNy44MDMgMTg4LjkyOSAzMzguOTcgMTkwLjgxMyAzNDEuMTAyIDE5My40MjUgQyAzMzQuMTEzIDE5NC4yODcgMzI4LjMwNCAxOTQuMDMgMzIyLjU0MiAxOTMuNjk1IEMgMzIxLjE3MSAxOTMuNjE2IDMxOS43OTMgMTkyLjEzIDMxOC41ODEgMTkxLjA5OSBDIDI5OC4zNCAxNzMuODc4IDI3NS4xNzYgMTY0LjkzNyAyNDguNDM2IDE2Ny40NTQgQyAyMjYuNjg5IDE2OS41IDIwNy44MzMgMTc4LjI2NCAxOTIuMTA2IDE5NC43MDEgQyAxOTEuNDg4IDE5NS42NjIgMTkxLjMxNiAxOTYuMDk2IDE5MS4xNDQgMTk2LjUyOSBDIDE5MS44MTMgMTk2LjMzOCAxOTIuNDgyIDE5Ni4xNDcgMTkzLjE1MSAxOTUuOTU2IEMgMTk4LjQzNiAxOTQuNTggMjAzLjY0NyAxOTIuNjY2IDIwOS4wMiAxOTEuOTE2IEMgMjM4LjAxMSAxODcuODY4IDI2MS41NDggMTk4LjAyNCAyNzguNjEyIDIyMS4zNjQgQyAyOTguNDQ4IDI0OC40OTUgMjk5Ljc4IDI3OC4zOTEgMjg2LjgxOSAzMDguNTgzIEMgMjcyLjQyNyAzNDIuMTA1IDI0Ni4xMjQgMzYxLjYwNiAyMTAuMDMxIDM2NS42MTEgQyAxNzUuMjI0IDM2OS40NzIgMTQ0LjIzMyAzNTkuMTM0IDExOC4zOCAzMzQuODczIEMgMTE3LjY0NCAzMzQuMTgyIDExNi44MjYgMzMzLjU3OSAxMTUuNDE5IDMzMi41NTggQyAxMTQuNDg3IDMzMi4yMTQgMTE0LjE4MiAzMzIuMjQ4IDExMy44NzcgMzMyLjI4MSBDIDExNC4wMTEgMzMyLjc0NyAxMTQuMTQ3IDMzMy4yMTMgMTE0LjI4MiAzMzMuNjc5IE0gMTQ1LjY4NSAxMDEuNTIzIEMgMTUzLjAzNCA5Ni4wMDUgMTYwLjM4MiA5MC40ODYgMTY3LjgzNyA4NC44ODcgQyAxNjAuOTMzIDgxLjkyOSAxNDkuNzQzIDgxLjA2NiAxNDEuMzk4IDgyLjg1MSBDIDEyMi4xNzUgODYuOTYxIDEwNi43NzIgOTcuMjY1IDk0LjMwNiAxMTIuMTkzIEMgODMuNTQzIDEyNS4wODEgNzUuNTU3IDEzOS42NzMgNjkuMzQxIDE1NS4xNiBDIDYzLjQ0IDE2OS44NjEgNTguMzQxIDE4NC44MzcgNTkuNjQ4IDIwMS4xNTQgQyA2MC42MzcgMjEzLjUwNiA2NC45OTcgMjI0LjM2NCA3My4xNyAyMzMuNjY4IEMgNzQuMDIgMjM0LjYzNiA3NS4xNzQgMjM1LjMzNyA3Ni41NzEgMjM2LjQ3NCBDIDc3LjgzMiAyMjEuNjQ1IDgwLjMzMyAyMDcuNzU1IDg0LjMxOCAxOTQuMTI1IEMgOTUuMTE2IDE1Ny4yMDYgMTE1LjY3MiAxMjYuNzQ3IDE0NS42ODUgMTAxLjUyMyBNIDc2LjI2NiA5NC4wNjUgQyA3Mi4xNTYgOTYuMjA5IDY3LjQ5OSA5Ny43MDIgNjQuMDMzIDEwMC42MTIgQyA1MC4wMTYgMTEyLjM4MyA0Mi40MTQgMTI3Ljg2MSA0MC42OTggMTQ1LjkwOCBDIDM5Ljg4MyAxNTQuNDg0IDQyLjE1MSAxNjIuNzQ5IDQ4Ljg1NyAxNzAuMjU1IEMgNTcuMDUxIDE0MS4zMSA3MC42OTIgMTE2LjA5MSA5MC42MiA5NC4yMTIgQyA4NS43NTIgOTEuMTc4IDgxLjQ1NCA5Mi45MTUgNzYuMjY2IDk0LjA2NSBNIDI5LjQ0IDEyMy40MzggQyAzMS42NzggMTI0Ljc0MiAzMS41NyAxMjIuNTQ3IDMyLjExMiAxMjEuNTUzIEMgMzUuMjEyIDExNS44NzMgMzguMjU4IDExMC4xNjMgNDEuMjc4IDEwNC40MzkgQyA0MS43OTUgMTAzLjQ1OCA0Mi4wOTQgMTAyLjM2MyA0Mi44NzQgMTAwLjMyOSBDIDM4LjY1NiAxMDAuODIgMzUuMjUyIDEwMC45NDcgMzEuOTc4IDEwMS42NjUgQyAyNy42NTUgMTAyLjYxNCAyNS45OTEgMTA0Ljk1NSAyNS42NjQgMTA5LjM3MyBDIDI1LjMwNyAxMTQuMiAyNi43NDEgMTE4LjU2MiAyOS40NCAxMjMuNDM4IE0gMTEzLjIwMiAzMzAuMzA4IEMgMTEyLjk4OCAzMzAuMjk1IDExMi43NzQgMzMwLjI4MyAxMTIuNTU5IDMzMC4yNzEgQyAxMTIuNjU5IDMzMC4zOTYgMTEyLjc2IDMzMC41MjIgMTEzLjIwMiAzMzAuMzA4IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyIvPgogIDxwYXRoIGZpbGw9IiNGMThFNDAiIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gNDE1Ljc5OSAyODMuMTYxIEMgNDI2LjkzNCAyODMuMTYxIDQzNy40NiAyODMuMTYxIDQ0OC44MjcgMjgzLjE2MSBDIDQ0OC44NTQgMjcwLjc0NSA0NDguODkgMjU4Ljg1MSA0NDguOTAzIDI0Ni45NTggQyA0NDguOTE2IDIzNS4wMiA0NDguOTA1IDIyMy4wODEgNDQ4LjkwNSAyMTAuNzE5IEMgNDU1Ljg4NCAyMTAuNzE5IDQ2Mi4yMzggMjEwLjcxOSA0NjguOTk1IDIxMC43MTkgQyA0NjguOTk1IDI2Ni4zNjggNDY4Ljk5NSAzMjEuNzIxIDQ2OC45OTUgMzc3LjUyOSBDIDQ2Mi41MzMgMzc3LjUyOSA0NTYuMTU5IDM3Ny41MjkgNDQ4Ljk0NiAzNzcuNTI5IEMgNDQ4Ljk0NiAzNTIuNzY0IDQ0OC45NDYgMzI4LjEzNSA0NDguOTQ2IDMwMy4xOCBDIDQxOC4zNiAzMDMuMTggMzg4LjYwNiAzMDMuMTggMzU4LjIzNSAzMDMuMTggQyAzNTcuMDU4IDM0Mi4wNTUgMzQyLjY3OCAzNzQuMzM5IDMxMS42NzUgMzk4LjM1IEMgMjkxLjc1OCA0MTMuNzczIDI2OC44OTEgNDIwLjg3MyAyNDMuNjg5IDQyMi44MDcgQyAyNDIuNjQ1IDQxNy4xOSAyNDIuOTMyIDQxMi4wNDIgMjQzLjM2IDQwNi40NzEgQyAyNDcuNTczIDQwNS44NSAyNTEuNTkxIDQwNS40NDMgMjU1LjUzIDQwNC42NSBDIDI5Ny42NzQgMzk2LjE2OCAzMjcuMTIyIDM2Ni42MTYgMzM1LjMyNiAzMjQuMjc0IEMgMzM2LjU5MyAzMTcuNzM5IDMzNy4xNjcgMzEwLjk3OCAzMzcuMjE0IDMwNC4zMTUgQyAzMzcuNDE1IDI3NS42NzYgMzM3LjMgMjQ3LjAzNCAzMzcuMzAxIDIxOC4zOTMgQyAzMzcuMzAxIDIxNi4wMDEgMzM3LjMwMSAyMTMuNjA4IDMzNy4zMDEgMjEwLjc1OSBDIDM0NC4zNyAyMTAuNzU5IDM1MC43NDkgMjEwLjc1OSAzNTcuOTUgMjEwLjc1OSBDIDM1OC4zMjggMjM0LjYxOSAzNTcuODkyIDI1OC40NzkgMzU4LjE5MiAyODMuMTYgQyAzNzcuNTQ2IDI4My4xNiAzOTYuMzY4IDI4My4xNiA0MTUuNzk5IDI4My4xNjEgWiIgc3R5bGU9InN0cm9rZS13aWR0aDogMC42MDk7Ii8+CiAgPHBhdGggb3BhY2l0eT0iMS4wMDAwMDAiIHN0cm9rZT0ibm9uZSIgZD0iTSAxNDUuMzUzIDEwMS43OTggQyAxMTUuNjcyIDEyNi43NDcgOTUuMTE2IDE1Ny4yMDYgODQuMzE4IDE5NC4xMjUgQyA4MC4zMzMgMjA3Ljc1NSA3Ny44MzIgMjIxLjY0NSA3Ni41NzEgMjM2LjQ3NCBDIDc1LjE3NCAyMzUuMzM3IDc0LjAyIDIzNC42MzYgNzMuMTcgMjMzLjY2OCBDIDY0Ljk5NyAyMjQuMzY0IDYwLjYzNyAyMTMuNTA2IDU5LjY0OCAyMDEuMTU0IEMgNTguMzQxIDE4NC44MzcgNjMuNDQgMTY5Ljg2MSA2OS4zNDEgMTU1LjE2IEMgNzUuNTU3IDEzOS42NzMgODMuNTQzIDEyNS4wODEgOTQuMzA2IDExMi4xOTMgQyAxMDYuNzcyIDk3LjI2NSAxMjIuMTc1IDg2Ljk2MSAxNDEuMzk4IDgyLjg1MSBDIDE0OS43NDMgODEuMDY2IDE2MC45MzMgODEuOTI5IDE2Ny44MzcgODQuODg3IEMgMTYwLjM4MiA5MC40ODYgMTUzLjAzNCA5Ni4wMDUgMTQ1LjM1MyAxMDEuNzk4IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyBmaWxsOiBub25lOyIvPgogIDxwYXRoIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gNzYuNzE4IDkzLjg5OSBDIDgxLjQ1NCA5Mi45MTUgODUuNzUyIDkxLjE3OCA5MC42MiA5NC4yMTIgQyA3MC42OTIgMTE2LjA5MSA1Ny4wNTEgMTQxLjMxIDQ4Ljg1NyAxNzAuMjU1IEMgNDIuMTUxIDE2Mi43NDkgMzkuODgzIDE1NC40ODQgNDAuNjk4IDE0NS45MDggQyA0Mi40MTQgMTI3Ljg2MSA1MC4wMTYgMTEyLjM4MyA2NC4wMzMgMTAwLjYxMiBDIDY3LjQ5OSA5Ny43MDIgNzIuMTU2IDk2LjIwOSA3Ni43MTggOTMuODk5IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyBmaWxsOiBub25lOyIvPgogIDxwYXRoIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gMjkuMjI4IDEyMy4wNzkgQyAyNi43NDEgMTE4LjU2MiAyNS4zMDcgMTE0LjIgMjUuNjY0IDEwOS4zNzMgQyAyNS45OTEgMTA0Ljk1NSAyNy42NTUgMTAyLjYxNCAzMS45NzggMTAxLjY2NSBDIDM1LjI1MiAxMDAuOTQ3IDM4LjY1NiAxMDAuODIgNDIuODc0IDEwMC4zMjkgQyA0Mi4wOTQgMTAyLjM2MyA0MS43OTUgMTAzLjQ1OCA0MS4yNzggMTA0LjQzOSBDIDM4LjI1OCAxMTAuMTYzIDM1LjIxMiAxMTUuODczIDMyLjExMiAxMjEuNTUzIEMgMzEuNTcgMTIyLjU0NyAzMS42NzggMTI0Ljc0MiAyOS4yMjggMTIzLjA3OSBaIiBzdHlsZT0ic3Ryb2tlLXdpZHRoOiAwLjYwOTsgZmlsbDogbm9uZTsiLz4KICA8cGF0aCBmaWxsPSIjRkZGRUZFIiBvcGFjaXR5PSIxLjAwMDAwMCIgc3Ryb2tlPSJub25lIiBkPSJNIDE5Mi45MjQgMTk1LjY5OCBDIDE5Mi40ODIgMTk2LjE0NyAxOTEuODEzIDE5Ni4zMzggMTkxLjE0NCAxOTYuNTI5IEMgMTkxLjMxNiAxOTYuMDk2IDE5MS40ODggMTk1LjY2MiAxOTEuOTUyIDE5NS4wNzYgQyAxOTIuMzk1IDE5NS4wOTUgMTkyLjU0NyAxOTUuMjY3IDE5Mi45MjQgMTk1LjY5OCBaIiBzdHlsZT0ic3Ryb2tlLXdpZHRoOiAwLjYwOTsiLz4KICA8cGF0aCBmaWxsPSIjRkZGRUZFIiBvcGFjaXR5PSIxLjAwMDAwMCIgc3Ryb2tlPSJub25lIiBkPSJNIDExMy4wMzEgMzMwLjQ3NyBDIDExMi43NiAzMzAuNTIyIDExMi42NTkgMzMwLjM5NiAxMTIuNTU5IDMzMC4yNzEgQyAxMTIuNzc0IDMzMC4yODMgMTEyLjk4OCAzMzAuMjk1IDExMy4wMzEgMzMwLjQ3NyBaIiBzdHlsZT0ic3Ryb2tlLXdpZHRoOiAwLjYwOTsiLz4KICA8cGF0aCBmaWxsPSIjRkZGRUZFIiBvcGFjaXR5PSIxLjAwMDAwMCIgc3Ryb2tlPSJub25lIiBkPSJNIDExNC41MzMgMzMzLjQzMyBDIDExNC4xNDcgMzMzLjIxMyAxMTQuMDExIDMzMi43NDcgMTEzLjg3NyAzMzIuMjgxIEMgMTE0LjE4MiAzMzIuMjQ4IDExNC40ODcgMzMyLjIxNCAxMTUuMDI4IDMzMi40MjcgQyAxMTUuMTAzIDMzMi44NDUgMTE0Ljk0MyAzMzMuMDE2IDExNC41MzMgMzMzLjQzMyBaIiBzdHlsZT0ic3Ryb2tlLXdpZHRoOiAwLjYwOTsiLz4KPC9zdmc+">
     <script>/**
  * marked v12.0.2 - a markdown parser
  * Copyright (c) 2011-2024, Christopher Jeffrey. (MIT Licensed)
@@ -1356,6 +1356,14 @@ return He}()
             gap: 8px;
         }
 
+        .header-center {
+            display: flex;
+            gap: 8px;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
         .header-btn {
             background: rgba(255,255,255,0.8);
             border: 1px solid #d1d5db;
@@ -2006,19 +2014,41 @@ return He}()
             <div class="model-badge" title="Current Model">
                 🤖 <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
             </div>
-            <select class="persona-select" id="personaSelect" title="Switch Persona">
-                <option value="technical">🔧 Technical</option>
-                <option value="writing">✍️ Writing</option>
-                <option value="tutor">🎓 Tutor</option>
-            </select>
+        </div>
+        <div class="header-center">
+            <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
+            <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
         </div>
         <div class="header-actions">
-            <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
-            <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
-            <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
+            <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
+            <button class="header-btn icon-only" id="aboutBtn" title="About" aria-label="About">ℹ️</button>
         </div>
     </header>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal">
+            <h3>ℹ️ About HermitUI</h3>
+            <p style="margin-bottom: 16px; line-height: 1.6; color: var(--text-main);">
+                HermitUI is a lightweight, modern, and highly responsive single-page web interface for interacting with local AI models. Built entirely in a single file, it requires no build steps, backend, or installation.
+            </p>
+            <p style="margin-bottom: 24px; line-height: 1.6; color: var(--text-main);">
+                By design, it prioritizes your privacy—no chat history is saved across sessions.
+            </p>
+            <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+                <a href="https://github.com/moooff/HermitUI" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; background: #24292e; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 500; text-decoration: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.2s;">
+                    <svg height="20" aria-hidden="true" viewBox="0 0 16 16" version="1.1" width="20" data-view-component="true" style="fill: white;">
+                        <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path>
+                    </svg>
+                    GitHub Repository
+                </a>
+            </div>
+            <div class="modal-actions">
+                <button class="primary-btn" id="aboutCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
@@ -2052,13 +2082,20 @@ return He}()
             <button id="jumpBottomBtn" class="jump-bottom-btn">⬇️ Jump to Bottom</button>
            
             <div class="input-container">
-                <form id="chatForm">
-                    <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
-                    <div class="send-btn-container">
-                        <button type="submit" class="primary-btn" id="sendBtn" title="Send message">↑</button>
-                        <button type="button" class="primary-btn" id="stopBtn" title="Stop generation">■</button>
-                    </div>
-                </form>
+                <div style="display: flex; gap: 12px; align-items: flex-end; width: 100%; max-width: 1000px; justify-content: center;">
+                    <select class="persona-select" id="personaSelect" title="Switch Persona" style="margin-bottom: 8px; flex-shrink: 0; background-color: rgba(255,255,255,0.9); box-shadow: 0 4px 15px rgba(0,0,0,0.05); padding: 10px 32px 10px 16px; border-radius: 16px;">
+                        <option value="technical">🔧 Technical</option>
+                        <option value="writing">✍️ Writing</option>
+                        <option value="tutor">🎓 Tutor</option>
+                    </select>
+                    <form id="chatForm" style="flex-grow: 1; max-width: 850px;">
+                        <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
+                        <div class="send-btn-container">
+                            <button type="submit" class="primary-btn" id="sendBtn" title="Send message">↑</button>
+                            <button type="button" class="primary-btn" id="stopBtn" title="Stop generation">■</button>
+                        </div>
+                    </form>
+                </div>
                 
                 <div class="stats-container">
                     <div class="inline-stats" id="inlineStats">
@@ -2083,21 +2120,23 @@ return He}()
         };
 
         // ========== Persona Presets ==========
+        const BASE_PROMPT = `You are part of HermitUI, a local-first, privacy-focused AI chat interface. Because all data is handled locally, you do not need to provide privacy disclaimers or warnings about data sharing. Your output is rendered as Markdown (including tables and code blocks). The current date is ${new Date().toLocaleDateString()}.`;
+
         const PERSONAS = {
             technical: {
                 label: "Technical Assistant",
                 icon: "🔧",
-                prompt: "You are an expert technical assistant. Your answers must be free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. For complex problems, briefly outline your reasoning step-by-step before providing the solution. When code is requested, output the code in proper markdown blocks and only comment on complex or non-obvious parts. If a user request is dangerously ambiguous or lacks necessary context, ask clarifying questions before providing a solution."
+                prompt: BASE_PROMPT + "\n\nYou are an expert technical assistant.\n\nRules:\n- Be direct. No filler, no marketing speak.\n- Use Markdown: bullet points, **bold** for key terms, fenced code blocks with language identifiers (e.g., ```python).\n- Only comment on non-obvious parts of code. Omit boilerplate explanations.\n- For complex problems, state your reasoning in 2-3 concise steps before the solution.\n- If a request is ambiguous or missing critical context, ask one focused clarifying question.\n- Keep answers concise (aim for under 400 words unless depth is requested)."
             },
             writing: {
                 label: "Writing Assistant",
                 icon: "✍️",
-                prompt: "You are an expert writing assistant. Help with drafting, editing, and refining text to maximize clarity, impact, and style. When editing provided text, briefly explain the rationale behind your major changes. Always offer constructive suggestions and alternatives. If the user's desired tone is unclear, provide two distinct options (e.g., formal and conversational). Preserve the original formatting (like Markdown) unless instructed otherwise."
+                prompt: BASE_PROMPT + "\n\nYou are an expert writing assistant.\n\nRules:\n- Maximize clarity, impact, and style.\n- Do not use overused AI vocabulary (e.g., 'delve', 'testament', 'in today's fast-paced world').\n- Output the revised version immediately without introductory filler like 'Here is the revised text:'.\n- After the text, provide a brief \"Changes made:\" summary listing major modifications and their rationale.\n- If the desired tone is unclear, ask before writing.\n- Offer concrete, constructive suggestions.\n- Preserve the user's original formatting unless asked to change it."
             },
             tutor: {
                 label: "Tutor",
                 icon: "🎓",
-                prompt: "You are a patient, encouraging, and expert tutor. Use the Socratic method: avoid giving answers directly, and instead guide the learner to discover the answers themselves. Explain concepts step-by-step using relatable analogies and concrete examples. Keep your responses focused and relatively short to maintain a dialogue. Always end your turn with a specific question or a small exercise to actively check the learner's understanding before moving on."
+                prompt: BASE_PROMPT + "\n\nYou are a patient, encouraging tutor.\n\nRules:\n- Use the Socratic method by default: guide with questions and hints, not direct answers.\n- Adapt your vocabulary and analogies to the user's demonstrated level of understanding.\n- Acknowledge when the user gets something right to provide positive reinforcement.\n- If the user explicitly asks for a direct answer, give it — then follow up with a comprehension check.\n- Keep responses to 2-3 paragraphs. End every turn with a specific question or small exercise."
             }
         };
         let activePersona = "technical";
@@ -2215,6 +2254,18 @@ return He}()
             document.getElementById("stat-prompt-est").style.display = isEst ? "inline" : "none";
             document.getElementById("stat-completion-est").style.display = isEst ? "inline" : "none";
         }
+
+        // ========== About Modal ==========
+        const aboutModal = document.getElementById("aboutModal");
+        document.getElementById("aboutBtn").addEventListener("click", () => {
+            aboutModal.classList.add("active");
+        });
+        document.getElementById("aboutCloseBtn").addEventListener("click", () => {
+            aboutModal.classList.remove("active");
+        });
+        aboutModal.addEventListener("click", (e) => {
+            if (e.target === aboutModal) aboutModal.classList.remove("active");
+        });
 
         // ========== Settings Modal ==========
         const settingsModal = document.getElementById("settingsModal");
@@ -2428,7 +2479,7 @@ return He}()
                 else if (msg.role === "assistant") transcript += `AI: ${msg.content}\n\n`;
             }
 
-            const summaryPrompt = `Please provide a comprehensive summary of the following conversation. Include key topics discussed, main conclusions or answers provided, any action items, and an overall TL;DR.\n\nConversation Transcript:\n${transcript}`;
+            const summaryPrompt = `Provide a concise summary of the key points, decisions, and outcomes in the following conversation.\nFormat the output as a bulleted list.\nDo NOT include introductory phrases like 'Here is a summary'.\n\nConversation:\n${transcript}`;
             
             // UI update
             inputField.disabled = true;
@@ -2525,7 +2576,7 @@ return He}()
                     body: JSON.stringify({
                         model: MODEL_NAME,
                         messages: [
-                            {"role": "system", "content": "You are a helpful summarization assistant."},
+                            {"role": "system", "content": "You are a concise summarization assistant. Your output is rendered as Markdown.\n\nOutput format:\n## TL;DR\nOne-sentence summary.\n\n## Key Topics\n- Bulleted list of main subjects discussed.\n\n## Conclusions & Answers\n- Bulleted list of decisions, solutions, or answers reached.\n\n## Action Items\n- Bulleted list (or \"None\" if no action items were identified).\n\nKeep the entire summary under 300 words."},
                             {"role": "user", "content": summaryPrompt}
                         ],
                         temperature: 0.3,
