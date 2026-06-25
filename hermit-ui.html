@@ -756,11 +756,6 @@
             <div class="model-badge" title="Current Model">
                 🤖 <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
             </div>
-            <select class="persona-select" id="personaSelect" title="Switch Persona">
-                <option value="technical">🔧 Technical</option>
-                <option value="writing">✍️ Writing</option>
-                <option value="tutor">🎓 Tutor</option>
-            </select>
         </div>
         <div class="header-center">
             <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
@@ -830,6 +825,11 @@
            
             <div class="input-container">
                 <form id="chatForm">
+                    <select class="persona-select" id="personaSelect" title="Switch Persona" style="align-self: flex-end; margin-bottom: 4px; margin-right: 8px; flex-shrink: 0; background-color: #f8fafc;">
+                        <option value="technical">🔧 Technical</option>
+                        <option value="writing">✍️ Writing</option>
+                        <option value="tutor">🎓 Tutor</option>
+                    </select>
                     <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
                     <div class="send-btn-container">
                         <button type="submit" class="primary-btn" id="sendBtn" title="Send message">↑</button>
