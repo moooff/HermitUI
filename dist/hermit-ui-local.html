@@ -770,8 +770,13 @@
             <input type="text" id="settingUrl" value="http://localhost:1234/v1/chat/completions">
             <label for="settingApiKey">API Key</label>
             <input type="password" id="settingApiKey" value="dummy">
-            <label for="settingModel">Model Name</label>
-            <input type="text" id="settingModel" value="local-model">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label for="settingModelInput" style="margin-bottom: 0;">Model Name</label>
+                <button type="button" class="action-btn" id="testConnectionBtn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">🔌 Test Connection & Fetch Models</button>
+            </div>
+            <select id="settingModelSelect" style="display: none; width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #d1d5db; font-size: 0.95rem; font-family: 'Inter', system-ui, sans-serif; color: var(--text-main); margin-bottom: 20px; outline: none; background: #fff; cursor: pointer;">
+            </select>
+            <input type="text" id="settingModelInput" value="local-model">
             <label for="settingTemperature">Temperature</label>
             <input type="number" id="settingTemperature" value="0.7" step="0.1" min="0" max="2">
             <label for="settingSystem">System Prompt</label>
@@ -958,7 +963,21 @@
         document.getElementById("settingsBtn").addEventListener("click", () => {
             document.getElementById("settingUrl").value = API_URL;
             document.getElementById("settingApiKey").value = API_KEY;
-            document.getElementById("settingModel").value = MODEL_NAME;
+            
+            document.getElementById("settingModelInput").value = MODEL_NAME;
+            const modelSelect = document.getElementById("settingModelSelect");
+            if (modelSelect.options.length > 0) {
+                let match = Array.from(modelSelect.options).find(o => o.value === MODEL_NAME);
+                if (match) {
+                    modelSelect.value = MODEL_NAME;
+                    modelSelect.style.display = "block";
+                    document.getElementById("settingModelInput").style.display = "none";
+                } else {
+                    modelSelect.style.display = "none";
+                    document.getElementById("settingModelInput").style.display = "block";
+                }
+            }
+            
             document.getElementById("settingTemperature").value = TEMPERATURE;
             document.getElementById("settingSystem").value = SYSTEM_PROMPT;
             settingsModal.classList.add("active");
@@ -972,7 +991,15 @@
         document.getElementById("settingsSave").addEventListener("click", () => {
             API_URL = document.getElementById("settingUrl").value.trim();
             API_KEY = document.getElementById("settingApiKey").value.trim() || "dummy";
-            MODEL_NAME = document.getElementById("settingModel").value.trim();
+            
+            const modelSelect = document.getElementById("settingModelSelect");
+            const modelInput = document.getElementById("settingModelInput");
+            if (modelSelect.style.display !== "none" && modelSelect.value !== "custom") {
+                MODEL_NAME = modelSelect.value;
+            } else {
+                MODEL_NAME = modelInput.value.trim();
+            }
+            
             TEMPERATURE = parseFloat(document.getElementById("settingTemperature").value) || 0.7;
             const newPrompt = document.getElementById("settingSystem").value.trim();
             SYSTEM_PROMPT = newPrompt;
@@ -1023,6 +1050,85 @@
             toast.classList.add("show");
             setTimeout(() => toast.classList.remove("show"), 2500);
         }
+
+        // ========== Test Connection & Fetch Models ==========
+        document.getElementById("testConnectionBtn").addEventListener("click", async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById("testConnectionBtn");
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳ Testing...";
+            btn.disabled = true;
+
+            try {
+                let currentUrl = document.getElementById("settingUrl").value.trim();
+                let currentKey = document.getElementById("settingApiKey").value.trim();
+                
+                let modelsUrl = currentUrl;
+                if (modelsUrl.includes("/chat/completions")) {
+                    modelsUrl = modelsUrl.replace("/chat/completions", "/models");
+                } else if (!modelsUrl.endsWith("/models")) {
+                    modelsUrl = modelsUrl.replace(/\/+$/, "") + "/models";
+                }
+
+                const response = await fetch(modelsUrl, {
+                    method: "GET",
+                    headers: { "Authorization": "Bearer " + currentKey }
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                let models = data.data || [];
+                if (!Array.isArray(models)) {
+                    models = Array.isArray(data) ? data : (data.models || []);
+                }
+
+                if (models.length === 0) throw new Error("No models found in response.");
+
+                const select = document.getElementById("settingModelSelect");
+                const input = document.getElementById("settingModelInput");
+
+                select.innerHTML = "";
+                models.forEach(m => {
+                    const modelId = m.id || m.name || m;
+                    const opt = document.createElement("option");
+                    opt.value = modelId;
+                    opt.textContent = modelId;
+                    select.appendChild(opt);
+                });
+
+                const customOpt = document.createElement("option");
+                customOpt.value = "custom";
+                customOpt.textContent = "✍️ Custom / Manual Entry";
+                select.appendChild(customOpt);
+
+                const currentModelVal = input.value.trim();
+                let match = Array.from(select.options).find(o => o.value === currentModelVal);
+                if (match) {
+                    select.value = currentModelVal;
+                }
+
+                input.style.display = "none";
+                select.style.display = "block";
+
+                showToast(`✅ Connection successful! Found ${models.length} models.`);
+            } catch (error) {
+                console.error("Test connection failed:", error);
+                showToast(`❌ Connection failed: ${error.message}`);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+
+        document.getElementById("settingModelSelect").addEventListener("change", (e) => {
+            if (e.target.value === "custom") {
+                e.target.style.display = "none";
+                const input = document.getElementById("settingModelInput");
+                input.style.display = "block";
+                input.focus();
+            }
+        });
 
         // ========== Export Chat ==========
         document.getElementById("exportBtn").addEventListener("click", () => {
