@@ -1382,7 +1382,6 @@ Rules:
                 }
                 updateMessageUI(ctx, true);
             } catch (error) {
-                if (error.name !== 'AbortError') {
                 if (error.name !== 'AbortError') responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
             } finally {
                 responseContainer.classList.remove('cursor');
