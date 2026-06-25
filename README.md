@@ -35,10 +35,6 @@ No build steps, no backend, and no installation required—just open the file in
 *   **💾 Chat Export:** Easily download your entire conversation history as a formatted Markdown file for safekeeping.
 *   **⚙️ Customizable Settings:** Quickly adjust the API URL, Model Name, and System Prompt via the on-page settings overlay.
 
-## Screenshot
-
-![HermitUI Screenshot](screenshot.png)
-
 ## 🚀 Quick Start
 
 1.  **Start your local AI server:**
