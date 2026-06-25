@@ -11,6 +11,7 @@ No build steps, no backend, and no installation required—just open the file in
 ## ✨ Features
 
 - **Zero-Dependency Setup:** Everything is bundled in a single HTML file (external libraries like Marked.js, DOMPurify, and Highlight.js are loaded via CDN).
+- **Privacy First:** By design, there is no local saving and no conversation history stored across sessions. Your data stays completely ephemeral.
 - **Thinking Model Support:** Built-in parser to beautifully format `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
 - **Modern UI/UX:** Clean, responsive design with smooth animations, syntax highlighting, and a glassmorphism feel.
 - **Real-Time Streaming:** Watch responses generate in real-time, just like ChatGPT.
