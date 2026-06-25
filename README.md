@@ -1,6 +1,5 @@
 <div align="center">
   <img width="500" alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
-  <h1>HermitUI</h1>
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
     <a href="#-ideal-use-cases">Use Cases</a> •
