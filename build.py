@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import urllib.request
 import base64
 import shutil
@@ -16,8 +17,12 @@ URLS = {
 def fetch(url, headers=None):
     if headers is None: headers = {}
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.read()
+    except Exception as e:
+        print(f"❌ Failed to fetch {url}: {e}")
+        sys.exit(1)
 
 def build():
     os.makedirs("libs/fonts", exist_ok=True)
@@ -42,7 +47,8 @@ def build():
 
     print("🖋️ Processing Inter fonts...")
     inter_css = cache["inter.css"].decode("utf-8")
-    font_urls = re.findall(r'url\((https://[^)]+)\)', inter_css)
+    # Support optional quotes around URL
+    font_urls = re.findall(r'url\((?:["\']?)(https://[^)]+?)(?:["\']?)\)', inter_css)
     
     inter_local_css = inter_css
     inter_inline_css = inter_css
@@ -82,11 +88,11 @@ def build():
 
     # 2. Local Version
     local_html = html
-    local_html = local_html.replace('https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js', '../libs/marked.js')
-    local_html = local_html.replace('https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js', '../libs/dompurify.js')
-    local_html = local_html.replace('https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css', '../libs/highlight.css')
-    local_html = local_html.replace('https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js', '../libs/highlight.js')
-    local_html = local_html.replace('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', '../libs/inter.css')
+    local_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', '<script src="../libs/marked.js"></script>', local_html)
+    local_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', '<script src="../libs/dompurify.js"></script>', local_html)
+    local_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', '<link rel="stylesheet" href="../libs/highlight.css">', local_html)
+    local_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', '<script src="../libs/highlight.js"></script>', local_html)
+    local_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', '<link href="../libs/inter.css" rel="stylesheet">', local_html)
 
     with open("dist/hermit-ui-local.html", "w", encoding="utf-8") as f:
         f.write(local_html)
@@ -94,26 +100,18 @@ def build():
 
     # 3. Standalone Version
     standalone_html = html
-    standalone_html = standalone_html.replace(
-        '<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>',
-        f'<script>{cache["marked.js"].decode("utf-8")}</script>'
-    )
-    standalone_html = standalone_html.replace(
-        '<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>',
-        f'<script>{cache["dompurify.js"].decode("utf-8")}</script>'
-    )
-    standalone_html = standalone_html.replace(
-        '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">',
-        f'<style>{cache["highlight.css"].decode("utf-8")}</style>'
-    )
-    standalone_html = standalone_html.replace(
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>',
-        f'<script>{cache["highlight.js"].decode("utf-8")}</script>'
-    )
-    standalone_html = standalone_html.replace(
-        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">',
-        f'<style>{cache["inter_inline.css"].decode("utf-8")}</style>'
-    )
+    
+    marked_script = cache["marked.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    dompurify_script = cache["dompurify.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    hl_css = cache["highlight.css"].decode("utf-8")
+    hl_script = cache["highlight.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    inter_inline = cache["inter_inline.css"].decode("utf-8")
+
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', f'<script>{marked_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', f'<script>{dompurify_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', f'<style>{hl_css}</style>', standalone_html)
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', f'<script>{hl_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', f'<style>{inter_inline}</style>', standalone_html)
 
     with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
@@ -123,3 +121,4 @@ def build():
 
 if __name__ == "__main__":
     build()
+
