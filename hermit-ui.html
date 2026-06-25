@@ -766,8 +766,8 @@
     <div class="modal-overlay" id="settingsModal">
         <div class="modal">
             <h3>⚙️ Settings</h3>
-            <label for="settingUrl">API URL</label>
-            <input type="text" id="settingUrl" value="http://localhost:1234/v1/chat/completions">
+            <label for="settingUrl">API Base URL</label>
+            <input type="text" id="settingUrl" value="http://localhost:1234/v1">
             <label for="settingApiKey">API Key</label>
             <input type="password" id="settingApiKey" value="dummy">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -844,7 +844,7 @@
         };
         let activePersona = "technical";
 
-        let API_URL = "http://localhost:1234/v1/chat/completions";
+        let API_URL = "http://localhost:1234/v1";
         let API_KEY = "dummy";
         let MODEL_NAME = "local-model";
         let TEMPERATURE = 0.7;
@@ -1252,7 +1252,11 @@
 
             try {
                 updateGlobalStats("...", "...", "...", "0.0");
-                const response = await fetch(API_URL, {
+                let chatUrl = API_URL;
+                if (!chatUrl.includes("/chat/completions")) {
+                    chatUrl = chatUrl.replace(/\/+$/, "") + "/chat/completions";
+                }
+                const response = await fetch(chatUrl, {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
                     body: JSON.stringify({
@@ -1554,7 +1558,11 @@
             updateGlobalStats("...", "...", "...", "0.0");
 
             try {
-                const response = await fetch(API_URL, {
+                let chatUrl = API_URL;
+                if (!chatUrl.includes("/chat/completions")) {
+                    chatUrl = chatUrl.replace(/\/+$/, "") + "/chat/completions";
+                }
+                const response = await fetch(chatUrl, {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
                     body: JSON.stringify({
