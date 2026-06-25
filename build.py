@@ -80,10 +80,23 @@ def build():
     with open("hermit-ui.html", "r", encoding="utf-8") as f:
         html = f.read()
 
+    # Inline favicon into the template
+    try:
+        with open("favicon.svg", "rb") as f:
+            favicon_b64 = base64.b64encode(f.read()).decode("utf-8")
+        html = re.sub(
+            r'(<link[^>]*?rel=["\']icon["\'][^>]*?href=["\'])[^"\']+(["\'])',
+            rf'\g<1>data:image/svg+xml;base64,{favicon_b64}\g<2>',
+            html
+        )
+    except Exception as e:
+        print(f"⚠️ Could not inline favicon.svg: {e}")
+
     print("\n🔨 Generating HTML versions in dist/ ...")
 
     # 1. CDN Version
-    shutil.copy("hermit-ui.html", "dist/hermit-ui-cdn.html")
+    with open("dist/hermit-ui-cdn.html", "w", encoding="utf-8") as f:
+        f.write(html)
     print("  ✅ dist/hermit-ui-cdn.html (Base version using CDNs)")
 
     # 2. Local Version
