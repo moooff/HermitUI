@@ -98,6 +98,14 @@
             gap: 8px;
         }
 
+        .header-center {
+            display: flex;
+            gap: 8px;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
         .header-btn {
             background: rgba(255,255,255,0.8);
             border: 1px solid #d1d5db;
@@ -754,12 +762,14 @@
                 <option value="tutor">🎓 Tutor</option>
             </select>
         </div>
-        <div class="header-actions">
-            <button class="header-btn icon-only" id="aboutBtn" title="About" aria-label="About">ℹ️</button>
-            <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
-            <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
-            <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
+        <div class="header-center">
             <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
+            <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
+        </div>
+        <div class="header-actions">
+            <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
+            <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
+            <button class="header-btn icon-only" id="aboutBtn" title="About" aria-label="About">ℹ️</button>
         </div>
     </header>
 
