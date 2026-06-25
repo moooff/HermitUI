@@ -976,6 +976,9 @@
                     modelSelect.style.display = "none";
                     document.getElementById("settingModelInput").style.display = "block";
                 }
+            } else {
+                modelSelect.style.display = "none";
+                document.getElementById("settingModelInput").style.display = "block";
             }
             
             document.getElementById("settingTemperature").value = TEMPERATURE;
@@ -1181,7 +1184,10 @@
             const responseContainer = document.getElementById(responseContainerId);
             
             responseContainer.innerHTML = `
-                <div class="summary-badge">Summary</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
+                    <button class="action-btn copy-summary-btn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">📋 Copy</button>
+                </div>
                 <details class="think-block" style="display: none;">
                     <summary>🧠 Thinking Process</summary>
                     <div class="think-content"></div>
@@ -1251,7 +1257,6 @@
             }
 
             try {
-                updateGlobalStats("...", "...", "...", "0.0");
                 let chatUrl = API_URL.trim().replace(/\/+$/, "");
                 if (!chatUrl.endsWith("/chat/completions")) {
                     chatUrl = chatUrl + "/chat/completions";
@@ -1322,7 +1327,15 @@
                 inputField.focus();
                 
                 // Note: We intentionally do NOT append the summary to the \`messages\` array.
-                updateGlobalStats(0, 0, "0.0", ((Date.now() - startTime) / 1000).toFixed(1));
+                const copyBtn = responseContainer.querySelector(".copy-summary-btn");
+                if (copyBtn) {
+                    copyBtn.addEventListener("click", () => {
+                        navigator.clipboard.writeText(fullRawText).then(() => {
+                            copyBtn.textContent = "✅ Copied!";
+                            setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
+                        });
+                    });
+                }
             }
         });
 
@@ -1474,7 +1487,6 @@
             stopBtn.style.display = "flex";
             inputField.disabled = true;
             isWaiting = true;
-            chatbox.style.scrollBehavior = "auto";
             
             abortController = new AbortController();
 
@@ -1670,7 +1682,6 @@
                 stopBtn.style.display = "none";
                 inputField.disabled = false;
                 isWaiting = false;
-                chatbox.style.scrollBehavior = "smooth";
                 inputField.focus(); 
                 
                 let endTime = Date.now();
