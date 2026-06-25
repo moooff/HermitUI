@@ -126,6 +126,36 @@
             justify-content: center;
         }
 
+        /* Persona Dropdown */
+        .persona-select {
+            appearance: none;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.8);
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            padding: 6px 32px 6px 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #6b7280;
+            font-family: 'Inter', system-ui, sans-serif;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+        }
+        .persona-select:hover {
+            background-color: #fff;
+            color: var(--primary);
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(59,130,246,0.12);
+        }
+        .persona-select:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+
         main {
             flex-grow: 1;
             display: flex;
@@ -179,6 +209,23 @@
         .msg-wrapper.ai { 
             background-color: var(--ai-bg); 
             border-bottom: 1px solid var(--border-color); 
+        }
+        .msg-wrapper.summary {
+            background-color: #faf5ff;
+            border-bottom: 1px solid #e9d5ff;
+            border-left: 4px solid #a855f7;
+        }
+        .summary-badge {
+            display: inline-block;
+            background: #a855f7;
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .avatar {
@@ -701,10 +748,16 @@
             <div class="model-badge" title="Current Model">
                 🤖 <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
             </div>
+            <select class="persona-select" id="personaSelect" title="Switch Persona">
+                <option value="technical">🔧 Technical</option>
+                <option value="writing">✍️ Writing</option>
+                <option value="tutor">🎓 Tutor</option>
+            </select>
         </div>
         <div class="header-actions">
             <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
+            <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
             <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
         </div>
     </header>
@@ -765,11 +818,32 @@
             THROTTLE_MS: 80,
             MAX_TEXTAREA_HEIGHT_PX: 200
         };
+
+        // ========== Persona Presets ==========
+        const PERSONAS = {
+            technical: {
+                label: "Technical Assistant",
+                icon: "🔧",
+                prompt: "You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts."
+            },
+            writing: {
+                label: "Writing Assistant",
+                icon: "✍️",
+                prompt: "You are a skilled writing assistant. Help with drafting, editing, and refining text. Focus on clarity, tone, and style. Offer constructive suggestions and alternatives. Adapt to the user's voice and intent."
+            },
+            tutor: {
+                label: "Tutor",
+                icon: "🎓",
+                prompt: "You are a patient and encouraging tutor. Explain concepts step by step, check for understanding, and use analogies and examples. Avoid giving answers directly — guide the learner to discover them. Adapt your explanations to the learner's level."
+            }
+        };
+        let activePersona = "technical";
+
         let API_URL = "http://localhost:1234/v1/chat/completions";
         let API_KEY = "dummy";
         let MODEL_NAME = "local-model";
         let TEMPERATURE = 0.7;
-        let SYSTEM_PROMPT = "You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts.";
+        let SYSTEM_PROMPT = PERSONAS.technical.prompt;
 
         // ========== DOM References ==========
         const chatbox = document.getElementById("chatbox");
@@ -813,6 +887,24 @@
         }
         updateOverlay();
 
+        // ========== Persona Switcher ==========
+        const personaSelect = document.getElementById("personaSelect");
+        function switchPersona(key) {
+            if (!PERSONAS[key]) return;
+            activePersona = key;
+            SYSTEM_PROMPT = PERSONAS[key].prompt;
+            messages[0].content = SYSTEM_PROMPT;
+            document.getElementById("settingSystem").value = SYSTEM_PROMPT;
+            personaSelect.value = key;
+            // Remove custom option if it exists and we're switching to a preset
+            const customOpt = personaSelect.querySelector('option[value="custom"]');
+            if (customOpt) customOpt.remove();
+            showToast(`${PERSONAS[key].icon} Switched to ${PERSONAS[key].label}`);
+        }
+        personaSelect.addEventListener("change", (e) => {
+            switchPersona(e.target.value);
+        });
+
         // ========== Textarea Auto-Grow ==========
         inputField.addEventListener("input", () => {
             inputField.style.height = "auto";
@@ -834,6 +926,9 @@
             if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
                 document.getElementById("clearBtn").click();
+            } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                document.getElementById("summarizeBtn").click();
             } else if (e.ctrlKey && e.key.toLowerCase() === 'e') {
                 e.preventDefault();
                 document.getElementById("exportBtn").click();
@@ -879,8 +974,30 @@
             API_KEY = document.getElementById("settingApiKey").value.trim() || "dummy";
             MODEL_NAME = document.getElementById("settingModel").value.trim();
             TEMPERATURE = parseFloat(document.getElementById("settingTemperature").value) || 0.7;
-            SYSTEM_PROMPT = document.getElementById("settingSystem").value.trim();
+            const newPrompt = document.getElementById("settingSystem").value.trim();
+            SYSTEM_PROMPT = newPrompt;
             messages[0].content = SYSTEM_PROMPT;
+
+            // Check if the edited prompt still matches a preset
+            const matchingKey = Object.keys(PERSONAS).find(k => PERSONAS[k].prompt === newPrompt);
+            if (matchingKey) {
+                activePersona = matchingKey;
+                personaSelect.value = matchingKey;
+                const customOpt = personaSelect.querySelector('option[value="custom"]');
+                if (customOpt) customOpt.remove();
+            } else {
+                // Temporary custom override
+                activePersona = "custom";
+                let customOpt = personaSelect.querySelector('option[value="custom"]');
+                if (!customOpt) {
+                    customOpt = document.createElement("option");
+                    customOpt.value = "custom";
+                    customOpt.textContent = "⚡ Custom";
+                    personaSelect.appendChild(customOpt);
+                }
+                personaSelect.value = "custom";
+            }
+
             updateOverlay();
             settingsModal.classList.remove("active");
         });
@@ -888,6 +1005,7 @@
         // ========== New Chat ==========
         document.getElementById("clearBtn").addEventListener("click", () => {
             if (isWaiting) return; // Don't clear during generation
+            // New chat inherits current active persona
             messages = [{"role": "system", "content": SYSTEM_PROMPT}];
             showEmptyState();
             updateGlobalStats("0", "0", "0.0", "0.0");
@@ -925,6 +1043,177 @@
             a.click();
             URL.revokeObjectURL(a.href);
             showToast("✅ Chat exported!");
+        });
+
+        // ========== Summarize Chat ==========
+        document.getElementById("summarizeBtn").addEventListener("click", async () => {
+            if (isWaiting) return;
+            const hasUserMessage = messages.some(m => m.role === "user");
+            if (!hasUserMessage) {
+                showToast("⚠️ Nothing to summarize yet!");
+                return;
+            }
+
+            // Build the transcript
+            let transcript = "";
+            for (const msg of messages) {
+                if (msg.role === "user") transcript += `User: ${msg.content}\n\n`;
+                else if (msg.role === "assistant") transcript += `AI: ${msg.content}\n\n`;
+            }
+
+            const summaryPrompt = `Please provide a comprehensive summary of the following conversation. Include key topics discussed, main conclusions or answers provided, any action items, and an overall TL;DR.\n\nConversation Transcript:\n${transcript}`;
+            
+            // UI update
+            inputField.disabled = true;
+            sendBtn.style.display = "none";
+            stopBtn.style.display = "flex";
+            isWaiting = true;
+            userScrolledUp = false;
+            abortController = new AbortController();
+
+            const responseContainerId = appendMessage("AI", "", "summary", "📋");
+            const responseContainer = document.getElementById(responseContainerId);
+            
+            responseContainer.innerHTML = `
+                <div class="summary-badge">Summary</div>
+                <details class="think-block" style="display: none;">
+                    <summary>🧠 Thinking Process</summary>
+                    <div class="think-content"></div>
+                </details>
+                <div class="text-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+            `;
+            
+            const thinkBlock = responseContainer.querySelector('.think-block');
+            const thinkContent = responseContainer.querySelector('.think-content');
+            const textContent = responseContainer.querySelector('.text-content');
+            
+            let startTime = Date.now();
+            let fullRawText = "";
+            let aiReasoning = "";
+            let hasAutoClosed = false;
+
+            const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
+
+            function renderResponse(isFinal) {
+                let displayReasoning = aiReasoning;
+                let displayText = fullRawText;
+                let currentlyThinking = false;
+
+                const parsed = parseThinkContent(fullRawText);
+                if (parsed.reasoning) {
+                    displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
+                }
+                displayReasoning = displayReasoning.replace(/^\s+/, "");
+                displayText = parsed.content;
+                currentlyThinking = parsed.isThinking;
+
+                if (displayReasoning.trim().length > 0) {
+                    if (thinkBlock.style.display === "none") {
+                        thinkBlock.style.display = "block";
+                        if (!isFinal) thinkBlock.open = true;
+                        textContent.innerHTML = "";
+                    }
+                    thinkContent.textContent = displayReasoning;
+                    
+                    if (currentlyThinking && !isFinal) {
+                        let thinkDuration = Math.floor((Date.now() - startTime) / 1000);
+                        thinkBlock.classList.add("thinking-active");
+                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
+                    } else if (thinkBlock.classList.contains("thinking-active") || isFinal) {
+                        thinkBlock.classList.remove("thinking-active");
+                        let finalDurationText = thinkBlock.querySelector("summary").innerHTML.match(/\(\d+s\)/);
+                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
+                    }
+                }
+
+                if (displayText.trim().length > 0) {
+                    if (!hasAutoClosed && thinkBlock.style.display === "block" && !currentlyThinking) {
+                        thinkBlock.open = false;
+                        hasAutoClosed = true;
+                    }
+                    textContent.innerHTML = DOMPurify.sanitize(marked.parse(displayText));
+                } else if (currentlyThinking && thinkBlock.style.display === "block") {
+                    textContent.innerHTML = "";
+                }
+                
+                responseContainer.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+                injectCopyButtons(responseContainer);
+
+                if (!userScrolledUp) chatbox.scrollTop = chatbox.scrollHeight;
+            }
+
+            try {
+                updateGlobalStats("...", "...", "...", "0.0");
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
+                    body: JSON.stringify({
+                        model: MODEL_NAME,
+                        messages: [
+                            {"role": "system", "content": "You are a helpful summarization assistant."},
+                            {"role": "user", "content": summaryPrompt}
+                        ],
+                        temperature: 0.3,
+                        stream: true
+                    }),
+                    signal: abortController.signal
+                });
+
+                if (!response.ok) throw new Error(`Server Error ${response.status}`);
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+
+                responseContainer.classList.add('cursor');
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); 
+
+                    for (const line of lines) {
+                        if (line.trim() === "" || !line.startsWith("data: ")) continue;
+                        const dataStr = line.substring(6).trim();
+                        if (dataStr === "[DONE]") continue;
+
+                        try {
+                            const data = JSON.parse(dataStr);
+                            const delta = data.choices && data.choices[0] && data.choices[0].delta;
+                            
+                            const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
+                            if (reasoningChunk) aiReasoning += reasoningChunk;
+                            
+                            const contentChunk = delta && delta.content;
+                            if (contentChunk) fullRawText += contentChunk;
+
+                            if (reasoningChunk || contentChunk) {
+                                throttledRender(() => { renderResponse(false); });
+                            }
+                        } catch (e) { console.error("Parse error:", e); }
+                    }
+                }
+                renderResponse(true);
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
+                }
+            } finally {
+                responseContainer.classList.remove('cursor');
+                sendBtn.style.display = "flex";
+                stopBtn.style.display = "none";
+                inputField.disabled = false;
+                isWaiting = false;
+                inputField.focus();
+                
+                // Note: We intentionally do NOT append the summary to the \`messages\` array.
+                updateGlobalStats(0, 0, "0.0", ((Date.now() - startTime) / 1000).toFixed(1));
+            }
         });
 
         // ========== Copy Code Button Injection ==========
