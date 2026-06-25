@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1293,25 +1293,46 @@ return He}()
         }
 
         header {
-            text-align: center;
-            padding: 30px 20px 20px 20px;
+            padding: 12px 24px;
             z-index: 10;
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
             align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
         }
         
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
         header h2 { 
             font-weight: 700; 
             background: linear-gradient(90deg, #2563eb, #8b5cf6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            font-size: 2rem; 
+            font-size: 1.25rem; 
             letter-spacing: -0.025em;
             display: inline-flex;
             align-items: center;
+            margin: 0;
+        }
+        
+        .model-badge {
+            font-size: 0.75rem;
+            color: #6b7280;
+            background: #f3f4f6;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            border: 1px solid #e5e7eb;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
 
         .version-badge {
@@ -1355,18 +1376,11 @@ return He}()
             border-color: var(--primary);
             box-shadow: 0 2px 8px rgba(59,130,246,0.12);
         }
-
-        .top-right-overlay {
-            position: fixed;
-            top: 16px;
-            right: 20px;
-            font-size: 0.7rem;
-            color: #9ca3af;
-            font-family: ui-monospace, SFMono-Regular, monospace;
-            pointer-events: none;
-            z-index: 100;
-            text-align: right;
-            opacity: 0.6;
+        
+        .header-btn.icon-only {
+            padding: 8px;
+            width: 36px;
+            justify-content: center;
         }
 
         main {
@@ -1375,7 +1389,7 @@ return He}()
             justify-content: center;
             overflow: hidden;
             width: 100%;
-            padding: 0 20px 30px 20px;
+            padding: 24px 20px 30px 20px;
         }
 
         #chat-container {
@@ -1389,6 +1403,7 @@ return He}()
             border: 1px solid rgba(255,255,255,0.4);
             overflow: hidden;
             backdrop-filter: blur(20px);
+            position: relative;
         }
 
         #chatbox {
@@ -1463,7 +1478,7 @@ return He}()
 
         pre { 
             background: #f6f8fa; 
-            padding: 20px; 
+            padding: 30px 20px 20px 20px; 
             border-radius: 12px; 
             overflow-x: auto; 
             margin: 16px 0; 
@@ -1533,53 +1548,103 @@ return He}()
             user-select: none;
             outline: none;
         }
+        .think-block[open] summary {
+            margin-bottom: 10px;
+        }
         .think-content {
             margin-top: 10px;
             padding-top: 10px;
             border-top: 1px dashed #cbd5e1;
             color: #64748b;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .thinking-active summary {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            color: var(--primary);
+        }
+        
+        /* Jump to Bottom Button */
+        .jump-bottom-btn {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.95);
+            border: 1px solid #d1d5db;
+            border-radius: 20px;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #4b5563;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            cursor: pointer;
+            z-index: 100;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: unset;
+        }
+        button.jump-bottom-btn:hover:not(:disabled) {
+            background: #fff;
+            color: var(--primary);
+            box-shadow: 0 6px 15px rgba(0,0,0,0.15);
+            transform: translateX(-50%) scale(1.05);
         }
 
         /* Input Container */
         .input-container {
-            padding: 24px 40px;
-            background: rgba(255,255,255,0.95);
-            border-top: 1px solid var(--border-color);
+            padding: 16px 40px 24px 40px;
+            background: transparent;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
         }
 
         #chatForm {
             display: flex;
-            gap: 16px;
+            width: 100%;
+            max-width: 850px;
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 8px 16px;
+            border: 1px solid #d1d5db;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
             position: relative;
             align-items: flex-end;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        #chatForm:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15);
         }
 
         #userInput {
             flex-grow: 1;
-            padding: 16px 24px;
-            border-radius: 16px;
-            border: 1px solid #d1d5db;
-            background: #ffffff;
+            padding: 8px 48px 8px 8px; /* space for button */
+            border: none;
+            background: transparent;
             color: var(--text-main);
             font-size: 1.05rem;
             outline: none;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
             resize: none;
             overflow-y: auto;
-            min-height: 56px;
+            min-height: 44px;
             max-height: 200px;
             line-height: 1.5;
             font-family: 'Inter', system-ui, sans-serif;
-        }
-        
-        #userInput:focus { 
-            border-color: var(--primary); 
-            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15); 
-            transform: translateY(-2px);
         }
 
         #userInput::placeholder {
@@ -1587,103 +1652,117 @@ return He}()
         }
         
         button {
-            padding: 0 36px;
-            border-radius: 16px;
             border: none;
             background: linear-gradient(135deg, var(--primary), var(--primary-hover));
             color: white;
             font-weight: 600;
             cursor: pointer;
-            font-size: 1.1rem;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 6px rgba(37, 99, 235, 0.25);
+            transition: all 0.2s ease;
             display: flex;
             align-items: center;
             justify-content: center;
-            min-height: 56px;
         }
         
         button:hover:not(:disabled) { 
-            transform: translateY(-2px);
-            box-shadow: 0 8px 15px rgba(37, 99, 235, 0.3);
+            transform: scale(1.05);
         }
         
         button:disabled { 
             background: #9ca3af; 
-            box-shadow: none; 
             cursor: not-allowed; 
             transform: none; 
         }
 
+        .send-btn-container {
+            position: absolute;
+            right: 14px;
+            bottom: 12px;
+            display: flex;
+        }
+        
+        #sendBtn, #stopBtn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            padding: 0;
+            min-height: unset;
+            box-shadow: 0 2px 5px rgba(37, 99, 235, 0.25);
+        }
+
         #stopBtn {
             background: linear-gradient(135deg, #ef4444, #dc2626);
-            box-shadow: 0 4px 6px rgba(239, 68, 68, 0.25);
+            box-shadow: 0 2px 5px rgba(239, 68, 68, 0.25);
             display: none;
         }
-        #stopBtn:hover {
-            box-shadow: 0 8px 15px rgba(239, 68, 68, 0.3);
-        }
-
-        /* Global Stats Dashboard */
-        .stats-dashboard {
-            border-top: 1px solid #f3f4f6;
-            padding-top: 12px;
-        }
-
-        .stats-toggle {
-            cursor: pointer;
-            font-size: 0.85rem;
-            color: #6b7280;
-            display: inline-flex;
+        
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 6px;
-            user-select: none;
-            transition: color 0.2s;
-            font-weight: 500;
+            justify-content: center;
+            height: 100%;
+            color: #6b7280;
+            text-align: center;
+            animation: fadeIn 0.5s ease;
         }
         
-        .stats-toggle:hover {
-            color: var(--primary);
+        .empty-state h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 12px;
+        }
+        
+        .empty-state h1 span {
+            background: linear-gradient(90deg, #2563eb, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .empty-state p {
+            font-size: 1.1rem;
+            max-width: 400px;
+            line-height: 1.6;
         }
 
-        .global-stats {
+        /* Inline Stats Bar */
+        .stats-container {
+            width: 100%;
+            max-width: 850px;
             display: flex;
-            gap: 16px;
-            margin-top: 16px;
-            flex-wrap: wrap;
-            animation: fadeIn 0.3s ease;
+            justify-content: center;
+            margin-top: 4px;
         }
 
-        .stat-box {
-            background: rgba(249, 250, 251, 0.8);
+        .inline-stats {
+            display: flex;
+            background: rgba(255,255,255,0.7);
             border: 1px solid #e5e7eb;
             border-radius: 12px;
-            padding: 12px 20px;
-            flex-grow: 1;
-            text-align: center;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
-            transition: transform 0.2s, box-shadow 0.2s;
+            padding: 6px 16px;
+            font-size: 0.8rem;
+            color: #6b7280;
+            align-items: center;
+            gap: 16px;
+            font-family: ui-monospace, SFMono-Regular, monospace;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            animation: fadeIn 0.3s ease;
         }
         
-        .stat-box:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-
-        .stat-label {
-            font-size: 0.7rem;
-            color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 6px;
-            font-weight: 600;
+        
+        .stat-icon {
+            opacity: 0.7;
         }
-
+        
         .stat-value {
-            font-size: 1.2rem;
-            font-weight: 700;
+            font-weight: 600;
             color: var(--primary);
-            font-family: ui-monospace, SFMono-Regular, monospace;
         }
 
         /* Settings Modal */
@@ -1768,6 +1847,52 @@ return He}()
             background: #e5e7eb;
             box-shadow: none;
         }
+        /* Toast Notification */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #16a34a;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        .toast.show {
+            opacity: 1;
+            visibility: visible;
+            bottom: 30px;
+        }
+
+        .msg-timestamp {
+            font-size: 0.75rem;
+            color: #9ca3af;
+            margin-top: 4px;
+            align-self: flex-end;
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        .code-lang-label {
+            position: absolute;
+            top: 0;
+            left: 12px;
+            background: #e2e8f0;
+            color: #64748b;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 0 0 6px 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-family: 'Inter', system-ui, sans-serif;
+        }
 
         /* Scrollbar */
         ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -1785,32 +1910,33 @@ return He}()
 </head>
 <body>
 
-    <div class="top-right-overlay">
-        <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
-    </div>
-
     <header>
-        <h2>HermitUI <span class="version-badge">v1.3</span></h2>
+        <div class="header-left">
+            <h2>HermitUI <span class="version-badge">v1.5</span></h2>
+            <div class="model-badge" title="Current Model">
+                🤖 <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
+            </div>
+        </div>
         <div class="header-actions">
-            <button class="header-btn" id="settingsBtn">⚙️ Settings</button>
-            <button class="header-btn" id="exportBtn">📥 Export</button>
-            <button class="header-btn" id="clearBtn">🗑️ New Chat</button>
+            <button class="header-btn icon-only" id="settingsBtn" title="Settings">⚙️</button>
+            <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)">📤</button>
+            <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)">➕ New Chat</button>
         </div>
     </header>
 
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
         <div class="modal">
-            <h3>⚙️ Einstellungen</h3>
+            <h3>⚙️ Settings</h3>
             <label for="settingUrl">API URL</label>
             <input type="text" id="settingUrl" value="http://localhost:1234/v1/chat/completions">
             <label for="settingModel">Model Name</label>
             <input type="text" id="settingModel" value="local-model">
             <label for="settingSystem">System Prompt</label>
-            <textarea id="settingSystem">Du bist ein technischer Assistent. Deine Antworten sind frei von Marketing-Blabla und ausschweifenden Erklärungen. Nutze Aufzählungen, fette Schlüsselwörter und kurze Absätze für maximale Übersichtlichkeit. Antworte stets sachlich, strukturiert und lösungsorientiert. Wenn Code gefragt ist, gib primär den Code aus und kommentiere nur komplexe oder wichtige Stellen.</textarea>
+            <textarea id="settingSystem">You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts.</textarea>
             <div class="modal-actions">
-                <button class="cancel-btn" id="settingsCancel">Abbrechen</button>
-                <button id="settingsSave">Speichern</button>
+                <button class="cancel-btn" id="settingsCancel">Cancel</button>
+                <button id="settingsSave">Save</button>
             </div>
         </div>
     </div>
@@ -1818,40 +1944,28 @@ return He}()
     <main>
         <div id="chat-container">
             <div id="chatbox"></div>
+            <button id="jumpBottomBtn" class="jump-bottom-btn">⬇️ Jump to Bottom</button>
            
             <div class="input-container">
                 <form id="chatForm">
-                    <textarea id="userInput" placeholder="Frag mich etwas... (Shift+Enter für neue Zeile)" rows="1" autocomplete="off"></textarea>
-                    <button type="submit" id="sendBtn">Senden</button>
-                    <button type="button" id="stopBtn">Stopp</button>
+                    <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off"></textarea>
+                    <div class="send-btn-container">
+                        <button type="submit" id="sendBtn" title="Send message">↑</button>
+                        <button type="button" id="stopBtn" title="Stop generation">■</button>
+                    </div>
                 </form>
                 
-                <!-- Global Stats Dashboard -->
-                <div class="stats-dashboard">
-                    <div class="stats-toggle" id="statsToggle">
-                        <span>📊</span> Statistiken ausblenden
-                    </div>
-                    
-                    <div class="global-stats" id="globalStats">
-                        <div class="stat-box">
-                            <div class="stat-label">Prompt Tokens</div>
-                            <div class="stat-value" id="stat-prompt">0</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Completion Tokens</div>
-                            <div class="stat-value" id="stat-completion">0</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Speed</div>
-                            <div class="stat-value" id="stat-tps">0.0 t/s</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Dauer</div>
-                            <div class="stat-value" id="stat-time">0.0s</div>
-                        </div>
+                <div class="stats-container">
+                    <div class="inline-stats" id="inlineStats">
+                        <div class="stat-item"><span class="stat-icon">📥</span> <span class="stat-value" id="stat-prompt">0</span> prompt tokens</div>
+                        <div class="stat-item"><span>·</span></div>
+                        <div class="stat-item"><span class="stat-icon">📤</span> <span class="stat-value" id="stat-completion">0</span> completion tokens</div>
+                        <div class="stat-item"><span>·</span></div>
+                        <div class="stat-item"><span class="stat-icon">⚡</span> <span class="stat-value" id="stat-tps">0.0 t/s</span></div>
+                        <div class="stat-item"><span>·</span></div>
+                        <div class="stat-item"><span class="stat-icon">⏱️</span> <span class="stat-value" id="stat-time">0.0s</span></div>
                     </div>
                 </div>
-                
             </div>
         </div>
     </main>
@@ -1860,14 +1974,38 @@ return He}()
         // ========== Configuration ==========
         let API_URL = "http://localhost:1234/v1/chat/completions";
         let MODEL_NAME = "local-model";
-        let SYSTEM_PROMPT = "Du bist ein technischer Assistent. Deine Antworten sind frei von Marketing-Blabla und ausschweifenden Erklärungen. Nutze Aufzählungen, fette Schlüsselwörter und kurze Absätze für maximale Übersichtlichkeit. Antworte stets sachlich, strukturiert und lösungsorientiert. Wenn Code gefragt ist, gib primär den Code aus und kommentiere nur komplexe oder wichtige Stellen.";
+        let SYSTEM_PROMPT = "You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts.";
 
         // ========== DOM References ==========
         const chatbox = document.getElementById("chatbox");
+        
+        function showEmptyState() {
+            chatbox.innerHTML = `
+                <div class="empty-state" id="emptyState">
+                    <h1>Welcome to <span>HermitUI</span></h1>
+                    <p>A fast, local, and private chat interface for your AI models. Start typing below to begin.</p>
+                </div>
+            `;
+        }
+        showEmptyState();
         const chatForm = document.getElementById("chatForm");
         const inputField = document.getElementById("userInput");
         const btn = document.getElementById("sendBtn");
         const stopBtn = document.getElementById("stopBtn");
+        const jumpBottomBtn = document.getElementById("jumpBottomBtn");
+
+        let userScrolledUp = false;
+        chatbox.addEventListener('scroll', () => {
+            const isNearBottom = chatbox.scrollHeight - chatbox.scrollTop <= chatbox.clientHeight + 50;
+            userScrolledUp = !isNearBottom;
+            jumpBottomBtn.style.display = userScrolledUp ? 'flex' : 'none';
+        });
+
+        jumpBottomBtn.addEventListener('click', () => {
+            userScrolledUp = false;
+            chatbox.scrollTop = chatbox.scrollHeight;
+            jumpBottomBtn.style.display = 'none';
+        });
 
         // ========== Overlay Update ==========
         function updateOverlay() {
@@ -1891,6 +2029,21 @@ return He}()
                 chatForm.dispatchEvent(new Event("submit", { cancelable: true }));
             }
         });
+        
+        // Global Keyboard Shortcuts
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && settingsModal.classList.contains("active")) {
+                settingsModal.classList.remove("active");
+                return;
+            }
+            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+                e.preventDefault();
+                document.getElementById("clearBtn").click();
+            } else if (e.ctrlKey && e.key.toLowerCase() === 'e') {
+                e.preventDefault();
+                document.getElementById("exportBtn").click();
+            }
+        });
 
         // ========== Abort Controller ==========
         let abortController = null;
@@ -1899,17 +2052,7 @@ return He}()
         });
 
         // ========== Stats Dashboard ==========
-        const statsToggle = document.getElementById("statsToggle");
-        const globalStats = document.getElementById("globalStats");
-        let statsVisible = true;
-
-        statsToggle.addEventListener("click", () => {
-            statsVisible = !statsVisible;
-            globalStats.style.display = statsVisible ? "flex" : "none";
-            statsToggle.innerHTML = statsVisible
-                ? `<span>📉</span> Statistiken ausblenden`
-                : `<span>📊</span> Statistiken einblenden`;
-        });
+        const inlineStats = document.getElementById("inlineStats");
 
         function updateGlobalStats(prompt, completion, tps, time) {
             document.getElementById("stat-prompt").textContent = prompt;
@@ -1945,9 +2088,22 @@ return He}()
         document.getElementById("clearBtn").addEventListener("click", () => {
             if (isWaiting) return; // Don't clear during generation
             messages = [{"role": "system", "content": SYSTEM_PROMPT}];
-            chatbox.innerHTML = "";
+            showEmptyState();
             updateGlobalStats("0", "0", "0.0", "0.0");
         });
+
+        function showToast(message) {
+            let toast = document.getElementById("toastNotification");
+            if (!toast) {
+                toast = document.createElement("div");
+                toast.id = "toastNotification";
+                toast.className = "toast";
+                document.body.appendChild(toast);
+            }
+            toast.textContent = message;
+            toast.classList.add("show");
+            setTimeout(() => toast.classList.remove("show"), 2500);
+        }
 
         // ========== Export Chat ==========
         document.getElementById("exportBtn").addEventListener("click", () => {
@@ -1956,9 +2112,9 @@ return He}()
                 if (msg.role === "system") {
                     md += `> **System:** ${msg.content}\n\n---\n\n`;
                 } else if (msg.role === "user") {
-                    md += `## 🧑‍💻 Du\n\n${msg.content}\n\n`;
+                    md += `## 🧑‍💻 You\n\n${msg.content}\n\n`;
                 } else if (msg.role === "assistant") {
-                    md += `## ✨ KI\n\n${msg.content}\n\n---\n\n`;
+                    md += `## ✨ AI\n\n${msg.content}\n\n---\n\n`;
                 }
             }
             const blob = new Blob([md], { type: "text/markdown" });
@@ -1967,12 +2123,25 @@ return He}()
             a.download = `chat-export-${new Date().toISOString().slice(0,16).replace(/[T:]/g, "-")}.md`;
             a.click();
             URL.revokeObjectURL(a.href);
+            showToast("✅ Chat exported!");
         });
 
         // ========== Copy Code Button Injection ==========
         function injectCopyButtons(container) {
             container.querySelectorAll("pre").forEach((pre) => {
                 if (pre.querySelector(".code-copy-btn")) return; // Already has one
+                
+                const code = pre.querySelector("code");
+                if (code && code.className) {
+                    const match = code.className.match(/language-(\w+)/);
+                    if (match) {
+                        const langLabel = document.createElement("div");
+                        langLabel.className = "code-lang-label";
+                        langLabel.textContent = match[1];
+                        pre.appendChild(langLabel);
+                    }
+                }
+
                 const btn = document.createElement("button");
                 btn.className = "code-copy-btn";
                 btn.textContent = "Copy";
@@ -2091,8 +2260,12 @@ return He}()
             const text = inputField.value.trim();
             if (!text) return;
 
+            const emptyState = document.getElementById("emptyState");
+            if (emptyState) emptyState.remove();
+
             messages.push({"role": "user", "content": text});
-            appendMessage("Du", text, "user", "🧑‍💻");
+            userScrolledUp = false; // Force scroll to bottom for new message
+            appendMessage("You", text, "user", "🧑‍💻");
             
             // UI update
             inputField.value = "";
@@ -2104,7 +2277,7 @@ return He}()
             
             abortController = new AbortController();
 
-            const responseContainerId = appendMessage("KI", "", "ai", "✨");
+            const responseContainerId = appendMessage("AI", "", "ai", "✨");
             const responseContainer = document.getElementById(responseContainerId);
             
             // Prepare containers for reasoning and text
@@ -2113,7 +2286,7 @@ return He}()
                     <summary>🧠 Thinking Process</summary>
                     <div class="think-content"></div>
                 </details>
-                <div class="text-content">Denkt nach...</div>
+                <div class="text-content">Thinking...</div>
             `;
             const thinkBlock = responseContainer.querySelector('.think-block');
             const thinkContent = responseContainer.querySelector('.think-content');
@@ -2210,7 +2383,17 @@ return He}()
                                                 thinkBlock.open = true;
                                                 textContent.innerHTML = "";
                                             }
-                                            thinkContent.innerHTML = DOMPurify.sanitize(marked.parse(displayReasoning));
+                                            thinkContent.textContent = displayReasoning;
+                                            
+                                            // Update timer and pulse animation
+                                            if (currentlyThinking) {
+                                                let thinkDuration = Math.floor((Date.now() - startTime) / 1000);
+                                                thinkBlock.classList.add("thinking-active");
+                                                thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
+                                            } else {
+                                                thinkBlock.classList.remove("thinking-active");
+                                                thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process`;
+                                            }
                                         }
 
                                         // UI Updates: Answer text
@@ -2234,7 +2417,9 @@ return He}()
                                         });
                                         injectCopyButtons(responseContainer);
                                         
-                                        chatbox.scrollTop = chatbox.scrollHeight;
+                                        if (!userScrolledUp) {
+                                            chatbox.scrollTop = chatbox.scrollHeight;
+                                        }
                                         
                                         // Real-time stat updates
                                         let currentDuration = (Date.now() - startTime) / 1000;
@@ -2272,8 +2457,8 @@ return He}()
                     let finalHistoryContent = buildFinalHistory();
                     messages.push({"role": "assistant", "content": finalHistoryContent});
                 } else {
-                    const errMsg = error.message || "Unbekannter Fehler";
-                    responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Stelle sicher, dass dein lokaler Server läuft und CORS aktiviert ist.</span>`;
+                    const errMsg = error.message || "Unknown Error";
+                    responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`;
                 }
             } finally {
                 // Reset UI
@@ -2300,7 +2485,9 @@ return He}()
                 // Final accurate stats update
                 updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
                 
-                chatbox.scrollTop = chatbox.scrollHeight; 
+                if (!userScrolledUp) {
+                    chatbox.scrollTop = chatbox.scrollHeight; 
+                }
             }
 
             // Helper: render final state without throttle
@@ -2360,12 +2547,20 @@ return He}()
                 contentDiv.innerHTML = DOMPurify.sanitize(text); // AI messages may contain HTML
             }
             
+            const timeDiv = document.createElement("div");
+            timeDiv.className = "msg-timestamp";
+            const now = new Date();
+            timeDiv.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
             contentContainer.appendChild(contentDiv);
+            contentContainer.appendChild(timeDiv);
             wrapper.appendChild(avatarDiv);
             wrapper.appendChild(contentContainer);
             
             chatbox.appendChild(wrapper);
-            chatbox.scrollTop = chatbox.scrollHeight;
+            if (!userScrolledUp) {
+                chatbox.scrollTop = chatbox.scrollHeight;
+            }
             return contentId;
         }
     </script>
