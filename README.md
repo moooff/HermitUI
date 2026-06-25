@@ -3,6 +3,7 @@
   <h1>HermitUI</h1>
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
+    <a href="#-ideal-use-cases">Use Cases</a> •
     <a href="#-features">Features</a> •
     <a href="#-quick-start">Quick Start</a> •
     <a href="#-built-with">Built With</a> •
@@ -15,6 +16,12 @@
 HermitUI is a highly responsive web interface tailored for interacting with local AI models. It is built **entirely within a single `hermit-ui.html` file** using vanilla HTML, CSS, and JavaScript. 
 
 No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
+
+## 🎯 Ideal Use Cases
+
+*   **Heavily Regulated Environments:** Perfect for enterprise or government networks where software installation is restricted, but a local or remote inference endpoint is accessible.
+*   **Air-Gapped Systems:** Can be easily distributed via USB and run on disconnected systems that only have access to a local network LLM server.
+*   **Ephemeral Kiosks & Shared Terminals:** Ensures privacy by not saving any chat history, making it safe for public or shared workstations.
 
 ## ✨ Features
 
