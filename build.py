@@ -107,11 +107,11 @@ def build():
     hl_script = cache["highlight.js"].decode("utf-8").replace("</script>", r"<\/script>")
     inter_inline = cache["inter_inline.css"].decode("utf-8")
 
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', f'<script>{marked_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', f'<script>{dompurify_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', f'<style>{hl_css}</style>', standalone_html)
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', f'<script>{hl_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', f'<style>{inter_inline}</style>', standalone_html)
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', lambda m: f'<script>{marked_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', lambda m: f'<script>{dompurify_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', lambda m: f'<style>{hl_css}</style>', standalone_html)
+    standalone_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', lambda m: f'<script>{hl_script}</script>', standalone_html)
+    standalone_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', lambda m: f'<style>{inter_inline}</style>', standalone_html)
 
     with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)

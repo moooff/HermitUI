@@ -2087,17 +2087,17 @@ return He}()
             technical: {
                 label: "Technical Assistant",
                 icon: "🔧",
-                prompt: "You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts."
+                prompt: "You are an expert technical assistant. Your answers must be free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. For complex problems, briefly outline your reasoning step-by-step before providing the solution. When code is requested, output the code in proper markdown blocks and only comment on complex or non-obvious parts. If a user request is dangerously ambiguous or lacks necessary context, ask clarifying questions before providing a solution."
             },
             writing: {
                 label: "Writing Assistant",
                 icon: "✍️",
-                prompt: "You are a skilled writing assistant. Help with drafting, editing, and refining text. Focus on clarity, tone, and style. Offer constructive suggestions and alternatives. Adapt to the user's voice and intent."
+                prompt: "You are an expert writing assistant. Help with drafting, editing, and refining text to maximize clarity, impact, and style. When editing provided text, briefly explain the rationale behind your major changes. Always offer constructive suggestions and alternatives. If the user's desired tone is unclear, provide two distinct options (e.g., formal and conversational). Preserve the original formatting (like Markdown) unless instructed otherwise."
             },
             tutor: {
                 label: "Tutor",
                 icon: "🎓",
-                prompt: "You are a patient and encouraging tutor. Explain concepts step by step, check for understanding, and use analogies and examples. Avoid giving answers directly — guide the learner to discover them. Adapt your explanations to the learner's level."
+                prompt: "You are a patient, encouraging, and expert tutor. Use the Socratic method: avoid giving answers directly, and instead guide the learner to discover the answers themselves. Explain concepts step-by-step using relatable analogies and concrete examples. Keep your responses focused and relatively short to maintain a dialogue. Always end your turn with a specific question or a small exercise to actively check the learner's understanding before moving on."
             }
         };
         let activePersona = "technical";
@@ -2321,11 +2321,11 @@ return He}()
                 let currentUrl = document.getElementById("settingUrl").value.trim();
                 let currentKey = document.getElementById("settingApiKey").value.trim();
                 
-                let modelsUrl = currentUrl;
-                if (modelsUrl.includes("/chat/completions")) {
+                let modelsUrl = currentUrl.trim().replace(/\/+$/, "");
+                if (modelsUrl.endsWith("/chat/completions")) {
                     modelsUrl = modelsUrl.replace("/chat/completions", "/models");
                 } else if (!modelsUrl.endsWith("/models")) {
-                    modelsUrl = modelsUrl.replace(/\/+$/, "") + "/models";
+                    modelsUrl = modelsUrl + "/models";
                 }
 
                 const response = await fetch(modelsUrl, {
@@ -2393,11 +2393,11 @@ return He}()
             let md = "# Chat Export\n\n";
             for (const msg of messages) {
                 if (msg.role === "system") {
-                    md += `> **System:** ${msg.content}\n\n---\n\n`;
+                    md += `> **System:** ${msg.content.replace(/\n/g, '\n> ')}\n\n---\n\n`;
                 } else if (msg.role === "user") {
-                    md += `## 🧑‍💻 You\n\n${msg.content}\n\n`;
+                    md += `## 🧑‍💻 You\n\n<div class="user-message">\n\n${msg.content}\n\n</div>\n\n`;
                 } else if (msg.role === "assistant") {
-                    md += `## ✨ AI\n\n${msg.content}\n\n---\n\n`;
+                    md += `## ✨ AI\n\n<div class="ai-message">\n\n${msg.content}\n\n</div>\n\n---\n\n`;
                 }
             }
             const blob = new Blob([md], { type: "text/markdown" });
@@ -2510,9 +2510,9 @@ return He}()
 
             try {
                 updateGlobalStats("...", "...", "...", "0.0");
-                let chatUrl = API_URL;
-                if (!chatUrl.includes("/chat/completions")) {
-                    chatUrl = chatUrl.replace(/\/+$/, "") + "/chat/completions";
+                let chatUrl = API_URL.trim().replace(/\/+$/, "");
+                if (!chatUrl.endsWith("/chat/completions")) {
+                    chatUrl = chatUrl + "/chat/completions";
                 }
                 const response = await fetch(chatUrl, {
                     method: "POST",
@@ -2816,9 +2816,9 @@ return He}()
             updateGlobalStats("...", "...", "...", "0.0");
 
             try {
-                let chatUrl = API_URL;
-                if (!chatUrl.includes("/chat/completions")) {
-                    chatUrl = chatUrl.replace(/\/+$/, "") + "/chat/completions";
+                let chatUrl = API_URL.trim().replace(/\/+$/, "");
+                if (!chatUrl.endsWith("/chat/completions")) {
+                    chatUrl = chatUrl + "/chat/completions";
                 }
                 const response = await fetch(chatUrl, {
                     method: "POST",
