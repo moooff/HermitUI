@@ -2561,62 +2561,20 @@ Rules:
             const thinkContent = responseContainer.querySelector('.think-content');
             const textContent = responseContainer.querySelector('.text-content');
             
-            let startTime = Date.now();
-            let fullRawText = "";
-            let aiReasoning = "";
-            let hasAutoClosed = false;
+            let ctx = {
+                aiReasoning: "",
+                fullRawText: "",
+                thinkBlock: thinkBlock,
+                thinkContent: thinkContent,
+                textContent: textContent,
+                startTime: Date.now(),
+                hasAutoClosed: false,
+                responseContainer: responseContainer
+            };
+            let promptTokens = 0;
+            let completionTokens = 0;
 
             const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
-
-            function renderResponse(isFinal) {
-                let displayReasoning = aiReasoning;
-                let displayText = fullRawText;
-                let currentlyThinking = false;
-
-                const parsed = parseThinkContent(fullRawText);
-                if (parsed.reasoning) {
-                    displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
-                }
-                displayReasoning = displayReasoning.replace(/^\s+/, "");
-                displayText = parsed.content;
-                currentlyThinking = parsed.isThinking;
-
-                if (displayReasoning.trim().length > 0) {
-                    if (thinkBlock.style.display === "none") {
-                        thinkBlock.style.display = "block";
-                        if (!isFinal) thinkBlock.open = true;
-                        textContent.innerHTML = "";
-                    }
-                    thinkContent.textContent = displayReasoning;
-                    
-                    if (currentlyThinking && !isFinal) {
-                        let thinkDuration = Math.floor((Date.now() - startTime) / 1000);
-                        thinkBlock.classList.add("thinking-active");
-                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
-                    } else if (thinkBlock.classList.contains("thinking-active") || isFinal) {
-                        thinkBlock.classList.remove("thinking-active");
-                        let finalDurationText = thinkBlock.querySelector("summary").innerHTML.match(/\(\d+s\)/);
-                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
-                    }
-                }
-
-                if (displayText.trim().length > 0) {
-                    if (!hasAutoClosed && thinkBlock.style.display === "block" && !currentlyThinking) {
-                        thinkBlock.open = false;
-                        hasAutoClosed = true;
-                    }
-                    textContent.innerHTML = DOMPurify.sanitize(marked.parse(displayText));
-                } else if (currentlyThinking && thinkBlock.style.display === "block") {
-                    textContent.innerHTML = "";
-                }
-                
-                responseContainer.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                });
-                injectCopyButtons(responseContainer);
-
-                if (!userScrolledUp) chatbox.scrollTop = chatbox.scrollHeight;
-            }
 
             try {
                 let chatUrl = API_URL.trim().replace(/\/+$/, "");
@@ -2633,7 +2591,8 @@ Rules:
                             {"role": "user", "content": summaryPrompt}
                         ],
                         temperature: 0.3,
-                        stream: true
+                        stream: true,
+                        stream_options: { include_usage: true }
                     }),
                     signal: abortController.signal
                 });
@@ -2664,22 +2623,25 @@ Rules:
                             const delta = data.choices && data.choices[0] && data.choices[0].delta;
                             
                             const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
-                            if (reasoningChunk) aiReasoning += reasoningChunk;
+                            if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
                             
                             const contentChunk = delta && delta.content;
-                            if (contentChunk) fullRawText += contentChunk;
+                            if (contentChunk) ctx.fullRawText += contentChunk;
 
                             if (reasoningChunk || contentChunk) {
-                                throttledRender(() => { renderResponse(false); });
+                                throttledRender(() => { updateMessageUI(ctx, false); });
+                            }
+                            if (data.usage) {
+                                promptTokens = data.usage.prompt_tokens || promptTokens;
+                                completionTokens = data.usage.completion_tokens || completionTokens;
                             }
                         } catch (e) { console.error("Parse error:", e); }
                     }
                 }
-                renderResponse(true);
+                updateMessageUI(ctx, true);
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
-                }
+                if (error.name !== 'AbortError') responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
             } finally {
                 responseContainer.classList.remove('cursor');
                 sendBtn.style.display = "flex";
@@ -2687,21 +2649,19 @@ Rules:
                 inputField.disabled = false;
                 isWaiting = false;
                 inputField.focus();
-                
-                // Note: We intentionally do NOT append the summary to the \`messages\` array.
+                let durationSec = (Date.now() - ctx.startTime) / 1000;
+                let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
+                if (typeof updateGlobalStats === 'function') updateGlobalStats(promptTokens || "...", completionTokens || "...", tps, durationSec.toFixed(1));
                 const copyBtn = responseContainer.querySelector(".copy-summary-btn");
-                if (copyBtn) {
-                    copyBtn.addEventListener("click", () => {
-                        navigator.clipboard.writeText(fullRawText).then(() => {
-                            copyBtn.textContent = "✅ Copied!";
-                            setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
-                        });
+                if (copyBtn) copyBtn.addEventListener("click", () => {
+                    navigator.clipboard.writeText(ctx.fullRawText).then(() => {
+                        copyBtn.textContent = "✅ Copied!";
+                        setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
                     });
-                }
+                });
             }
         });
 
-        // ========== Copy Code Button Injection ==========
         function injectCopyButtons(container) {
             container.querySelectorAll("pre").forEach((pre) => {
                 if (pre.querySelector(".code-copy-btn")) return; // Already has one
@@ -2823,6 +2783,69 @@ Rules:
             }
         }
 
+        // ========== UI Render Helper ==========
+        function updateMessageUI(ctx, isFinal) {
+            let displayReasoning = ctx.aiReasoning;
+            let displayText = ctx.fullRawText;
+            let currentlyThinking = false;
+
+            const parsed = parseThinkContent(ctx.fullRawText);
+            if (parsed.reasoning) {
+                displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
+            }
+            displayReasoning = displayReasoning.replace(/^\s+/, "");
+            displayText = parsed.content;
+            currentlyThinking = parsed.isThinking;
+
+            if (displayReasoning.trim().length > 0) {
+                if (ctx.thinkBlock.style.display === "none") {
+                    ctx.thinkBlock.style.display = "block";
+                    if (!isFinal) ctx.thinkBlock.open = true;
+                    ctx.textContent.innerHTML = "";
+                }
+                ctx.thinkContent.textContent = displayReasoning;
+                
+                if (currentlyThinking && !isFinal) {
+                    let thinkDuration = Math.floor((Date.now() - ctx.startTime) / 1000);
+                    ctx.thinkBlock.classList.add("thinking-active");
+                    ctx.thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
+                } else if (ctx.thinkBlock.classList.contains("thinking-active") || isFinal) {
+                    ctx.thinkBlock.classList.remove("thinking-active");
+                    let finalDurationText = ctx.thinkBlock.querySelector("summary").innerHTML.match(/\(\d+s\)/);
+                    ctx.thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
+                }
+            }
+
+            if (displayText.trim().length > 0) {
+                if (!ctx.hasAutoClosed && ctx.thinkBlock.style.display === "block" && !currentlyThinking) {
+                    ctx.thinkBlock.open = false;
+                    ctx.hasAutoClosed = true;
+                }
+                ctx.textContent.innerHTML = DOMPurify.sanitize(marked.parse(displayText));
+            } else if (currentlyThinking && ctx.thinkBlock.style.display === "block") {
+                ctx.textContent.innerHTML = "";
+            }
+            
+            ctx.responseContainer.querySelectorAll('pre code').forEach((block) => {
+                if (!block.dataset.highlighted) {
+                    hljs.highlightElement(block);
+                    block.dataset.highlighted = "true";
+                }
+            });
+            injectCopyButtons(ctx.responseContainer);
+
+            if (!userScrolledUp) chatbox.scrollTop = chatbox.scrollHeight;
+        }
+
+        // ========== Helper: build history content preserving reasoning ==========
+        function buildFinalHistory(fullRawText, aiReasoning) {
+            let finalContent = fullRawText;
+            if (aiReasoning && !/<(?:\|?)(?:think|thought|reasoning|thought_start)/i.test(fullRawText)) {
+                finalContent = `<think>\n${aiReasoning}\n</think>\n${fullRawText}`;
+            }
+            return finalContent;
+        }
+
         // ========== State ==========
         let messages = [{"role": "system", "content": SYSTEM_PROMPT}];
         let isWaiting = false;
@@ -2833,14 +2856,17 @@ Rules:
             if (isWaiting) return; 
             
             const text = inputField.value.trim();
-            if (!text) return;
+            const isRegenerate = e.detail && e.detail.regenerate;
+            if (!text && !isRegenerate) return;
 
-            const emptyState = document.getElementById("emptyState");
-            if (emptyState) emptyState.remove();
+            if (text) {
+                const emptyState = document.getElementById("emptyState");
+                if (emptyState) emptyState.remove();
 
-            messages.push({"role": "user", "content": text});
-            userScrolledUp = false; // Force scroll to bottom for new message
-            appendMessage("You", text, "user", "🧑‍💻");
+                messages.push({"role": "user", "content": text});
+                userScrolledUp = false; // Force scroll to bottom for new message
+                appendMessage("You", text, "user", "🧑‍💻");
+            }
             
             // UI update
             inputField.value = "";
@@ -2863,70 +2889,23 @@ Rules:
                 </details>
                 <div class="text-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
             `;
-            const thinkBlock = responseContainer.querySelector('.think-block');
-            const thinkContent = responseContainer.querySelector('.think-content');
-            const textContent = responseContainer.querySelector('.text-content');
             
-            let startTime = Date.now();
+            let ctx = {
+                aiReasoning: "",
+                fullRawText: "",
+                thinkBlock: responseContainer.querySelector('.think-block'),
+                thinkContent: responseContainer.querySelector('.think-content'),
+                textContent: responseContainer.querySelector('.text-content'),
+                startTime: Date.now(),
+                hasAutoClosed: false,
+                responseContainer: responseContainer
+            };
+            
             let promptTokens = 0;
             let completionTokens = 0;
-            let hasAutoClosed = false;
-            let aiReasoning = "";
-            let fullRawText = "";
             
             // Throttled render function (avoids re-parsing markdown 50x/sec)
             const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
-
-            function renderResponse(isFinal) {
-                let displayReasoning = aiReasoning;
-                let displayText = fullRawText;
-                let currentlyThinking = false;
-
-                const parsed = parseThinkContent(fullRawText);
-                if (parsed.reasoning) {
-                    displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
-                }
-                displayReasoning = displayReasoning.replace(/^\s+/, "");
-                displayText = parsed.content;
-                currentlyThinking = parsed.isThinking;
-
-                if (displayReasoning.trim().length > 0) {
-                    if (thinkBlock.style.display === "none") {
-                        thinkBlock.style.display = "block";
-                        if (!isFinal) thinkBlock.open = true;
-                        textContent.innerHTML = "";
-                    }
-                    thinkContent.textContent = displayReasoning;
-                    
-                    if (currentlyThinking && !isFinal) {
-                        let thinkDuration = Math.floor((Date.now() - startTime) / 1000);
-                        thinkBlock.classList.add("thinking-active");
-                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
-                    } else if (thinkBlock.classList.contains("thinking-active") || isFinal) {
-                        thinkBlock.classList.remove("thinking-active");
-                        let finalDurationText = thinkBlock.querySelector("summary").innerHTML.match(/\(\d+s\)/);
-                        thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
-                    }
-                }
-
-                if (displayText.trim().length > 0) {
-                    if (!hasAutoClosed && thinkBlock.style.display === "block" && !currentlyThinking) {
-                        thinkBlock.open = false;
-                        hasAutoClosed = true;
-                    }
-                    textContent.innerHTML = DOMPurify.sanitize(marked.parse(displayText));
-                } else if (currentlyThinking && thinkBlock.style.display === "block") {
-                    textContent.innerHTML = "";
-                }
-                responseContainer.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                });
-                injectCopyButtons(responseContainer);
-
-                if (!userScrolledUp) {
-                    chatbox.scrollTop = chatbox.scrollHeight;
-                }
-            }
 
             // Reset stats for new request
             updateGlobalStats("...", "...", "...", "0.0");
@@ -2985,23 +2964,23 @@ Rules:
                                 // 1. Collect reasoning tokens (all known field names)
                                 const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
                                 if (reasoningChunk) {
-                                    aiReasoning += reasoningChunk;
+                                    ctx.aiReasoning += reasoningChunk;
                                 }
                                 
                                 // 2. Collect content tokens
                                 const contentChunk = delta && delta.content;
                                 if (contentChunk) {
-                                    fullRawText += contentChunk;
+                                    ctx.fullRawText += contentChunk;
                                 }
 
                                 // Only update UI when something changed
                                 if (reasoningChunk || contentChunk) {
                                     throttledRender(() => {
-                                        renderResponse(false);
+                                        updateMessageUI(ctx, false);
                                         
                                         // Real-time stat updates
-                                        let currentDuration = (Date.now() - startTime) / 1000;
-                                        let estTokens = Math.ceil((aiReasoning.length + fullRawText.length) / 4);
+                                        let currentDuration = (Date.now() - ctx.startTime) / 1000;
+                                        let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
                                         let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
                                         updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
                                     });
@@ -3019,20 +2998,20 @@ Rules:
                 }
                 
                 // Final render (flush any pending throttled update)
-                renderResponse(true);
+                updateMessageUI(ctx, true);
 
                 // Remove cursor
                 responseContainer.classList.remove('cursor');
                 // Update history
-                let finalHistoryContent = buildFinalHistory();
+                let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
                 messages.push({"role": "assistant", "content": finalHistoryContent});
 
             } catch (error) {
                 responseContainer.classList.remove('cursor');
                 if (error.name === 'AbortError') {
                     // User cancelled — keep partial text in history
-                    renderResponse(true);
-                    let finalHistoryContent = buildFinalHistory();
+                    updateMessageUI(ctx, true);
+                    let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
                     messages.push({"role": "assistant", "content": finalHistoryContent});
                 } else {
                     const errMsg = error.message || "Unknown Error";
@@ -3047,7 +3026,7 @@ Rules:
                 inputField.focus(); 
                 
                 let endTime = Date.now();
-                let durationSec = (endTime - startTime) / 1000;
+                let durationSec = (endTime - ctx.startTime) / 1000;
                 
                 // Fallbacks for token counts
                 if (completionTokens === 0 && messages.length > 0 && messages[messages.length-1].role === "assistant") {
@@ -3066,17 +3045,6 @@ Rules:
                 if (!userScrolledUp) {
                     chatbox.scrollTop = chatbox.scrollHeight; 
                 }
-            }
-
-
-
-            // Helper: build history content preserving reasoning
-            function buildFinalHistory() {
-                let finalContent = fullRawText;
-                if (aiReasoning && !/<(?:\|?)(?:think|thought|reasoning|thought_start)/i.test(fullRawText)) {
-                    finalContent = `<think>\n${aiReasoning}\n</think>\n${fullRawText}`;
-                }
-                return finalContent;
             }
         });
 
@@ -3120,6 +3088,22 @@ Rules:
                     inputField.dispatchEvent(new Event('input'));
                 });
                 actionsDiv.appendChild(editBtn);
+            } else if (cssClass === "ai") {
+                const regenBtn = document.createElement("button");
+                regenBtn.className = "action-btn";
+                regenBtn.innerHTML = "🔄 Regenerate";
+                regenBtn.addEventListener("click", () => {
+                    if (isWaiting) return;
+                    const aiWrappers = document.querySelectorAll(".msg-wrapper.ai");
+                    if (aiWrappers.length > 0 && aiWrappers[aiWrappers.length - 1] === wrapper) {
+                        wrapper.remove();
+                        messages.pop(); // Remove the last AI message
+                        chatForm.dispatchEvent(new CustomEvent("submit", { cancelable: true, detail: { regenerate: true } }));
+                    } else {
+                        showToast("⚠️ Can only regenerate the latest response.");
+                    }
+                });
+                actionsDiv.appendChild(regenBtn);
             }
             
             contentContainer.appendChild(contentDiv);
