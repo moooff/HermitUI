@@ -5,6 +5,7 @@
     <a href="#-ideal-use-cases">Use Cases</a> •
     <a href="#-features">Features</a> •
     <a href="#-quick-start">Quick Start</a> •
+    <a href="#-troubleshooting-cors">Troubleshooting</a> •
     <a href="#-built-with">Built With</a> •
     <a href="#-architecture--philosophy">Architecture</a>
   </p>
@@ -12,19 +13,19 @@
 
 ![HermitUI Screenshot](screenshot.png)
 
-HermitUI is a highly responsive web interface tailored for interacting with local AI models. It is built **entirely within a single `hermit-ui.html` file** using vanilla HTML, CSS, and JavaScript. 
+HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.html` file** using vanilla HTML, CSS, and JavaScript. 
 
 No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
 
 ## 🎯 Ideal Use Cases
 
-*   **Heavily Regulated Environments:** Perfect for enterprise or government networks where software installation is restricted, but a safe local or a safe remote inference endpoint is accessible.
+*   **Heavily Regulated Environments:** Perfect for enterprise or government networks where software installation is restricted, but a secure local or remote inference endpoint is accessible.
 *   **Air-Gapped Systems:** Can be easily distributed via USB and run on disconnected systems that only have access to a local network LLM server.
-*   **Ephemeral Kiosks & Shared Terminals:** Ensures privacy by not saving any chat history, making it safe for public or shared workstations esp. while using Desk-Sharing.
+*   **Ephemeral Kiosks & Shared Terminals:** Ensures privacy by not saving any chat history, making it safe for public or shared workstations, especially in desk-sharing environments.
 
 ## ✨ Features
 
-*   **📦 Zero-Dependency Setup:** Everything is bundled in a single HTML file. External libraries (Marked.js, DOMPurify, Highlight.js) are loaded securely via CDN.
+*   **📦 Zero-Dependency Setup:** The default `hermit-ui.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
 *   **🎨 Modern UI/UX:** Clean, responsive design with smooth micro-animations, comprehensive CSS variables for easy theming, syntax highlighting, and a premium glassmorphism feel.
@@ -38,21 +39,68 @@ No build steps, no backend, and no installation required—just open the file in
 
 1.  **Start your local AI server:**
     Ensure you have a local AI server running that provides an OpenAI-compatible API endpoint.
-    *   *Examples:* [LM Studio](https://lmstudio.ai/), [Ollama](https://ollama.com/) (with OpenAI compat) or vLLM
+    *   *Examples:* [LM Studio](https://lmstudio.ai/), [Ollama](https://ollama.com/) (with OpenAI compatibility), or [vLLM](https://github.com/vllm-project/vllm).
     *   *Default expected endpoint:* `http://localhost:1234/v1/chat/completions` (LM Studio default).
 2.  **Open HermitUI:**
     Simply double-click the `hermit-ui.html` file to open it in any modern web browser.
 3.  **Configure (if needed):**
     Click the **⚙️ Settings** button in the top right corner to update the API URL, the Model Name, or the default System Prompt to match your local setup.
 
+## 💡 Setup Examples
+
+Here are a few quick configuration examples based on popular local AI servers:
+
+### Using LM Studio (Default)
+1. Launch LM Studio and start the **Local Server**.
+2. **API URL:** `http://localhost:1234/v1/chat/completions`
+3. **Model Name:** Leave blank, or set to the specific model identifier you loaded.
+4. *Tip:* Ensure CORS is enabled in the LM Studio settings.
+
+### Using Ollama
+1. Start your Ollama server from the terminal, making sure to enable CORS:
+   ```bash
+   OLLAMA_ORIGINS="*" ollama serve
+   ```
+2. **API URL:** `http://localhost:11434/v1/chat/completions`
+3. **Model Name:** The name of the model you pulled (e.g., `llama3`, `mistral`, `deepseek-coder`).
+
+### Using vLLM
+1. Start your vLLM server with an OpenAI-compatible endpoint:
+   ```bash
+   python -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-chat-hf --cors-allowed-origins "*"
+   ```
+2. **API URL:** `http://localhost:8000/v1/chat/completions`
+3. **Model Name:** The model name specified in your command (e.g., `meta-llama/Llama-2-7b-chat-hf`).
+
+## 🔧 Troubleshooting (CORS)
+
+If HermitUI fails to connect to your local AI server (e.g., getting a "Network Error"), it is most likely due to **CORS (Cross-Origin Resource Sharing)** restrictions. Because HermitUI runs as a local file (`file://`), modern browsers will block its requests to `http://localhost` unless the server explicitly allows it.
+
+**How to fix it:**
+*   **LM Studio:** Go to the "Local Server" tab, look for the "CORS" toggle, and make sure it is turned **ON**.
+*   **Ollama:** You must set the `OLLAMA_ORIGINS` environment variable before starting Ollama. For example: `OLLAMA_ORIGINS="*" ollama serve`.
+*   **vLLM:** Start your server with the `--cors-allowed-origins` flag. For example: `--cors-allowed-origins "*"`.
+
 ## 🏗️ Architecture & Philosophy
 
 HermitUI enforces strict architectural constraints to remain lightweight and accessible:
-*   **Single File Constraint:** The entire application lives within `hermit-ui.html`.
+*   **Single File Constraint:** The entire application source code lives within a single `src/hermit-ui.html` file.
 *   **Vanilla Only:** No React, Vue, Angular, or complex frontend frameworks. 
 *   **No Build Tools:** No `package.json`, `npm`, Webpack, or Vite.
 *   **No CSS Frameworks:** Pure Vanilla CSS, no Tailwind or Bootstrap.
 *   **Security:** All rendered AI responses are rigorously sanitized using `DOMPurify` to prevent XSS attacks.
+
+## 📦 Building & Development
+
+By default, the `hermit-ui.html` file in the root is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
+
+If you wish to modify the source code, edit `src/hermit-ui.html` (which uses CDNs for external libraries) and then run the build script to regenerate the standalone root file:
+
+```bash
+python build.py
+```
+
+This updates the root `hermit-ui.html` file and creates alternative builds in the `dist/` directory.
 
 ## 🛠️ Built With
 

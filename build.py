@@ -77,7 +77,7 @@ def build():
     cache["inter_inline.css"] = inter_inline_css.encode("utf-8")
 
     # Read base template
-    with open("hermit-ui.html", "r", encoding="utf-8") as f:
+    with open("src/hermit-ui.html", "r", encoding="utf-8") as f:
         html = f.read()
 
     # Inline favicon into the template
@@ -126,9 +126,9 @@ def build():
     standalone_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', lambda m: f'<script>{hl_script}</script>', standalone_html)
     standalone_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', lambda m: f'<style>{inter_inline}</style>', standalone_html)
 
-    with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
+    with open("hermit-ui.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
-    print("  ✅ dist/hermit-ui-standalone.html (Entirely integrated single-file!)")
+    print("  ✅ hermit-ui.html (Entirely integrated single-file, placed in root!)")
 
     print("\n🎉 Build complete!")
 
