@@ -2293,11 +2293,11 @@ Rules:
         const jumpBottomBtn = document.getElementById("jumpBottomBtn");
 
         let userScrolledUp = false;
-        let isAutoScrolling = false;
-        let autoScrollTimeout = null;
+        let isSmoothScrolling = false;
+        let smoothScrollTimeout = null;
 
         chatbox.addEventListener('scroll', () => {
-            if (isAutoScrolling) return;
+            if (isSmoothScrolling) return;
             const distanceFromBottom = chatbox.scrollHeight - chatbox.scrollTop - chatbox.clientHeight;
             userScrolledUp = distanceFromBottom > 50;
             if (userScrolledUp) {
@@ -2309,11 +2309,18 @@ Rules:
 
         jumpBottomBtn.addEventListener('click', () => {
             userScrolledUp = false;
-            isAutoScrolling = true;
+            isSmoothScrolling = true;
             chatbox.scrollTo({ top: chatbox.scrollHeight, behavior: 'smooth' });
             jumpBottomBtn.classList.remove('active');
-            if (autoScrollTimeout) clearTimeout(autoScrollTimeout);
-            autoScrollTimeout = setTimeout(() => isAutoScrolling = false, 800);
+            if (smoothScrollTimeout) clearTimeout(smoothScrollTimeout);
+            smoothScrollTimeout = setTimeout(() => {
+                isSmoothScrolling = false;
+                const distanceFromBottom = chatbox.scrollHeight - chatbox.scrollTop - chatbox.clientHeight;
+                if (distanceFromBottom <= 50) {
+                    userScrolledUp = false;
+                    jumpBottomBtn.classList.remove('active');
+                }
+            }, 800);
         });
 
         // ========== Overlay Update ==========
@@ -3102,10 +3109,7 @@ Rules:
             injectCopyButtons(ctx.responseContainer);
 
             if (!userScrolledUp) {
-                isAutoScrolling = true;
                 chatbox.scrollTop = chatbox.scrollHeight;
-                if (autoScrollTimeout) clearTimeout(autoScrollTimeout);
-                autoScrollTimeout = setTimeout(() => isAutoScrolling = false, 100);
             }
         }
 
