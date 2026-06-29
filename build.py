@@ -77,7 +77,7 @@ def build():
     cache["inter_inline.css"] = inter_inline_css.encode("utf-8")
 
     # Read base template
-    with open("src/hermit-ui.html", "r", encoding="utf-8") as f:
+    with open("src/hermit-ui.src.html", "r", encoding="utf-8") as f:
         html = f.read()
 
     # Inline favicon into the template

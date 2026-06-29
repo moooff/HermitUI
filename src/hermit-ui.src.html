@@ -903,11 +903,24 @@
             MAX_TEXTAREA_HEIGHT_PX: 200
         };
 
+        // Escape text destined for HTML / attribute contexts.
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
         marked.use({
             renderer: {
-                code({ text, lang }) {
-                    const validLanguage = hljs.getLanguage(lang) ? lang : 'plaintext';
-                    const highlighted = hljs.highlight(validLanguage, text).value;
+                code(codeArg, infoArg) {
+                    // marked v12 passes positional args (code, infostring); v13+ passes a token object.
+                    const text = (codeArg && typeof codeArg === 'object') ? codeArg.text : codeArg;
+                    const lang = (codeArg && typeof codeArg === 'object') ? codeArg.lang : infoArg;
+                    const language = (lang || '').match(/\S*/)[0];
+                    const validLanguage = hljs.getLanguage(language) ? language : 'plaintext';
+                    const highlighted = hljs.highlight(text || '', { language: validLanguage, ignoreIllegals: true }).value;
                     return `<pre><code class="hljs language-${validLanguage}">${highlighted}</code></pre>`;
                 }
             }
@@ -1073,8 +1086,20 @@ Rules:
             attachedFiles.forEach((f, idx) => {
                 const chip = document.createElement("div");
                 chip.style.cssText = "display: flex; align-items: center; background: rgba(59,130,246,0.1); color: var(--primary); padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; border: 1px solid rgba(59,130,246,0.2);";
-                chip.innerHTML = `<span style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📄 ${f.name}</span>
-                                  <button type="button" title="Remove file" style="background: none; border: none; color: inherit; margin-left: 6px; cursor: pointer; font-size: 1rem; line-height: 1;" onclick="removeAttachedFile(${idx})">×</button>`;
+
+                const nameSpan = document.createElement("span");
+                nameSpan.style.cssText = "max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
+                nameSpan.textContent = `📄 ${f.name}`; // textContent: filename is untrusted, never inject as HTML
+
+                const removeBtn = document.createElement("button");
+                removeBtn.type = "button";
+                removeBtn.title = "Remove file";
+                removeBtn.style.cssText = "background: none; border: none; color: inherit; margin-left: 6px; cursor: pointer; font-size: 1rem; line-height: 1;";
+                removeBtn.textContent = "×";
+                removeBtn.addEventListener("click", () => removeAttachedFile(idx));
+
+                chip.appendChild(nameSpan);
+                chip.appendChild(removeBtn);
                 fileChips.appendChild(chip);
             });
         }
@@ -1499,43 +1524,48 @@ Rules:
 
                 responseContainer.classList.add('cursor');
 
+                const processLine = (line) => {
+                    if (line.trim() === "" || !line.startsWith("data: ")) return;
+                    const dataStr = line.substring(6).trim();
+                    if (dataStr === "[DONE]") return;
+
+                    try {
+                        const data = JSON.parse(dataStr);
+                        const delta = data.choices && data.choices[0] && data.choices[0].delta;
+
+                        const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
+                        if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
+
+                        const contentChunk = delta && delta.content;
+                        if (contentChunk) ctx.fullRawText += contentChunk;
+
+                        if (reasoningChunk || contentChunk) {
+                            throttledRender(() => { updateMessageUI(ctx, false); });
+                        }
+                        if (data.usage) {
+                            promptTokens = data.usage.prompt_tokens || promptTokens;
+                            completionTokens = data.usage.completion_tokens || completionTokens;
+                        }
+                    } catch (e) { console.error("Parse error:", e); }
+                };
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); 
+                    buffer = lines.pop();
 
-                    for (const line of lines) {
-                        if (line.trim() === "" || !line.startsWith("data: ")) continue;
-                        const dataStr = line.substring(6).trim();
-                        if (dataStr === "[DONE]") continue;
-
-                        try {
-                            const data = JSON.parse(dataStr);
-                            const delta = data.choices && data.choices[0] && data.choices[0].delta;
-                            
-                            const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
-                            if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
-                            
-                            const contentChunk = delta && delta.content;
-                            if (contentChunk) ctx.fullRawText += contentChunk;
-
-                            if (reasoningChunk || contentChunk) {
-                                throttledRender(() => { updateMessageUI(ctx, false); });
-                            }
-                            if (data.usage) {
-                                promptTokens = data.usage.prompt_tokens || promptTokens;
-                                completionTokens = data.usage.completion_tokens || completionTokens;
-                            }
-                        } catch (e) { console.error("Parse error:", e); }
-                    }
+                    for (const line of lines) processLine(line);
                 }
+                // Flush any trailing buffered line (stream may end without a final newline).
+                if (buffer.trim()) processLine(buffer);
                 updateMessageUI(ctx, true);
             } catch (error) {
                 if (error.name !== 'AbortError') responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
             } finally {
+                throttledRender.cancel(); // stop any trailing throttled render from clobbering final state
                 document.getElementById('chatForm').classList.remove('is-generating');
                 responseContainer.classList.remove('cursor');
                 sendBtn.style.display = "flex";
@@ -1544,8 +1574,11 @@ Rules:
                 isWaiting = false;
                 inputField.focus();
                 let durationSec = (Date.now() - ctx.startTime) / 1000;
+                // Fallback token estimates when the server doesn't return usage.
+                if (completionTokens === 0) completionTokens = Math.ceil(ctx.fullRawText.length / 4);
+                if (promptTokens === 0) promptTokens = Math.ceil(summaryPrompt.length / 4);
                 let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
-                if (typeof updateGlobalStats === 'function') updateGlobalStats(promptTokens || "...", completionTokens || "...", tps, durationSec.toFixed(1));
+                if (typeof updateGlobalStats === 'function') updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
                 const copyBtn = responseContainer.querySelector(".copy-summary-btn");
                 if (copyBtn) copyBtn.addEventListener("click", () => {
                     navigator.clipboard.writeText(ctx.fullRawText).then(() => {
@@ -1590,7 +1623,9 @@ Rules:
         function createThrottle(minInterval) {
             let lastRun = 0;
             let pending = null;
-            return function(fn) {
+            let lastFn = null;
+            function throttled(fn) {
+                lastFn = fn;
                 const now = Date.now();
                 if (now - lastRun >= minInterval) {
                     lastRun = now;
@@ -1599,11 +1634,16 @@ Rules:
                 } else if (!pending) {
                     pending = setTimeout(() => {
                         lastRun = Date.now();
-                        fn();
                         pending = null;
+                        if (lastFn) lastFn();
                     }, minInterval - (now - lastRun));
                 }
+            }
+            // Cancel a scheduled trailing call so it can't fire after the final render.
+            throttled.cancel = function() {
+                if (pending) { clearTimeout(pending); pending = null; }
             };
+            return throttled;
         }
 
         // ========== Think-Tag Parser ==========
@@ -1742,7 +1782,7 @@ Rules:
                 }
                 if (hasFiles) {
                     attachedFiles.forEach(f => {
-                        contextBlocks.push(`<file name="${f.name}">\n${f.content}\n</file>`);
+                        contextBlocks.push(`<file name="${escapeHtml(f.name)}">\n${f.content}\n</file>`);
                     });
                 }
                 if (contextBlocks.length > 0) {
@@ -1752,17 +1792,17 @@ Rules:
                 messages.push({"role": "user", "content": payloadText});
                 userScrolledUp = false; // Force scroll to bottom for new message
                 
-                const safeText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                const safeText = escapeHtml(text).replace(/\n/g, '<br>');
                 let uiText = safeText;
-                
+
                 if (contextBlocks.length > 0) {
                     let combinedSafeContext = "";
                     if (contextText) {
-                        combinedSafeContext += contextText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + "\n\n";
+                        combinedSafeContext += escapeHtml(contextText) + "\n\n";
                     }
                     if (hasFiles) {
                         attachedFiles.forEach(f => {
-                            combinedSafeContext += `--- ${f.name} ---\n` + f.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + "\n\n";
+                            combinedSafeContext += `--- ${escapeHtml(f.name)} ---\n` + escapeHtml(f.content) + "\n\n";
                         });
                     }
                     uiText = `<details class="attached-context" style="margin-bottom: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; padding: 10px; border: 1px solid rgba(0,0,0,0.05);"><summary style="cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; user-select: none;">📎 Attached Context</summary><pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; color: #4b5563; font-family: inherit; overflow-x: auto;">${combinedSafeContext.trim()}</pre></details>` + safeText;
@@ -1862,60 +1902,63 @@ Rules:
 
                 responseContainer.classList.add('cursor');
 
+                const processLine = (line) => {
+                    if (line.trim() === "") return;
+                    if (!line.startsWith("data: ")) return;
+                    const dataStr = line.substring(6).trim();
+                    if (dataStr === "[DONE]") return;
+
+                    try {
+                        const data = JSON.parse(dataStr);
+                        const delta = data.choices && data.choices[0] && data.choices[0].delta;
+
+                        // 1. Collect reasoning tokens (all known field names)
+                        const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
+                        if (reasoningChunk) {
+                            ctx.aiReasoning += reasoningChunk;
+                        }
+
+                        // 2. Collect content tokens
+                        const contentChunk = delta && delta.content;
+                        if (contentChunk) {
+                            ctx.fullRawText += contentChunk;
+                        }
+
+                        // Only update UI when something changed
+                        if (reasoningChunk || contentChunk) {
+                            throttledRender(() => {
+                                updateMessageUI(ctx, false);
+
+                                // Real-time stat updates
+                                let currentDuration = (Date.now() - ctx.startTime) / 1000;
+                                let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
+                                let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
+                                updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
+                            });
+                        }
+
+                        if (data.usage) {
+                            promptTokens = data.usage.prompt_tokens || promptTokens;
+                            completionTokens = data.usage.completion_tokens || completionTokens;
+                        }
+                    } catch (e) {
+                        console.error("Stream parse error:", e, "Line:", line);
+                    }
+                };
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); 
+                    buffer = lines.pop();
 
-                    for (const line of lines) {
-                        if (line.trim() === "") continue;
-                        if (line.startsWith("data: ")) {
-                            const dataStr = line.substring(6).trim();
-                            if (dataStr === "[DONE]") continue;
-
-                            try {
-                                const data = JSON.parse(dataStr);
-                                const delta = data.choices && data.choices[0] && data.choices[0].delta;
-                                
-                                // 1. Collect reasoning tokens (all known field names)
-                                const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
-                                if (reasoningChunk) {
-                                    ctx.aiReasoning += reasoningChunk;
-                                }
-                                
-                                // 2. Collect content tokens
-                                const contentChunk = delta && delta.content;
-                                if (contentChunk) {
-                                    ctx.fullRawText += contentChunk;
-                                }
-
-                                // Only update UI when something changed
-                                if (reasoningChunk || contentChunk) {
-                                    throttledRender(() => {
-                                        updateMessageUI(ctx, false);
-                                        
-                                        // Real-time stat updates
-                                        let currentDuration = (Date.now() - ctx.startTime) / 1000;
-                                        let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
-                                        let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
-                                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
-                                    });
-                                }
-                                
-                                if (data.usage) {
-                                    promptTokens = data.usage.prompt_tokens || promptTokens;
-                                    completionTokens = data.usage.completion_tokens || completionTokens;
-                                }
-                            } catch (e) {
-                                console.error("Stream parse error:", e, "Line:", line);
-                            }
-                        }
-                    }
+                    for (const line of lines) processLine(line);
                 }
-                
+                // Flush any trailing buffered line (stream may end without a final newline).
+                if (buffer.trim()) processLine(buffer);
+
                 // Final render (flush any pending throttled update)
                 updateMessageUI(ctx, true);
 
@@ -1937,6 +1980,7 @@ Rules:
                     responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`;
                 }
             } finally {
+                throttledRender.cancel(); // stop any trailing throttled render from clobbering final stats
                 document.getElementById('chatForm').classList.remove('is-generating');
                 // Reset UI
                 sendBtn.style.display = "flex";

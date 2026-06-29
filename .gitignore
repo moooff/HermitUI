@@ -1,3 +1,4 @@
 .agents/
 dist/
 libs/
+.claude/settings.local.json

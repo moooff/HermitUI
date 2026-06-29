@@ -13,7 +13,7 @@
 
 ![HermitUI Screenshot](screenshot.png)
 
-HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.html` file** using vanilla HTML, CSS, and JavaScript. 
+HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.src.html` file** using vanilla HTML, CSS, and JavaScript. 
 
 No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
 
@@ -25,7 +25,7 @@ No build steps, no backend, and no installation required—just open the file in
 
 ## ✨ Features
 
-*   **📦 Zero-Dependency Setup:** The default `hermit-ui.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.html`).
+*   **📦 Zero-Dependency Setup:** The default `hermit-ui.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.src.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
 *   **🎨 Modern UI/UX:** Clean, responsive design with smooth micro-animations, comprehensive CSS variables for easy theming, syntax highlighting, and a premium glassmorphism feel.
@@ -84,7 +84,7 @@ If HermitUI fails to connect to your local AI server (e.g., getting a "Network E
 ## 🏗️ Architecture & Philosophy
 
 HermitUI enforces strict architectural constraints to remain lightweight and accessible:
-*   **Single File Constraint:** The entire application source code lives within a single `src/hermit-ui.html` file.
+*   **Single File Constraint:** The entire application source code lives within a single `src/hermit-ui.src.html` file.
 *   **Vanilla Only:** No React, Vue, Angular, or complex frontend frameworks. 
 *   **No Build Tools:** No `package.json`, `npm`, Webpack, or Vite.
 *   **No CSS Frameworks:** Pure Vanilla CSS, no Tailwind or Bootstrap.
@@ -94,7 +94,7 @@ HermitUI enforces strict architectural constraints to remain lightweight and acc
 
 By default, the `hermit-ui.html` file in the root is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
 
-If you wish to modify the source code, edit `src/hermit-ui.html` (which uses CDNs for external libraries) and then run the build script to regenerate the standalone root file:
+If you wish to modify the source code, edit `src/hermit-ui.src.html` (which uses CDNs for external libraries) and then run the build script to regenerate the standalone root file:
 
 ```bash
 python build.py
