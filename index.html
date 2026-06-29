@@ -2492,6 +2492,10 @@ Rules:
             }
         });
 
+        // Prevent global drag and drop from navigating away
+        document.addEventListener("dragover", (e) => { e.preventDefault(); });
+        document.addEventListener("drop", (e) => { e.preventDefault(); });
+
         // ========== Abort Controller ==========
         let abortController = null;
         stopBtn.addEventListener("click", () => {
@@ -2743,6 +2747,7 @@ Rules:
             // Build the transcript
             let transcript = "";
             for (const msg of messages) {
+                if (msg.isSummary) continue;
                 if (msg.role === "user") transcript += `User: ${msg.content}\n\n`;
                 else if (msg.role === "assistant") transcript += `AI: ${msg.content}\n\n`;
             }
@@ -2765,6 +2770,7 @@ Rules:
                     <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
                     <button class="action-btn copy-summary-btn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">📋 Copy</button>
                 </div>
+                <div class="pre-text-content" style="display: none; margin-bottom: 12px;"></div>
                 <details class="think-block" style="display: none;">
                     <summary>🧠 Thinking Process</summary>
                     <div class="think-content"></div>
@@ -2779,6 +2785,7 @@ Rules:
             let ctx = {
                 aiReasoning: "",
                 fullRawText: "",
+                preTextContent: responseContainer.querySelector('.pre-text-content'),
                 thinkBlock: thinkBlock,
                 thinkContent: thinkContent,
                 textContent: textContent,
@@ -2815,6 +2822,7 @@ Rules:
                     promptTokens = pt;
                     completionTokens = ct;
                     updateMessageUI(ctx, true);
+                    messages.push({"role": "assistant", "content": "## Summary\n\n" + buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), "isSummary": true});
                     finishGeneration();
                 },
                 onError: (error) => {
@@ -2912,67 +2920,83 @@ Rules:
         // Handles streaming <think> tags that arrive character-by-character.
         function parseThinkContent(rawText, isFinal = false) {
             let reasoning = "";
+            let isThinking = false;
+            let hasPartialTag = false;
+
+            const openTagRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/i;
+            const firstOpenMatch = rawText.match(openTagRegex);
+            let preText = "";
             let content = rawText;
             
-            // Extract all completed reasoning blocks
+            if (firstOpenMatch) {
+                preText = rawText.substring(0, firstOpenMatch.index);
+            }
+            
             const thinkRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>([\s\S]*?)<\/?\|?(?:think|thought|reasoning|thought_end)[^>]*>/gi;
             let match;
             while ((match = thinkRegex.exec(content)) !== null) {
                 reasoning += (reasoning ? "\n\n" : "") + match[1].trim();
             }
             
-            // Remove the completed blocks from the content
             content = content.replace(thinkRegex, "");
             
-            // Now check for an unclosed (active) thinking block
-            const openTagRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/i;
             const openMatch = content.match(openTagRegex);
-            
             if (openMatch) {
                 const openIdx = openMatch.index;
                 const activeReasoning = content.substring(openIdx + openMatch[0].length);
                 reasoning += (reasoning ? "\n\n" : "") + activeReasoning.trim();
                 content = content.substring(0, openIdx).trim();
-                return { reasoning, content, isThinking: true, hasPartialTag: false };
+                isThinking = true;
             }
             
-            // Finally, check for a partial tag at the very end
-            if (!isFinal) {
-                const partialPatterns = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
-                const lowerContent = content.toLowerCase();
-                for (const partial of partialPatterns) {
-                    for (let len = 1; len < partial.length; len++) {
-                        const suffix = partial.substring(0, len);
-                        if (lowerContent.endsWith(suffix)) {
-                            content = content.substring(0, content.length - len);
-                            return { reasoning, content, isThinking: false, hasPartialTag: true };
-                        }
+            const partialPatterns = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
+            const lowerContent = content.toLowerCase();
+            for (const partial of partialPatterns) {
+                for (let len = 1; len < partial.length; len++) {
+                    const suffix = partial.substring(0, len);
+                    if (lowerContent.endsWith(suffix)) {
+                        content = content.substring(0, content.length - len);
+                        hasPartialTag = true;
+                        break;
                     }
                 }
+                if (hasPartialTag) break;
             }
 
-            return { reasoning, content: content.trim(), isThinking: false, hasPartialTag: false };
+            let postText = "";
+            if (firstOpenMatch) {
+                postText = content.substring(preText.length).trim();
+                preText = preText.trim();
+            } else {
+                preText = content.trim();
+                postText = "";
+            }
+
+            return { reasoning, preText, postText, isThinking, hasPartialTag };
         }
 
         // ========== UI Render Helper ==========
         function updateMessageUI(ctx, isFinal) {
             let displayReasoning = ctx.aiReasoning;
-            let displayText = ctx.fullRawText;
-            let currentlyThinking = false;
 
             const parsed = parseThinkContent(ctx.fullRawText, isFinal);
             if (parsed.reasoning) {
                 displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
             }
             displayReasoning = displayReasoning.replace(/^\s+/, "");
-            displayText = parsed.content;
-            currentlyThinking = parsed.isThinking;
+            let currentlyThinking = parsed.isThinking;
+
+            if (parsed.preText.length > 0) {
+                ctx.preTextContent.innerHTML = DOMPurify.sanitize(marked.parse(parsed.preText));
+                ctx.preTextContent.style.display = "block";
+            } else {
+                ctx.preTextContent.style.display = "none";
+            }
 
             if (displayReasoning.trim().length > 0) {
                 if (ctx.thinkBlock.style.display === "none") {
                     ctx.thinkBlock.style.display = "block";
                     if (!isFinal) ctx.thinkBlock.open = true;
-                    ctx.textContent.innerHTML = "";
                 }
                 ctx.thinkContent.textContent = displayReasoning;
                 
@@ -2987,14 +3011,19 @@ Rules:
                 }
             }
 
-            if (displayText.trim().length > 0) {
+            if (parsed.postText.trim().length > 0) {
                 if (!ctx.hasAutoClosed && ctx.thinkBlock.style.display === "block" && !currentlyThinking) {
                     ctx.thinkBlock.open = false;
                     ctx.hasAutoClosed = true;
                 }
-                ctx.textContent.innerHTML = DOMPurify.sanitize(marked.parse(displayText));
-            } else if (currentlyThinking && ctx.thinkBlock.style.display === "block") {
-                ctx.textContent.innerHTML = "";
+                ctx.textContent.innerHTML = DOMPurify.sanitize(marked.parse(parsed.postText));
+            } else {
+                if (currentlyThinking && ctx.thinkBlock.style.display === "block") {
+                    ctx.textContent.innerHTML = "";
+                }
+                if (isFinal) {
+                    ctx.textContent.innerHTML = "";
+                }
             }
             
             // Highlighting is handled natively by marked.use() renderer config
@@ -3181,6 +3210,7 @@ Rules:
             
             // Prepare containers for reasoning and text
             responseContainer.innerHTML = `
+                <div class="pre-text-content" style="display: none; margin-bottom: 12px;"></div>
                 <details class="think-block" style="display: none;">
                     <summary>🧠 Thinking Process</summary>
                     <div class="think-content"></div>
@@ -3191,6 +3221,7 @@ Rules:
             let ctx = {
                 aiReasoning: "",
                 fullRawText: "",
+                preTextContent: responseContainer.querySelector('.pre-text-content'),
                 thinkBlock: responseContainer.querySelector('.think-block'),
                 thinkContent: responseContainer.querySelector('.think-content'),
                 textContent: responseContainer.querySelector('.text-content'),
@@ -3213,7 +3244,7 @@ Rules:
 
             await fetchAndStreamChat({
                 model: MODEL_NAME,
-                messages: messages,
+                messages: messages.filter(m => !m.isSummary),
                 temperature: TEMPERATURE,
                 stream: true,
                 stream_options: { include_usage: true }
@@ -3246,7 +3277,7 @@ Rules:
                         messages.push({"role": "assistant", "content": finalHistoryContent});
                     } else {
                         const errMsg = error.message || "Unknown Error";
-                        responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`;
+                        responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
                     }
                     finishGeneration();
                 }
