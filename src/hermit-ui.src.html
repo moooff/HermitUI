@@ -913,18 +913,6 @@
             background: #1e293b !important;
             border-color: #475569 !important;
         }
-        
-        /* Voice Button Pulse Animation */
-        @keyframes voicePulse {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
-        .voice-active {
-            color: #ef4444 !important;
-            animation: voicePulse 1.5s infinite;
-            border-radius: 50%;
-        }
     </style>
 </head>
 <body>
@@ -1034,7 +1022,6 @@
                         <div style="position: relative; display: flex; width: 100%; background: #fff; border-radius: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid var(--border-color);">
                             <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
                             <div class="send-btn-container" style="display: flex; align-items: center; gap: 8px;">
-                                <button type="button" id="voice-btn" title="Voice Dictation" style="background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: #6b7280; transition: color 0.2s; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='#6b7280'">🎤</button>
                                 <button type="button" id="attach-context-btn" title="Attach context/data" style="background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: #6b7280; transition: color 0.2s; padding: 4px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='#6b7280'">📎</button>
                                 <button type="submit" class="primary-btn" id="sendBtn" title="Send message">↑</button>
                                 <button type="button" class="primary-btn" id="stopBtn" title="Stop generation">■</button>
@@ -2412,82 +2399,6 @@ Rules:
             themeToggleBtn.addEventListener("click", () => {
                 isDarkMode = !isDarkMode;
                 applyTheme();
-            });
-        }
-
-        // ========== Voice Dictation ==========
-        const voiceBtn = document.getElementById("voice-btn");
-        let recognition = null;
-        let isListening = false;
-
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            recognition = new SpeechRecognition();
-            recognition.continuous = false;
-            recognition.interimResults = true;
-            recognition.lang = 'en-US';
-
-            recognition.onstart = function() {
-                isListening = true;
-                if (voiceBtn) voiceBtn.classList.add("voice-active");
-                if (inputField) inputField.placeholder = "Listening...";
-            };
-
-            recognition.onresult = function(event) {
-                let interimTranscript = '';
-                let finalTranscript = '';
-
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
-                    } else {
-                        interimTranscript += event.results[i][0].transcript;
-                    }
-                }
-                
-                if (finalTranscript && inputField) {
-                    const currentVal = inputField.value;
-                    inputField.value = currentVal + (currentVal.length > 0 && !currentVal.endsWith(' ') ? ' ' : '') + finalTranscript;
-                    inputField.dispatchEvent(new Event('input'));
-                }
-            };
-
-            recognition.onerror = function(event) {
-                console.error("Speech recognition error", event.error);
-                showToast("🎤 Voice error: " + event.error);
-                stopDictation();
-            };
-
-            recognition.onend = function() {
-                stopDictation();
-            };
-        } else {
-            if (voiceBtn) voiceBtn.style.display = "none";
-            console.log("Web Speech API not supported in this browser.");
-        }
-
-        function stopDictation() {
-            isListening = false;
-            if (voiceBtn) voiceBtn.classList.remove("voice-active");
-            if (inputField) inputField.placeholder = "Ask me anything... (Shift+Enter for new line)";
-            if (recognition) {
-                try { recognition.stop(); } catch(e) {}
-            }
-        }
-
-        if (voiceBtn) {
-            voiceBtn.addEventListener("click", () => {
-                if (!recognition) return showToast("🎤 Voice dictation is not supported in this browser.");
-                
-                if (isListening) {
-                    stopDictation();
-                } else {
-                    try {
-                        recognition.start();
-                    } catch(e) {
-                        console.error("Could not start speech recognition:", e);
-                    }
-                }
             });
         }
     </script>
