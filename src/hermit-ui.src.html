@@ -1035,9 +1035,13 @@ Rules:
         const jumpBottomBtn = document.getElementById("jumpBottomBtn");
 
         let userScrolledUp = false;
+        let isAutoScrolling = false;
+        let autoScrollTimeout = null;
+
         chatbox.addEventListener('scroll', () => {
-            const isNearBottom = Math.ceil(chatbox.scrollTop) + chatbox.clientHeight >= chatbox.scrollHeight - 50;
-            userScrolledUp = !isNearBottom;
+            if (isAutoScrolling) return;
+            const distanceFromBottom = chatbox.scrollHeight - chatbox.scrollTop - chatbox.clientHeight;
+            userScrolledUp = distanceFromBottom > 50;
             if (userScrolledUp) {
                 jumpBottomBtn.classList.add('active');
             } else {
@@ -1047,8 +1051,11 @@ Rules:
 
         jumpBottomBtn.addEventListener('click', () => {
             userScrolledUp = false;
+            isAutoScrolling = true;
             chatbox.scrollTo({ top: chatbox.scrollHeight, behavior: 'smooth' });
             jumpBottomBtn.classList.remove('active');
+            if (autoScrollTimeout) clearTimeout(autoScrollTimeout);
+            autoScrollTimeout = setTimeout(() => isAutoScrolling = false, 800);
         });
 
         // ========== Overlay Update ==========
@@ -1512,28 +1519,14 @@ Rules:
                     <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
                     <button class="action-btn copy-summary-btn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">📋 Copy</button>
                 </div>
-                <div class="pre-text-content" style="display: none; margin-bottom: 12px;"></div>
-                <details class="think-block" style="display: none;">
-                    <summary>🧠 Thinking Process</summary>
-                    <div class="think-content"></div>
-                </details>
-                <div class="text-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+                <div class="ai-response-body"></div>
             `;
-            
-            const thinkBlock = responseContainer.querySelector('.think-block');
-            const thinkContent = responseContainer.querySelector('.think-content');
-            const textContent = responseContainer.querySelector('.text-content');
             
             let ctx = {
                 aiReasoning: "",
                 fullRawText: "",
-                preTextContent: responseContainer.querySelector('.pre-text-content'),
-                thinkBlock: thinkBlock,
-                thinkContent: thinkContent,
-                textContent: textContent,
                 startTime: Date.now(),
-                hasAutoClosed: false,
-                responseContainer: responseContainer
+                responseContainer: responseContainer.querySelector('.ai-response-body')
             };
             let promptTokens = 0;
             let completionTokens = 0;
@@ -1659,119 +1652,152 @@ Rules:
         }
 
         // ========== Think-Tag Parser ==========
-        // Handles streaming <think> tags that arrive character-by-character.
-        function parseThinkContent(rawText, isFinal = false) {
-            let reasoning = "";
-            let isThinking = false;
-            let hasPartialTag = false;
+        function parseThinkSegments(rawText) {
+            let segments = [];
+            let currentIdx = 0;
+            const openRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/gi;
+            const closeRegex = /<\/?\|?(?:think|thought|reasoning|thought_end)[^>]*>/gi;
 
-            const openTagRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/i;
-            const firstOpenMatch = rawText.match(openTagRegex);
-            let preText = "";
-            let content = rawText;
-            
-            if (firstOpenMatch) {
-                preText = rawText.substring(0, firstOpenMatch.index);
-            }
-            
-            const thinkRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>([\s\S]*?)<\/?\|?(?:think|thought|reasoning|thought_end)[^>]*>/gi;
-            let match;
-            while ((match = thinkRegex.exec(content)) !== null) {
-                reasoning += (reasoning ? "\n\n" : "") + match[1].trim();
-            }
-            
-            content = content.replace(thinkRegex, "");
-            
-            const openMatch = content.match(openTagRegex);
-            if (openMatch) {
-                const openIdx = openMatch.index;
-                const activeReasoning = content.substring(openIdx + openMatch[0].length);
-                reasoning += (reasoning ? "\n\n" : "") + activeReasoning.trim();
-                content = content.substring(0, openIdx).trim();
-                isThinking = true;
-            }
-            
-            const partialPatterns = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
-            const lowerContent = content.toLowerCase();
-            for (const partial of partialPatterns) {
-                for (let len = 1; len < partial.length; len++) {
-                    const suffix = partial.substring(0, len);
-                    if (lowerContent.endsWith(suffix)) {
-                        content = content.substring(0, content.length - len);
-                        hasPartialTag = true;
-                        break;
+            while (true) {
+                openRegex.lastIndex = currentIdx;
+                let openMatch = openRegex.exec(rawText);
+                
+                if (!openMatch) {
+                    let textContent = rawText.substring(currentIdx);
+                    const partials = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
+                    const lowerContent = textContent.toLowerCase();
+                    for (let p of partials) {
+                        let found = false;
+                        for (let i = p.length - 1; i >= 1; i--) {
+                            if (lowerContent.endsWith(p.substring(0, i))) {
+                                textContent = textContent.substring(0, textContent.length - i);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) break;
                     }
+                    if (textContent.length > 0) {
+                        segments.push({ type: 'text', content: textContent });
+                    }
+                    break;
                 }
-                if (hasPartialTag) break;
-            }
 
-            let postText = "";
-            if (firstOpenMatch) {
-                postText = content.substring(preText.length).trim();
-                preText = preText.trim();
-            } else {
-                preText = content.trim();
-                postText = "";
-            }
+                let textBefore = rawText.substring(currentIdx, openMatch.index);
+                if (textBefore.length > 0) {
+                    segments.push({ type: 'text', content: textBefore });
+                }
 
-            return { reasoning, preText, postText, isThinking, hasPartialTag };
+                closeRegex.lastIndex = openMatch.index + openMatch[0].length;
+                let closeMatch = closeRegex.exec(rawText);
+
+                if (closeMatch) {
+                    let thinkContent = rawText.substring(openMatch.index + openMatch[0].length, closeMatch.index);
+                    segments.push({ type: 'think', content: thinkContent, isClosed: true });
+                    currentIdx = closeMatch.index + closeMatch[0].length;
+                } else {
+                    let thinkContent = rawText.substring(openMatch.index + openMatch[0].length);
+                    segments.push({ type: 'think', content: thinkContent, isClosed: false });
+                    break;
+                }
+            }
+            return segments;
         }
 
         // ========== UI Render Helper ==========
         function updateMessageUI(ctx, isFinal) {
-            let displayReasoning = ctx.aiReasoning;
-
-            const parsed = parseThinkContent(ctx.fullRawText, isFinal);
-            if (parsed.reasoning) {
-                displayReasoning = displayReasoning ? displayReasoning + "\n" + parsed.reasoning : parsed.reasoning;
+            let segments = parseThinkSegments(ctx.fullRawText);
+            
+            if (ctx.aiReasoning) {
+                segments.unshift({
+                    type: 'think',
+                    content: ctx.aiReasoning,
+                    isClosed: ctx.fullRawText.length > 0 || isFinal
+                });
             }
-            displayReasoning = displayReasoning.replace(/^\s+/, "");
-            let currentlyThinking = parsed.isThinking;
-
-            if (parsed.preText.length > 0) {
-                ctx.preTextContent.innerHTML = DOMPurify.sanitize(marked.parse(parsed.preText));
-                ctx.preTextContent.style.display = "block";
-            } else {
-                ctx.preTextContent.style.display = "none";
-            }
-
-            if (displayReasoning.trim().length > 0) {
-                if (ctx.thinkBlock.style.display === "none") {
-                    ctx.thinkBlock.style.display = "block";
-                    if (!isFinal) ctx.thinkBlock.open = true;
-                }
-                ctx.thinkContent.textContent = displayReasoning;
+            
+            if (!ctx.domSegments) ctx.domSegments = [];
+            
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                let domSeg = ctx.domSegments[i];
                 
-                if (currentlyThinking && !isFinal) {
-                    let thinkDuration = Math.floor((Date.now() - ctx.startTime) / 1000);
-                    ctx.thinkBlock.classList.add("thinking-active");
-                    ctx.thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process (${thinkDuration}s)`;
-                } else if (ctx.thinkBlock.classList.contains("thinking-active") || isFinal) {
-                    ctx.thinkBlock.classList.remove("thinking-active");
-                    let finalDurationText = ctx.thinkBlock.querySelector("summary").innerHTML.match(/\(\d+s\)/);
-                    ctx.thinkBlock.querySelector("summary").innerHTML = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
+                if (!domSeg) {
+                    if (seg.type === 'text') {
+                        const div = document.createElement('div');
+                        div.className = 'text-content';
+                        if (i > 0) div.style.marginTop = '12px';
+                        ctx.responseContainer.appendChild(div);
+                        domSeg = { type: 'text', el: div };
+                    } else if (seg.type === 'think') {
+                        const details = document.createElement('details');
+                        details.className = 'think-block';
+                        details.open = true;
+                        
+                        const summary = document.createElement('summary');
+                        summary.textContent = '🧠 Thinking Process';
+                        details.appendChild(summary);
+                        
+                        const content = document.createElement('div');
+                        content.className = 'think-content';
+                        details.appendChild(content);
+                        
+                        ctx.responseContainer.appendChild(details);
+                        domSeg = { type: 'think', el: details, summaryEl: summary, contentEl: content, hasAutoClosed: false };
+                    }
+                    ctx.domSegments.push(domSeg);
                 }
-            }
-
-            if (parsed.postText.trim().length > 0) {
-                if (!ctx.hasAutoClosed && ctx.thinkBlock.style.display === "block" && !currentlyThinking) {
-                    ctx.thinkBlock.open = false;
-                    ctx.hasAutoClosed = true;
-                }
-                ctx.textContent.innerHTML = DOMPurify.sanitize(marked.parse(parsed.postText));
-            } else {
-                if (currentlyThinking && ctx.thinkBlock.style.display === "block") {
-                    ctx.textContent.innerHTML = "";
-                }
-                if (isFinal) {
-                    ctx.textContent.innerHTML = "";
+                
+                if (seg.type === 'text') {
+                    domSeg.el.innerHTML = DOMPurify.sanitize(marked.parse(seg.content));
+                } else if (seg.type === 'think') {
+                    domSeg.contentEl.textContent = seg.content.replace(/^\s+/, "");
+                    
+                    let isThinkingActive = !seg.isClosed && !isFinal;
+                    
+                    if (seg.isClosed && !domSeg.hasAutoClosed) {
+                        domSeg.el.open = false;
+                        domSeg.hasAutoClosed = true;
+                    }
+                    
+                    if (isThinkingActive) {
+                        let thinkDuration = Math.floor((Date.now() - ctx.startTime) / 1000);
+                        domSeg.el.classList.add("thinking-active");
+                        domSeg.summaryEl.textContent = \`🧠 Thinking Process (\${thinkDuration}s)\`;
+                    } else {
+                        domSeg.el.classList.remove("thinking-active");
+                        let finalDurationText = domSeg.summaryEl.textContent.match(/\\(\\d+s\\)/);
+                        domSeg.summaryEl.textContent = \`🧠 Thinking Process \${finalDurationText ? finalDurationText[0] : ''}\`;
+                    }
                 }
             }
             
-            // Highlighting is handled natively by marked.use() renderer config
+            while (ctx.domSegments.length > segments.length) {
+                const extra = ctx.domSegments.pop();
+                extra.el.remove();
+            }
+            
+            if (!ctx.typingIndicator) {
+                ctx.typingIndicator = document.createElement('div');
+                ctx.typingIndicator.className = 'typing-indicator';
+                ctx.typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                ctx.typingIndicator.style.marginTop = '8px';
+            }
+            
+            if (isFinal) {
+                if (ctx.typingIndicator.parentNode) ctx.typingIndicator.remove();
+            } else {
+                ctx.responseContainer.appendChild(ctx.typingIndicator);
+            }
+            
             injectCopyButtons(ctx.responseContainer);
 
-            if (!userScrolledUp) chatbox.scrollTop = chatbox.scrollHeight;
+            if (!userScrolledUp) {
+                isAutoScrolling = true;
+                chatbox.scrollTop = chatbox.scrollHeight;
+                if (autoScrollTimeout) clearTimeout(autoScrollTimeout);
+                autoScrollTimeout = setTimeout(() => isAutoScrolling = false, 100);
+            }
         }
 
         // ========== Helper: build history content preserving reasoning ==========
@@ -1951,25 +1977,13 @@ Rules:
             const responseContainer = document.getElementById(responseContainerId);
             
             // Prepare containers for reasoning and text
-            responseContainer.innerHTML = `
-                <div class="pre-text-content" style="display: none; margin-bottom: 12px;"></div>
-                <details class="think-block" style="display: none;">
-                    <summary>🧠 Thinking Process</summary>
-                    <div class="think-content"></div>
-                </details>
-                <div class="text-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
-            `;
+            responseContainer.innerHTML = `<div class="ai-response-body"></div>`;
             
             let ctx = {
                 aiReasoning: "",
                 fullRawText: "",
-                preTextContent: responseContainer.querySelector('.pre-text-content'),
-                thinkBlock: responseContainer.querySelector('.think-block'),
-                thinkContent: responseContainer.querySelector('.think-content'),
-                textContent: responseContainer.querySelector('.text-content'),
                 startTime: Date.now(),
-                hasAutoClosed: false,
-                responseContainer: responseContainer
+                responseContainer: responseContainer.querySelector('.ai-response-body')
             };
             
             let promptTokens = 0;
