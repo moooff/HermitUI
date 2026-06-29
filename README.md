@@ -84,7 +84,8 @@ If HermitUI fails to connect to your local AI server (e.g., getting a "Network E
 ## 🏗️ Architecture & Philosophy
 
 HermitUI enforces strict architectural constraints to remain lightweight and accessible:
-*   **Single File Constraint:** The entire application source code lives within a single `src/hermit-ui.src.html` file.
+*   **Single File Constraint:** The final product must always be a single, standalone `.html` file. The `src/` directory acts only as a blueprint; even if CSS or JS are refactored into separate files for development, the resulting output in the `dist/` directory and the root `index.html` will always remain fully integrated single files.
+*   **Online Version:** You can try the live version hosted on GitHub Pages: [https://moooff.github.io/HermitUI](https://moooff.github.io/HermitUI)
 *   **Vanilla Only:** No React, Vue, Angular, or complex frontend frameworks. 
 *   **No Build Tools:** No `package.json`, `npm`, Webpack, or Vite.
 *   **No CSS Frameworks:** Pure Vanilla CSS, no Tailwind or Bootstrap.
