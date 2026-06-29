@@ -1497,78 +1497,42 @@ Rules:
 
             const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
 
-            try {
-                let chatUrl = API_URL.trim().replace(/\/+$/, "");
-                if (!chatUrl.endsWith("/chat/completions")) {
-                    chatUrl = chatUrl + "/chat/completions";
+            document.getElementById('chatForm').classList.add('is-generating');
+            responseContainer.classList.add('cursor');
+
+            await fetchAndStreamChat({
+                model: MODEL_NAME,
+                messages: [
+                    {"role": "system", "content": "You are a concise summarization assistant. Your output is rendered as Markdown.\n\nOutput format:\n## TL;DR\nOne-sentence summary.\n\n## Key Topics\n- Bulleted list of main subjects discussed.\n\n## Conclusions & Answers\n- Bulleted list of decisions, solutions, or answers reached. If the conversation is primarily code or debugging, include the specific technical solution or fix here.\n\n## Action Items\n- Bulleted list (or \"None\" if no action items were identified).\n\nKeep the summary proportional: 50-100 words for short conversations, up to 300 for longer ones."},
+                    {"role": "user", "content": summaryPrompt}
+                ],
+                temperature: 0.3,
+                stream: true,
+                stream_options: { include_usage: true }
+            }, abortController.signal, {
+                onChunk: (reasoningChunk, contentChunk, pt, ct) => {
+                    if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
+                    if (contentChunk) ctx.fullRawText += contentChunk;
+                    promptTokens = pt;
+                    completionTokens = ct;
+                    throttledRender(() => { updateMessageUI(ctx, false); });
+                },
+                onDone: (pt, ct) => {
+                    promptTokens = pt;
+                    completionTokens = ct;
+                    updateMessageUI(ctx, true);
+                    finishGeneration();
+                },
+                onError: (error) => {
+                    if (error.name !== 'AbortError') {
+                        responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
+                    }
+                    finishGeneration();
                 }
-                document.getElementById('chatForm').classList.add('is-generating');
-                const response = await fetch(chatUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
-                    body: JSON.stringify({
-                        model: MODEL_NAME,
-                        messages: [
-                            {"role": "system", "content": "You are a concise summarization assistant. Your output is rendered as Markdown.\n\nOutput format:\n## TL;DR\nOne-sentence summary.\n\n## Key Topics\n- Bulleted list of main subjects discussed.\n\n## Conclusions & Answers\n- Bulleted list of decisions, solutions, or answers reached. If the conversation is primarily code or debugging, include the specific technical solution or fix here.\n\n## Action Items\n- Bulleted list (or \"None\" if no action items were identified).\n\nKeep the summary proportional: 50-100 words for short conversations, up to 300 for longer ones."},
-                            {"role": "user", "content": summaryPrompt}
-                        ],
-                        temperature: 0.3,
-                        stream: true,
-                        stream_options: { include_usage: true }
-                    }),
-                    signal: abortController.signal
-                });
+            });
 
-                if (!response.ok) throw new Error(`Server Error ${response.status}`);
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let buffer = "";
-
-                responseContainer.classList.add('cursor');
-
-                const processLine = (line) => {
-                    if (line.trim() === "" || !line.startsWith("data: ")) return;
-                    const dataStr = line.substring(6).trim();
-                    if (dataStr === "[DONE]") return;
-
-                    try {
-                        const data = JSON.parse(dataStr);
-                        const delta = data.choices && data.choices[0] && data.choices[0].delta;
-
-                        const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
-                        if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
-
-                        const contentChunk = delta && delta.content;
-                        if (contentChunk) ctx.fullRawText += contentChunk;
-
-                        if (reasoningChunk || contentChunk) {
-                            throttledRender(() => { updateMessageUI(ctx, false); });
-                        }
-                        if (data.usage) {
-                            promptTokens = data.usage.prompt_tokens || promptTokens;
-                            completionTokens = data.usage.completion_tokens || completionTokens;
-                        }
-                    } catch (e) { console.error("Parse error:", e); }
-                };
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    for (const line of lines) processLine(line);
-                }
-                // Flush any trailing buffered line (stream may end without a final newline).
-                if (buffer.trim()) processLine(buffer);
-                updateMessageUI(ctx, true);
-            } catch (error) {
-                if (error.name !== 'AbortError') responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
-            } finally {
-                throttledRender.cancel(); // stop any trailing throttled render from clobbering final state
+            function finishGeneration() {
+                throttledRender.cancel();
                 document.getElementById('chatForm').classList.remove('is-generating');
                 responseContainer.classList.remove('cursor');
                 sendBtn.style.display = "flex";
@@ -1577,18 +1541,19 @@ Rules:
                 isWaiting = false;
                 inputField.focus();
                 let durationSec = (Date.now() - ctx.startTime) / 1000;
-                // Fallback token estimates when the server doesn't return usage.
                 if (completionTokens === 0) completionTokens = Math.ceil(ctx.fullRawText.length / 4);
                 if (promptTokens === 0) promptTokens = Math.ceil(summaryPrompt.length / 4);
                 let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
                 if (typeof updateGlobalStats === 'function') updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
                 const copyBtn = responseContainer.querySelector(".copy-summary-btn");
-                if (copyBtn) copyBtn.addEventListener("click", () => {
-                    navigator.clipboard.writeText(ctx.fullRawText).then(() => {
-                        copyBtn.textContent = "✅ Copied!";
-                        setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
+                if (copyBtn) {
+                    copyBtn.addEventListener("click", () => {
+                        navigator.clipboard.writeText(ctx.fullRawText).then(() => {
+                            copyBtn.textContent = "✅ Copied!";
+                            setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
+                        });
                     });
-                });
+                }
             }
         });
 
@@ -1753,6 +1718,78 @@ Rules:
             return finalContent;
         }
 
+        // ========== Stream Fetch Helper ==========
+        async function fetchAndStreamChat(payload, signal, callbacks) {
+            const { onChunk, onDone, onError } = callbacks;
+            let promptTokens = 0;
+            let completionTokens = 0;
+            let chatUrl = API_URL.trim().replace(/\/+$/, "");
+            if (!chatUrl.endsWith("/chat/completions")) {
+                chatUrl = chatUrl + "/chat/completions";
+            }
+            
+            try {
+                const response = await fetch(chatUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
+                    body: JSON.stringify(payload),
+                    signal: signal
+                });
+
+                if (!response.ok) {
+                    let detail = response.statusText || "Unknown Error";
+                    try { 
+                        const errBody = await response.json(); 
+                        detail = errBody.error?.message || detail; 
+                    } catch (e) {}
+                    throw new Error(`Server Error ${response.status}: ${detail}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+
+                const processLine = (line) => {
+                    if (line.trim() === "" || !line.startsWith("data: ")) return;
+                    const dataStr = line.substring(6).trim();
+                    if (dataStr === "[DONE]") return;
+
+                    try {
+                        const data = JSON.parse(dataStr);
+                        const delta = data.choices && data.choices[0] && data.choices[0].delta;
+
+                        const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
+                        const contentChunk = delta && delta.content;
+
+                        if (data.usage) {
+                            promptTokens = data.usage.prompt_tokens || promptTokens;
+                            completionTokens = data.usage.completion_tokens || completionTokens;
+                        }
+
+                        if (reasoningChunk || contentChunk) {
+                            onChunk(reasoningChunk || "", contentChunk || "", promptTokens, completionTokens);
+                        }
+                    } catch (e) { console.error("Stream parse error:", e, "Line:", line); }
+                };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) processLine(line);
+                }
+                if (buffer.trim()) processLine(buffer);
+                
+                onDone(promptTokens, completionTokens);
+            } catch (error) {
+                onError(error);
+            }
+        }
+
         // ========== State ==========
         let messages = [{"role": "system", "content": SYSTEM_PROMPT}];
         let isWaiting = false;
@@ -1875,121 +1912,54 @@ Rules:
             // Reset stats for new request
             updateGlobalStats("...", "...", "...", "0.0");
 
-            try {
-                let chatUrl = API_URL.trim().replace(/\/+$/, "");
-                if (!chatUrl.endsWith("/chat/completions")) {
-                    chatUrl = chatUrl + "/chat/completions";
-                }
-                document.getElementById('chatForm').classList.add('is-generating');
-                const response = await fetch(chatUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
-                    body: JSON.stringify({
-                        model: MODEL_NAME,
-                        messages: messages,
-                        temperature: TEMPERATURE,
-                        stream: true,
-                        stream_options: { include_usage: true }
-                    }),
-                    signal: abortController.signal
-                });
+            document.getElementById('chatForm').classList.add('is-generating');
+            responseContainer.classList.add('cursor');
 
-                if (!response.ok) {
-                    let detail = response.statusText || "Unknown Error";
-                    try { 
-                        const errBody = await response.json(); 
-                        detail = errBody.error?.message || detail; 
-                    } catch (e) {}
-                    throw new Error(`Server Error ${response.status}: ${detail}`);
-                }
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let buffer = "";
-
-                responseContainer.classList.add('cursor');
-
-                const processLine = (line) => {
-                    if (line.trim() === "") return;
-                    if (!line.startsWith("data: ")) return;
-                    const dataStr = line.substring(6).trim();
-                    if (dataStr === "[DONE]") return;
-
-                    try {
-                        const data = JSON.parse(dataStr);
-                        const delta = data.choices && data.choices[0] && data.choices[0].delta;
-
-                        // 1. Collect reasoning tokens (all known field names)
-                        const reasoningChunk = delta && (delta.reasoning_content || delta.reasoning || delta.thinking || "");
-                        if (reasoningChunk) {
-                            ctx.aiReasoning += reasoningChunk;
-                        }
-
-                        // 2. Collect content tokens
-                        const contentChunk = delta && delta.content;
-                        if (contentChunk) {
-                            ctx.fullRawText += contentChunk;
-                        }
-
-                        // Only update UI when something changed
-                        if (reasoningChunk || contentChunk) {
-                            throttledRender(() => {
-                                updateMessageUI(ctx, false);
-
-                                // Real-time stat updates
-                                let currentDuration = (Date.now() - ctx.startTime) / 1000;
-                                let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
-                                let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
-                                updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
-                            });
-                        }
-
-                        if (data.usage) {
-                            promptTokens = data.usage.prompt_tokens || promptTokens;
-                            completionTokens = data.usage.completion_tokens || completionTokens;
-                        }
-                    } catch (e) {
-                        console.error("Stream parse error:", e, "Line:", line);
-                    }
-                };
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    for (const line of lines) processLine(line);
-                }
-                // Flush any trailing buffered line (stream may end without a final newline).
-                if (buffer.trim()) processLine(buffer);
-
-                // Final render (flush any pending throttled update)
-                updateMessageUI(ctx, true);
-
-                // Remove cursor
-                responseContainer.classList.remove('cursor');
-                // Update history
-                let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
-                messages.push({"role": "assistant", "content": finalHistoryContent});
-
-            } catch (error) {
-                responseContainer.classList.remove('cursor');
-                if (error.name === 'AbortError') {
-                    // User cancelled — keep partial text in history
+            await fetchAndStreamChat({
+                model: MODEL_NAME,
+                messages: messages,
+                temperature: TEMPERATURE,
+                stream: true,
+                stream_options: { include_usage: true }
+            }, abortController.signal, {
+                onChunk: (reasoningChunk, contentChunk, pt, ct) => {
+                    if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
+                    if (contentChunk) ctx.fullRawText += contentChunk;
+                    promptTokens = pt;
+                    completionTokens = ct;
+                    throttledRender(() => {
+                        updateMessageUI(ctx, false);
+                        let currentDuration = (Date.now() - ctx.startTime) / 1000;
+                        let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
+                        let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
+                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
+                    });
+                },
+                onDone: (pt, ct) => {
+                    promptTokens = pt;
+                    completionTokens = ct;
                     updateMessageUI(ctx, true);
                     let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
                     messages.push({"role": "assistant", "content": finalHistoryContent});
-                } else {
-                    const errMsg = error.message || "Unknown Error";
-                    responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`;
+                    finishGeneration();
+                },
+                onError: (error) => {
+                    if (error.name === 'AbortError') {
+                        updateMessageUI(ctx, true);
+                        let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
+                        messages.push({"role": "assistant", "content": finalHistoryContent});
+                    } else {
+                        const errMsg = error.message || "Unknown Error";
+                        responseContainer.innerHTML = `<span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`;
+                    }
+                    finishGeneration();
                 }
-            } finally {
-                throttledRender.cancel(); // stop any trailing throttled render from clobbering final stats
+            });
+
+            function finishGeneration() {
+                throttledRender.cancel();
                 document.getElementById('chatForm').classList.remove('is-generating');
-                // Reset UI
+                responseContainer.classList.remove('cursor');
                 sendBtn.style.display = "flex";
                 stopBtn.style.display = "none";
                 inputField.disabled = false;
@@ -1999,7 +1969,6 @@ Rules:
                 let endTime = Date.now();
                 let durationSec = (endTime - ctx.startTime) / 1000;
                 
-                // Fallbacks for token counts
                 if (completionTokens === 0 && messages.length > 0 && messages[messages.length-1].role === "assistant") {
                     completionTokens = Math.ceil(messages[messages.length-1].content.length / 4);
                 }
@@ -2010,8 +1979,6 @@ Rules:
                 }
                 
                 let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
-                
-                // Final accurate stats update
                 updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
                 
                 if (!userScrolledUp) {
