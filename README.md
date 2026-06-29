@@ -76,6 +76,12 @@ Here are a few quick configuration examples based on popular local AI servers:
 2. **API URL:** `http://localhost:8000/v1/chat/completions`
 3. **Model Name:** The model name specified in your command (e.g., `meta-llama/Llama-2-7b-chat-hf`).
 
+### Using Cloud Models (OpenRouter, OpenAI, Groq, etc.)
+You are not limited to local models! HermitUI works perfectly with any cloud provider that offers an OpenAI-compatible API endpoint.
+1. **API URL:** The provider's chat completions endpoint (e.g., `https://openrouter.ai/api/v1/chat/completions` or `https://api.openai.com/v1/chat/completions`).
+2. **Model Name:** The specific model you want to use (e.g., `anthropic/claude-3.5-sonnet`, `gpt-4o`).
+3. **API Key:** Enter your provider's API key in the settings menu.
+
 ## 🔧 Troubleshooting (CORS)
 
 If HermitUI fails to connect to your local AI server (e.g., getting a "Network Error"), it is most likely due to **CORS (Cross-Origin Resource Sharing)** restrictions. Because HermitUI runs as a local file (`file://`), modern browsers will block its requests to `http://localhost` unless the server explicitly allows it.
