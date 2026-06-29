@@ -2,6 +2,7 @@
   <img width="500" alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
+    <a href="https://moooff.github.io/HermitUI"><b>🌐 Online Demo</b></a> •
     <a href="#-ideal-use-cases">Use Cases</a> •
     <a href="#-features">Features</a> •
     <a href="#-quick-start">Quick Start</a> •
@@ -12,6 +13,9 @@
 </div>
 
 ![HermitUI Screenshot](screenshot.png)
+
+> ### 🚀 [Try the Live Online Demo](https://moooff.github.io/HermitUI)
+> *Works entirely in your browser. Just connect it to your local AI server!*
 
 HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.src.html` file** using vanilla HTML, CSS, and JavaScript. 
 
