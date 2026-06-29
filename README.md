@@ -78,6 +78,10 @@ Here are a few quick configuration examples based on popular local AI servers:
 
 ### Using Cloud Models (OpenRouter, OpenAI, Groq, etc.)
 You are not limited to local models! HermitUI works perfectly with any cloud provider that offers an OpenAI-compatible API endpoint.
+
+> [!WARNING]
+> **Privacy Note:** While HermitUI supports cloud models, using them is generally **not advised** if you require strict privacy. When using third-party APIs, your data and chat history leave your local machine, and it is unclear how these providers handle, store, or train on that data. For maximum privacy and true ephemerality, stick to local models.
+
 1. **API URL:** The provider's chat completions endpoint (e.g., `https://openrouter.ai/api/v1/chat/completions` or `https://api.openai.com/v1/chat/completions`).
 2. **Model Name:** The specific model you want to use (e.g., `anthropic/claude-3.5-sonnet`, `gpt-4o`).
 3. **API Key:** Enter your provider's API key in the settings menu.
