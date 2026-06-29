@@ -2,6 +2,11 @@
   <img width="500" alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
+    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
+    <img alt="Vanilla JS" src="https://img.shields.io/badge/Vanilla%20JS-F7DF1E?style=flat&logo=javascript&logoColor=black" />
+    <img alt="Zero Dependencies" src="https://img.shields.io/badge/Dependencies-0-brightgreen.svg" />
+  </p>
+  <p>
     <a href="https://moooff.github.io/HermitUI"><b>🌐 Online Demo</b></a> •
     <a href="#-ideal-use-cases">Use Cases</a> •
     <a href="#-features">Features</a> •
@@ -14,8 +19,12 @@
 
 ![HermitUI Screenshot](screenshot.png)
 
-> ### 🚀 [Try the Live Online Demo](https://moooff.github.io/HermitUI)
-> *Works entirely in your browser. Just connect it to your local AI server!*
+<div align="center">
+  <a href="https://moooff.github.io/HermitUI">
+    <img src="https://img.shields.io/badge/🚀_Try_the_Live_Online_Demo-2ea44f?style=for-the-badge" alt="Try the Live Online Demo" />
+  </a>
+  <p><i>Works entirely in your browser. Just connect it to your local AI server!</i></p>
+</div>
 
 HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.src.html` file** using vanilla HTML, CSS, and JavaScript. 
 
