@@ -2,7 +2,7 @@
   <img width="500" alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
-    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
+    <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Vanilla JS" src="https://img.shields.io/badge/Vanilla%20JS-F7DF1E?style=flat&logo=javascript&logoColor=black" />
     <img alt="Zero Dependencies" src="https://img.shields.io/badge/Dependencies-0-brightgreen.svg" />
   </p>
