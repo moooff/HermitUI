@@ -191,7 +191,6 @@
             flex-grow: 1;
             overflow-y: auto;
             padding: 20px 0;
-            scroll-behavior: smooth;
         }
 
         .msg-wrapper {
@@ -1037,7 +1036,7 @@ Rules:
 
         let userScrolledUp = false;
         chatbox.addEventListener('scroll', () => {
-            const isNearBottom = chatbox.scrollHeight - chatbox.scrollTop <= chatbox.clientHeight + 50;
+            const isNearBottom = Math.ceil(chatbox.scrollTop) + chatbox.clientHeight >= chatbox.scrollHeight - 50;
             userScrolledUp = !isNearBottom;
             if (userScrolledUp) {
                 jumpBottomBtn.classList.add('active');
