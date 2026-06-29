@@ -1706,17 +1706,68 @@ Rules:
 
         // ========== UI Render Helper ==========
         function updateMessageUI(ctx, isFinal) {
-            let segments = parseThinkSegments(ctx.fullRawText);
+            let parsedSegments = parseThinkSegments(ctx.fullRawText);
             
             if (ctx.aiReasoning) {
-                segments.unshift({
+                parsedSegments.unshift({
                     type: 'think',
                     content: ctx.aiReasoning,
                     isClosed: ctx.fullRawText.length > 0 || isFinal
                 });
             }
             
+            let preText = [];
+            let thinkContents = [];
+            let postText = [];
+            let hasThink = false;
+            let anyThinkUnclosed = false;
+
+            for (const seg of parsedSegments) {
+                if (seg.type === 'think') {
+                    hasThink = true;
+                    if (seg.content) thinkContents.push(seg.content);
+                    if (!seg.isClosed) anyThinkUnclosed = true;
+                } else if (seg.type === 'text') {
+                    if (!hasThink) {
+                        preText.push(seg.content);
+                    } else {
+                        postText.push(seg.content);
+                    }
+                }
+            }
+            
+            let segments = [];
+            if (preText.length > 0) {
+                segments.push({ type: 'text', content: preText.join('') });
+            }
+            if (hasThink) {
+                segments.push({
+                    type: 'think',
+                    content: thinkContents.join('\n\n'),
+                    isClosed: !anyThinkUnclosed
+                });
+            }
+            if (postText.length > 0) {
+                segments.push({ type: 'text', content: postText.join('') });
+            }
+            
             if (!ctx.domSegments) ctx.domSegments = [];
+            
+            // Validate DOM sync just in case
+            let needsRebuild = false;
+            for (let i = 0; i < Math.min(segments.length, ctx.domSegments.length); i++) {
+                if (segments[i].type !== ctx.domSegments[i].type) {
+                    needsRebuild = true;
+                    break;
+                }
+            }
+            
+            if (needsRebuild) {
+                ctx.responseContainer.innerHTML = '';
+                ctx.domSegments = [];
+                if (ctx.typingIndicator) ctx.typingIndicator.remove();
+                ctx.typingIndicator = null;
+            }
             
             for (let i = 0; i < segments.length; i++) {
                 const seg = segments[i];
@@ -1726,7 +1777,7 @@ Rules:
                     if (seg.type === 'text') {
                         const div = document.createElement('div');
                         div.className = 'text-content';
-                        if (i > 0) div.style.marginTop = '12px';
+                        if (ctx.responseContainer.children.length > 0) div.style.marginTop = '12px';
                         ctx.responseContainer.appendChild(div);
                         domSeg = { type: 'text', el: div };
                     } else if (seg.type === 'think') {
@@ -1763,11 +1814,11 @@ Rules:
                     if (isThinkingActive) {
                         let thinkDuration = Math.floor((Date.now() - ctx.startTime) / 1000);
                         domSeg.el.classList.add("thinking-active");
-                        domSeg.summaryEl.textContent = \`🧠 Thinking Process (\${thinkDuration}s)\`;
+                        domSeg.summaryEl.textContent = `🧠 Thinking Process (${thinkDuration}s)`;
                     } else {
                         domSeg.el.classList.remove("thinking-active");
-                        let finalDurationText = domSeg.summaryEl.textContent.match(/\\(\\d+s\\)/);
-                        domSeg.summaryEl.textContent = \`🧠 Thinking Process \${finalDurationText ? finalDurationText[0] : ''}\`;
+                        let finalDurationText = domSeg.summaryEl.textContent.match(/\(\d+s\)/);
+                        domSeg.summaryEl.textContent = `🧠 Thinking Process ${finalDurationText ? finalDurationText[0] : ''}`;
                     }
                 }
             }
