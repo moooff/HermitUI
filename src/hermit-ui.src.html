@@ -1319,7 +1319,8 @@ Rules:
                 MODEL_NAME = modelInput.value.trim();
             }
             
-            TEMPERATURE = parseFloat(document.getElementById("settingTemperature").value) || 0.7;
+            let tempVal = parseFloat(document.getElementById("settingTemperature").value);
+            TEMPERATURE = isNaN(tempVal) ? 0.7 : tempVal;
             const newPrompt = document.getElementById("settingSystem").value.trim();
             SYSTEM_PROMPT = newPrompt;
             messages[0].content = SYSTEM_PROMPT;
@@ -1656,7 +1657,7 @@ Rules:
             let content = rawText;
             
             // Extract all completed reasoning blocks
-            const thinkRegex = /<(?:\|?)(?:think|thought|reasoning|thought_start)[\s>]([\s\S]*?)<\/(?:\|?)(?:think|thought|reasoning|thought_end)>/gi;
+            const thinkRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>([\s\S]*?)<\/?\|?(?:think|thought|reasoning|thought_end)[^>]*>/gi;
             let match;
             while ((match = thinkRegex.exec(content)) !== null) {
                 reasoning += (reasoning ? "\n\n" : "") + match[1].trim();
@@ -1666,7 +1667,7 @@ Rules:
             content = content.replace(thinkRegex, "");
             
             // Now check for an unclosed (active) thinking block
-            const openTagRegex = /<(?:\|?)(?:think|thought|reasoning|thought_start)[\s>]/i;
+            const openTagRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/i;
             const openMatch = content.match(openTagRegex);
             
             if (openMatch) {
@@ -1892,21 +1893,23 @@ Rules:
             }
             
             // UI update
-            inputField.value = "";
-            inputField.style.height = "auto";
-            if (typeof contextPane !== "undefined" && contextPane) {
-                contextPane.style.display = "none";
-            }
-            if (typeof contextInput !== "undefined" && contextInput) {
-                contextInput.value = "";
-                contextInput.style.height = "auto";
-            }
-            if (typeof attachContextBtn !== "undefined" && attachContextBtn) {
-                attachContextBtn.style.color = "#6b7280";
-            }
-            if (typeof attachedFiles !== "undefined") {
-                attachedFiles = [];
-                if (typeof renderChips === "function") renderChips();
+            if (!isRegenerate) {
+                inputField.value = "";
+                inputField.style.height = "auto";
+                if (typeof contextPane !== "undefined" && contextPane) {
+                    contextPane.style.display = "none";
+                }
+                if (typeof contextInput !== "undefined" && contextInput) {
+                    contextInput.value = "";
+                    contextInput.style.height = "auto";
+                }
+                if (typeof attachContextBtn !== "undefined" && attachContextBtn) {
+                    attachContextBtn.style.color = "#6b7280";
+                }
+                if (typeof attachedFiles !== "undefined") {
+                    attachedFiles = [];
+                    if (typeof renderChips === "function") renderChips();
+                }
             }
             sendBtn.style.display = "none";
             stopBtn.style.display = "flex";
