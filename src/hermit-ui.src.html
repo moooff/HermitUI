@@ -856,6 +856,10 @@
 
     <main>
         <div id="chat-container">
+            <div id="mainScreenCloudWarning" style="display: none; background: rgba(254, 243, 199, 0.85); color: #92400e; padding: 10px 16px; font-size: 0.85rem; border-bottom: 1px solid #fcd34d; align-items: center; justify-content: center; gap: 8px; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.05); z-index: 10;">
+                <span style="font-size: 1.1rem;">⚠️</span>
+                <span><b>Privacy Warning:</b> You are using a cloud provider (<span id="mainCloudProviderName"></span>). Your chat data leaves your local machine.</span>
+            </div>
             <div id="chatbox"></div>
            
             <div class="input-container">
@@ -1058,6 +1062,22 @@ Rules:
             }
         }
         updateOverlay();
+
+        function updateMainCloudWarning() {
+            const url = API_URL.toLowerCase();
+            const cloudProviders = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "api.gemini.com", "cloudflare.com"];
+            const match = cloudProviders.find(p => url.includes(p));
+            const banner = document.getElementById("mainScreenCloudWarning");
+            if (banner) {
+                if (match) {
+                    document.getElementById("mainCloudProviderName").textContent = match;
+                    banner.style.display = "flex";
+                } else {
+                    banner.style.display = "none";
+                }
+            }
+        }
+        updateMainCloudWarning();
 
         // ========== Persona Switcher ==========
         const personaSelect = document.getElementById("personaSelect");
