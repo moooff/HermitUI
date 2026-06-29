@@ -2086,6 +2086,12 @@ return He}()
             <h3>⚙️ Settings</h3>
             <label for="settingUrl">API Base URL</label>
             <input type="text" id="settingUrl" value="http://localhost:1234/v1">
+            <div id="cloudWarning" style="display: none; background: rgba(254, 243, 199, 0.8); color: #92400e; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; font-size: 0.85rem; border: 1px solid #fcd34d; align-items: flex-start; gap: 8px;">
+                <span style="font-size: 1.1rem; flex-shrink: 0;">⚠️</span>
+                <div>
+                    <b>Privacy Warning:</b> You are connecting to a cloud provider. Your chat data will leave your local machine.
+                </div>
+            </div>
             <label for="settingApiKey">API Key</label>
             <input type="password" id="settingApiKey" value="dummy">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -2499,8 +2505,18 @@ Rules:
 
         // ========== Settings Modal ==========
         const settingsModal = document.getElementById("settingsModal");
+        
+        function checkCloudWarning() {
+            const url = document.getElementById("settingUrl").value.toLowerCase();
+            const cloudProviders = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "api.gemini.com", "cloudflare.com"];
+            const isCloud = cloudProviders.some(p => url.includes(p));
+            document.getElementById("cloudWarning").style.display = isCloud ? "flex" : "none";
+        }
+        document.getElementById("settingUrl").addEventListener("input", checkCloudWarning);
+
         document.getElementById("settingsBtn").addEventListener("click", () => {
             document.getElementById("settingUrl").value = API_URL;
+            checkCloudWarning();
             document.getElementById("settingApiKey").value = API_KEY;
             
             document.getElementById("settingModelInput").value = MODEL_NAME;
