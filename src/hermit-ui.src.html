@@ -21,6 +21,7 @@
             --primary-hover: #2563eb;
             --user-bg: #f8fafc;
             --ai-bg: transparent;
+            --code-bg: #f1f5f9;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1321,6 +1322,7 @@ Rules:
             updateGlobalStats("0", "0", "0.0", "0.0");
         });
 
+        let toastTimeout = null;
         function showToast(message) {
             let toast = document.getElementById("toastNotification");
             if (!toast) {
@@ -1331,7 +1333,8 @@ Rules:
             }
             toast.textContent = message;
             toast.classList.add("show");
-            setTimeout(() => toast.classList.remove("show"), 2500);
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => toast.classList.remove("show"), 2500);
         }
 
         // ========== Test Connection & Fetch Models ==========
@@ -1809,7 +1812,11 @@ Rules:
                 }
                 
                 uiText = DOMPurify.sanitize(uiText);
-                appendMessage("You", uiText, "user", "🧑‍💻", true, payloadText);
+                appendMessage("You", uiText, "user", "🧑‍💻", true, {
+                    text: text,
+                    contextText: contextText,
+                    files: typeof attachedFiles !== "undefined" ? attachedFiles.map(f => ({ name: f.name, content: f.content })) : []
+                });
             }
             
             // UI update
@@ -2014,7 +2021,7 @@ Rules:
         });
 
         // ========== Append Message ==========
-        function appendMessage(sender, text, cssClass, emoji, isRawHtml = false, rawText = text) {
+        function appendMessage(sender, text, cssClass, emoji, isRawHtml = false, rawData = text) {
             const wrapper = document.createElement("div");
             wrapper.className = `msg-wrapper ${cssClass}`;
             
@@ -2053,7 +2060,28 @@ Rules:
                 editBtn.innerHTML = "✏️ Edit";
                 editBtn.addEventListener("click", () => {
                     if (isWaiting) return;
-                    inputField.value = rawText;
+                    
+                    if (rawData && typeof rawData === 'object') {
+                        inputField.value = rawData.text || "";
+                        if (rawData.contextText || (rawData.files && rawData.files.length > 0)) {
+                            const contextPane = document.getElementById("context-pane");
+                            const contextInput = document.getElementById("context-input");
+                            const attachBtn = document.getElementById("attach-context-btn");
+                            
+                            if (contextPane) {
+                                contextPane.style.display = "flex";
+                                if (attachBtn) attachBtn.style.color = "var(--primary)";
+                                if (contextInput) contextInput.value = rawData.contextText || "";
+                            }
+                            if (rawData.files && rawData.files.length > 0) {
+                                attachedFiles = rawData.files.map(f => ({ name: f.name, content: f.content }));
+                                if (typeof renderChips === "function") renderChips();
+                            }
+                        }
+                    } else {
+                        inputField.value = typeof rawData === 'string' ? rawData : text;
+                    }
+                    
                     inputField.focus();
                     inputField.dispatchEvent(new Event('input'));
                     
