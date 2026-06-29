@@ -130,6 +130,10 @@ def build():
         f.write(standalone_html)
     print("  ✅ hermit-ui.html (Entirely integrated single-file, placed in root!)")
 
+    with open("index.html", "w", encoding="utf-8") as f:
+        f.write(standalone_html)
+    print("  ✅ index.html (Same file, served as the GitHub Pages landing page)")
+
     print("\n🎉 Build complete!")
 
 if __name__ == "__main__":
