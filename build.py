@@ -84,7 +84,7 @@ def build():
 
     # Inline favicon into the template
     try:
-        with open("favicon.svg", "rb") as f:
+        with open("src/favicon.svg", "rb") as f:
             favicon_b64 = base64.b64encode(f.read()).decode("utf-8")
         html = re.sub(
             r'(<link[^>]*?rel=["\']icon["\'][^>]*?href=["\'])[^"\']+(["\'])',

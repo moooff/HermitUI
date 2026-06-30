@@ -17,7 +17,7 @@
   </p>
 </div>
 
-![HermitUI Screenshot](screenshot.png)
+![HermitUI Screenshot](docs/screenshot.png)
 
 <div align="center">
   <a href="https://moooff.github.io/HermitUI">
