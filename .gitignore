@@ -2,3 +2,4 @@
 dist/
 libs/
 .claude/settings.local.json
+CLAUDE.md
