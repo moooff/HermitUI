@@ -26,6 +26,8 @@ def fetch(url, headers=None):
 
 def build():
     os.makedirs("libs/fonts", exist_ok=True)
+    # Start from a clean dist/ so renamed/stale outputs don't linger between builds.
+    shutil.rmtree("dist", ignore_errors=True)
     os.makedirs("dist", exist_ok=True)
     
     print("📥 Downloading libraries from CDNs...")
@@ -99,32 +101,48 @@ def build():
         f.write(html)
     print("  ✅ dist/hermit-ui-cdn.html (Base version using CDNs)")
 
-    # 2. Local Version
-    local_html = html
-    local_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', '<script src="../libs/marked.js"></script>', local_html)
-    local_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', '<script src="../libs/dompurify.js"></script>', local_html)
-    local_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', '<link rel="stylesheet" href="../libs/highlight.css">', local_html)
-    local_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', '<script src="../libs/highlight.js"></script>', local_html)
-    local_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', '<link href="../libs/inter.css" rel="stylesheet">', local_html)
-
-    with open("dist/hermit-ui-local.html", "w", encoding="utf-8") as f:
-        f.write(local_html)
-    print("  ✅ dist/hermit-ui-local.html (Links point to local libs/ directory)")
-
-    # 3. Standalone Version
-    standalone_html = html
-    
+    # Decode cached library contents for inlining. Scripts escape </script> so the
+    # inlined code can't prematurely close the surrounding <script> tag.
     marked_script = cache["marked.js"].decode("utf-8").replace("</script>", r"<\/script>")
     dompurify_script = cache["dompurify.js"].decode("utf-8").replace("</script>", r"<\/script>")
     hl_css = cache["highlight.css"].decode("utf-8")
     hl_script = cache["highlight.js"].decode("utf-8").replace("</script>", r"<\/script>")
     inter_inline = cache["inter_inline.css"].decode("utf-8")
 
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>', lambda m: f'<script>{marked_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>', lambda m: f'<script>{dompurify_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>', lambda m: f'<style>{hl_css}</style>', standalone_html)
-    standalone_html = re.sub(r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>', lambda m: f'<script>{hl_script}</script>', standalone_html)
-    standalone_html = re.sub(r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>', lambda m: f'<style>{inter_inline}</style>', standalone_html)
+    # Single source of truth per asset: each CDN tag's regex lives once and drives both
+    # the local (link to ../libs/) and standalone (inline content) rewrites. The inline
+    # replacements are callables so their text isn't treated as regex backreferences.
+    ASSETS = [
+        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>',
+         '<script src="../libs/marked.js"></script>',
+         lambda m: f'<script>{marked_script}</script>'),
+        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>',
+         '<script src="../libs/dompurify.js"></script>',
+         lambda m: f'<script>{dompurify_script}</script>'),
+        (r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>',
+         '<link rel="stylesheet" href="../libs/highlight.css">',
+         lambda m: f'<style>{hl_css}</style>'),
+        (r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>',
+         '<script src="../libs/highlight.js"></script>',
+         lambda m: f'<script>{hl_script}</script>'),
+        (r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>',
+         '<link href="../libs/inter.css" rel="stylesheet">',
+         lambda m: f'<style>{inter_inline}</style>'),
+    ]
+
+    # 2. Local Version (CDN links rewritten to point at the local libs/ directory)
+    local_html = html
+    for pattern, local_repl, _ in ASSETS:
+        local_html = re.sub(pattern, local_repl, local_html)
+
+    with open("dist/hermit-ui-local.html", "w", encoding="utf-8") as f:
+        f.write(local_html)
+    print("  ✅ dist/hermit-ui-local.html (Links point to local libs/ directory)")
+
+    # 3. Standalone Version (all libraries inlined directly into the file)
+    standalone_html = html
+    for pattern, _, inline_repl in ASSETS:
+        standalone_html = re.sub(pattern, inline_repl, standalone_html)
 
     with open("hermit-ui.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
