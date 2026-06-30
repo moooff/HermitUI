@@ -144,13 +144,13 @@ def build():
     for pattern, _, inline_repl in ASSETS:
         standalone_html = re.sub(pattern, inline_repl, standalone_html)
 
-    with open("hermit-ui.html", "w", encoding="utf-8") as f:
+    with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
-    print("  ✅ hermit-ui.html (Entirely integrated single-file, placed in root!)")
+    print("  ✅ dist/hermit-ui-standalone.html (Entirely integrated single-file)")
 
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(standalone_html)
-    print("  ✅ index.html (Same file, served as the GitHub Pages landing page)")
+    # Final step: copy the standalone build out to root index.html for GitHub Pages.
+    shutil.copyfile("dist/hermit-ui-standalone.html", "index.html")
+    print("  ✅ index.html (Copy of the standalone build, served as the GitHub Pages landing page)")
 
     print("\n🎉 Build complete!")
 

@@ -38,7 +38,7 @@ No build steps, no backend, and no installation required—just open the file in
 
 ## ✨ Features
 
-*   **📦 Zero-Dependency Setup:** The default `hermit-ui.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.src.html`).
+*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.src.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
 *   **🎭 Personas:** Switch between preset system prompts on the fly via a dropdown to instantly re-shape the assistant's behavior.
@@ -58,7 +58,7 @@ No build steps, no backend, and no installation required—just open the file in
     *   *Examples:* [LM Studio](https://lmstudio.ai/), [Ollama](https://ollama.com/) (with OpenAI compatibility), or [vLLM](https://github.com/vllm-project/vllm).
     *   *Default expected endpoint:* `http://localhost:1234/v1/chat/completions` (LM Studio default).
 2.  **Open HermitUI:**
-    Simply double-click the `hermit-ui.html` file to open it in any modern web browser.
+    Simply double-click the `index.html` file to open it in any modern web browser.
 3.  **Configure (if needed):**
     Click the **⚙️ Settings** button in the top right corner to update the API URL, the Model Name, or the default System Prompt to match your local setup.
 
@@ -110,7 +110,7 @@ If HermitUI fails to connect to your local AI server (e.g., getting a "Network E
 ## 🏗️ Architecture & Philosophy
 
 HermitUI enforces strict architectural constraints to remain lightweight and accessible:
-*   **Single File Constraint:** The final product must always be a single, standalone `.html` file. The `src/` directory acts only as a blueprint; even if CSS or JS are refactored into separate files for development, the resulting output in the `dist/` directory and the root `hermit-ui.html` (and `index.html`) will always remain fully integrated single files.
+*   **Single File Constraint:** The final product must always be a single, standalone `.html` file. The `src/` directory acts only as a blueprint; even if CSS or JS are refactored into separate files for development, the resulting output in the `dist/` directory and the root `index.html` will always remain fully integrated single files.
 *   **Online Version:** You can try the live version hosted on GitHub Pages: [https://moooff.github.io/HermitUI](https://moooff.github.io/HermitUI)
 *   **Vanilla Only:** No React, Vue, Angular, or complex frontend frameworks. 
 *   **No Build Tools:** No `package.json`, `npm`, Webpack, or Vite.
@@ -119,7 +119,7 @@ HermitUI enforces strict architectural constraints to remain lightweight and acc
 
 ## 📦 Building & Development
 
-By default, the `hermit-ui.html` file in the root is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
+By default, the root `index.html` file (a copy of `dist/hermit-ui-standalone.html`) is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
 
 If you wish to modify the source code, edit `src/hermit-ui.src.html` (which uses CDNs for external libraries) and then run the build script to regenerate the standalone root file:
 
@@ -127,7 +127,7 @@ If you wish to modify the source code, edit `src/hermit-ui.src.html` (which uses
 python build.py
 ```
 
-This updates the root `hermit-ui.html` file and creates alternative builds in the `dist/` directory. The CDN variant `dist/hermit-ui-cdn.html` is committed (browsable on GitHub); the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
+This generates the standalone build at `dist/hermit-ui-standalone.html`, copies it to the root `index.html` for GitHub Pages, and creates the alternative builds in the `dist/` directory. The standalone and CDN variants (`dist/hermit-ui-standalone.html`, `dist/hermit-ui-cdn.html`) are committed (browsable on GitHub); the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
 
 ## 🛠️ Built With
 

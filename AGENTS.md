@@ -17,12 +17,12 @@ python build.py   # or python3 build.py — regenerates all outputs from src/
 ```
 
 `build.py` downloads the pinned library versions (Marked.js, DOMPurify, Highlight.js, Inter font) into `libs/`, inlines the favicon, then does regex-based substitution of the CDN `<script>`/`<link>` tags. If you change a CDN tag in the source, the matching regex in `build.py` must still match it. Generated outputs:
-- `hermit-ui.html` (root) — fully standalone: all JS/CSS/fonts inlined and base64-encoded. The primary deliverable.
-- `index.html` (root) — identical copy, served as the GitHub Pages landing page.
+- `dist/hermit-ui-standalone.html` — fully standalone: all JS/CSS/fonts inlined and base64-encoded. The primary deliverable.
+- `index.html` (root) — copy of the standalone build, served as the GitHub Pages landing page (the final build step copies it out of `dist/`).
 - `dist/hermit-ui-cdn.html` — same as the source (CDN links).
 - `dist/hermit-ui-local.html` — links rewritten to point at `../libs/`.
 
-There is no test suite, linter, or package manager. To verify a change, open `hermit-ui.html` in a browser after building. `dist/hermit-ui-cdn.html` is committed (CDN variant, browsable on GitHub); `dist/hermit-ui-local.html` and `libs/` are gitignored.
+There is no test suite, linter, or package manager. To verify a change, open `index.html` (or `dist/hermit-ui-standalone.html`) in a browser after building. `dist/hermit-ui-standalone.html` and `dist/hermit-ui-cdn.html` are committed (browsable on GitHub); `dist/hermit-ui-local.html` and `libs/` are gitignored.
 
 ## 🧩 Code Structure within `src/hermit-ui.src.html`
 Three blocks: `<style>` (light theme), `<style id="dark-mode-styles">` (dark overrides), and one `<script>`. Theming is driven by CSS variables and a `data-theme` attribute on `:root`. Key JS areas:
