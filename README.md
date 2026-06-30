@@ -4,7 +4,7 @@
   <p>
     <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Vanilla JS" src="https://img.shields.io/badge/Vanilla%20JS-F7DF1E?style=flat&logo=javascript&logoColor=black" />
-    <img alt="Zero Dependencies" src="https://img.shields.io/badge/Dependencies-0-brightgreen.svg" />
+    <img alt="Zero Install" src="https://img.shields.io/badge/Install-0_Steps-brightgreen.svg" />
   </p>
   <p>
     <a href="https://moooff.github.io/HermitUI"><b>🌐 Online Demo</b></a> •
@@ -41,6 +41,9 @@ No build steps, no backend, and no installation required—just open the file in
 *   **📦 Zero-Dependency Setup:** The default `hermit-ui.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.src.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
+*   **🎭 Personas:** Switch between preset system prompts on the fly via a dropdown to instantly re-shape the assistant's behavior.
+*   **📎 Context Attachments:** Drag-and-drop or upload text files to inject their contents directly into your prompt as context.
+*   **✏️ Edit & Regenerate:** Edit any previous message or regenerate the assistant's last response without restarting the conversation.
 *   **🎨 Modern UI/UX:** Clean, responsive design with smooth micro-animations, comprehensive CSS variables for easy theming, syntax highlighting, and a premium glassmorphism feel.
 *   **⚡ Real-Time Streaming:** Watch responses generate in real-time with an experience comparable to ChatGPT.
 *   **📊 Live Performance Stats:** Built-in dashboard to monitor Prompt Tokens, Completion Tokens, Generation Speed (Tokens/Second), and Total Duration.
@@ -136,4 +139,4 @@ This updates the root `hermit-ui.html` file and creates alternative builds in th
 
 ## 📄 License
 
-This project is open-source and available under the terms of the included LICENSE file.
+This project is open-source and available under the terms of the **GNU AGPL v3**. See the included [LICENSE](LICENSE) file for the full text.
