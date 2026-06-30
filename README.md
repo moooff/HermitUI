@@ -127,7 +127,7 @@ If you wish to modify the source code, edit `src/hermit-ui.src.html` (which uses
 python build.py
 ```
 
-This updates the root `hermit-ui.html` file and creates alternative builds in the `dist/` directory.
+This updates the root `hermit-ui.html` file and creates alternative builds in the `dist/` directory. The CDN variant `dist/hermit-ui-cdn.html` is committed (browsable on GitHub); the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
 
 ## 🛠️ Built With
 

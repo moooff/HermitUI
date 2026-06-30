@@ -22,7 +22,7 @@ python build.py   # or python3 build.py — regenerates all outputs from src/
 - `dist/hermit-ui-cdn.html` — same as the source (CDN links).
 - `dist/hermit-ui-local.html` — links rewritten to point at `../libs/`.
 
-There is no test suite, linter, or package manager. To verify a change, open `hermit-ui.html` in a browser after building. `dist/` and `libs/` are gitignored.
+There is no test suite, linter, or package manager. To verify a change, open `hermit-ui.html` in a browser after building. `dist/hermit-ui-cdn.html` is committed (CDN variant, browsable on GitHub); `dist/hermit-ui-local.html` and `libs/` are gitignored.
 
 ## 🧩 Code Structure within `src/hermit-ui.src.html`
 Three blocks: `<style>` (light theme), `<style id="dark-mode-styles">` (dark overrides), and one `<script>`. Theming is driven by CSS variables and a `data-theme` attribute on `:root`. Key JS areas:

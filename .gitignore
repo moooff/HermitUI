@@ -1,4 +1,4 @@
-dist/
+dist/hermit-ui-local.html
 libs/
 .claude/settings.local.json
 CLAUDE.md
