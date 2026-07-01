@@ -2128,6 +2128,17 @@ return He}()
         }
         #debugConsole.open #debugConsoleTab { display: block; }
         #debugConsoleTab:hover { color: #c9d1d9; }
+        
+        @keyframes pb-indeterminate-anim {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(200%); }
+        }
+        .pb-indeterminate {
+            height: 100%;
+            width: 50%;
+            background-color: var(--primary);
+            animation: pb-indeterminate-anim 1.5s infinite linear;
+        }
     </style>
     <style id="dark-mode-styles">
         /* Dark Mode Overrides */
@@ -2353,7 +2364,7 @@ return He}()
                 <div id="wllamaStatusContainer" style="margin-bottom: 8px;">
                     <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; word-break: break-all; margin-bottom: 4px;">Status: Unloaded</div>
                     <div id="wllamaProgressBarContainer" style="display: none; height: 6px; background: rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; width: 100%;">
-                        <div id="wllamaProgressBar" style="height: 100%; width: 0%; background: var(--primary); transition: width 0.1s linear;"></div>
+                        <div id="wllamaProgressBar" class="pb-indeterminate"></div>
                     </div>
                 </div>
 
@@ -2921,8 +2932,9 @@ Rules:
             const pbContainer = document.getElementById("wllamaProgressBarContainer");
             const pbBar = document.getElementById("wllamaProgressBar");
             statusEl.textContent = "Status: Loading Engine...";
-            pbContainer.style.display = "none";
-            pbBar.style.width = "0%";
+            pbContainer.style.display = "block";
+            pbBar.className = "pb-indeterminate";
+            pbBar.style.width = "50%";
             
             try {
                 if (!WllamaClass) {
@@ -2970,14 +2982,24 @@ Rules:
                     const pct = total ? Math.round((loaded / total) * 100) : 0;
                     statusEl.textContent = `Status: Loading Model (${file.name}) ${pct}%`;
                     pbContainer.style.display = "block";
-                    pbBar.style.width = pct + "%";
+                    if (pct > 0 && pct < 100) {
+                        pbBar.className = "";
+                        pbBar.style.width = pct + "%";
+                        pbBar.style.backgroundColor = "var(--primary)";
+                        pbBar.style.transition = "width 0.1s linear";
+                    } else if (pct === 100) {
+                        // After loading instantly, we are usually blocking on decoding/initializing.
+                        pbBar.className = "pb-indeterminate";
+                        pbBar.style.width = "50%";
+                    }
                     wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
                 };
                 wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
 
                 statusEl.textContent = `Status: Loading Model (${file.name})...`;
                 pbContainer.style.display = "block";
-                pbBar.style.width = "0%";
+                pbBar.className = "pb-indeterminate";
+                pbBar.style.width = "50%";
                 const loadStart = performance.now();
                 await wllamaInstance.loadModel([file], loadOptions);
                 wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
