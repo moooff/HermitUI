@@ -78,9 +78,18 @@ def build():
     cache["inter.css"] = inter_local_css.encode("utf-8")
     cache["inter_inline.css"] = inter_inline_css.encode("utf-8")
 
-    # Read base template
-    with open("src/hermit-ui.src.html", "r", encoding="utf-8") as f:
+    # Read base template and assemble local components
+    with open("src/index.html", "r", encoding="utf-8") as f:
         html = f.read()
+    
+    with open("src/style.css", "r", encoding="utf-8") as f:
+        local_css = f.read()
+        
+    with open("src/script.js", "r", encoding="utf-8") as f:
+        local_js = f.read()
+        
+    html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
+    html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js}\n    </script>')
 
     # Inline favicon into the template
     try:

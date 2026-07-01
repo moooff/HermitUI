@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
+:root {
             --bg-gradient: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
             --chat-bg: rgba(255, 255, 255, 0.95);
             --text-main: #1f2937;
@@ -775,9 +775,9 @@
             font-family: 'Inter', system-ui, sans-serif;
         }
         .action-btn:hover { background: #f3f4f6; color: var(--primary); }
-    </style>
-    <style id="dark-mode-styles">
-        /* Dark Mode Overrides */
+
+/* Dark Mode Styles */
+/* Dark Mode Overrides */
         :root[data-theme="dark"] {
             --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             --chat-bg: rgba(30, 41, 59, 0.85);
@@ -913,6 +913,7 @@
             background: #1e293b !important;
             border-color: #475569 !important;
         }
+
     </style>
 </head>
 <body>
@@ -1046,7 +1047,7 @@
     </main>
 
     <script>
-        // ========== Configuration ==========
+// ========== Configuration ==========
         const CONSTANTS = {
             THROTTLE_MS: 80,
             MAX_TEXTAREA_HEIGHT_PX: 200
@@ -2401,6 +2402,7 @@ Rules:
                 applyTheme();
             });
         }
+
     </script>
 </body>
 </html>
