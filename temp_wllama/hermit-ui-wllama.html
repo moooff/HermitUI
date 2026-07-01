@@ -2078,6 +2078,11 @@ return He}()
             cursor: pointer;
             color-scheme: dark;
         }
+        #debugConsoleHeader .dc-live {
+            font-size: 0.72rem;
+            color: #58a6ff;
+            font-variant-numeric: tabular-nums;
+        }
         #debugConsoleHeader .dc-spacer { flex: 1; }
         #debugConsole .dc-btn {
             background: rgba(255,255,255,0.08);
@@ -2277,6 +2282,7 @@ return He}()
                     <option value="4">Debug</option>
                 </select>
             </label>
+            <span id="wllamaLiveStat" class="dc-live"></span>
             <span class="dc-spacer"></span>
             <button type="button" id="wllamaDebugClear" class="dc-btn">Clear</button>
             <button type="button" id="debugConsoleClose" class="dc-btn" title="Close">✕</button>
@@ -3541,16 +3547,27 @@ Rules:
                     onError(new Error("Local model not loaded. Please select a .gguf file in settings."));
                     return;
                 }
-                let genChunks = 0;
+                // Each streamed piece from wllama is one decoded token, so counting them
+                // gives an exact token count and a live tokens/sec rate we compute ourselves.
+                let genTokens = 0;
                 const genStart = performance.now();
+                const liveStatEl = document.getElementById("wllamaLiveStat");
+                let lastLiveUpdate = 0;
+                if (liveStatEl) liveStatEl.textContent = "⏳ generating…";
                 try {
                     const onData = (chunk) => {
                         if (signal.aborted) throw new Error("AbortError");
                         const content = typeof chunk === 'string' ? chunk :
                             (chunk.choices?.[0]?.text || chunk.choices?.[0]?.delta?.content || chunk.content || "");
                         if (content) {
-                            genChunks++;
+                            genTokens++;
                             onChunk("", content, 0, 0);
+                            const now = performance.now();
+                            if (liveStatEl && now - lastLiveUpdate > 200) { // throttle DOM writes
+                                lastLiveUpdate = now;
+                                const secs = (now - genStart) / 1000;
+                                liveStatEl.textContent = `${genTokens} tok · ${secs > 0 ? (genTokens / secs).toFixed(1) : "0.0"} tok/s`;
+                            }
                         }
                     };
                     const temperature = payload.temperature || 0.7;
@@ -3594,12 +3611,16 @@ Rules:
                     }
 
                     const genSecs = (performance.now() - genStart) / 1000;
-                    wllamaLog("log", `Generation done: ~${genChunks} chunks in ${genSecs.toFixed(1)}s (${genSecs > 0 ? (genChunks / genSecs).toFixed(1) : "?"} chunks/s)`);
-                    onDone(0, 0);
+                    const finalTps = genSecs > 0 ? (genTokens / genSecs).toFixed(1) : "0.0";
+                    if (liveStatEl) liveStatEl.textContent = `${genTokens} tok · ${finalTps} tok/s`;
+                    wllamaLog("log", `Generation done: ${genTokens} tokens in ${genSecs.toFixed(1)}s (${finalTps} tok/s)`);
+                    onDone(0, genTokens);
                 } catch (err) {
                     if (err.message === "AbortError") {
-                        wllamaLog("warn", `Generation aborted after ~${genChunks} chunks`);
-                        onDone(0, 0);
+                        const abortSecs = (performance.now() - genStart) / 1000;
+                        if (liveStatEl) liveStatEl.textContent = `${genTokens} tok · ${abortSecs > 0 ? (genTokens / abortSecs).toFixed(1) : "0.0"} tok/s (stopped)`;
+                        wllamaLog("warn", `Generation aborted after ${genTokens} tokens`);
+                        onDone(0, genTokens);
                     } else {
                         wllamaLog("error", "Generation failed:", err.message || err);
                         onError(err);
