@@ -2344,6 +2344,10 @@ return He}()
                 <input type="number" id="settingWllamaCtx" value="4096" min="0" step="512" style="margin-bottom: 4px; width: 100%;">
                 <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Larger = more history but more memory/slower load. 0 = use the model's built-in default. Applied when the model is loaded.</div>
 
+                <label for="settingWllamaMaxTokens">Max Output Tokens (per reply)</label>
+                <input type="number" id="settingWllamaMaxTokens" value="2048" min="1" step="128" style="margin-bottom: 4px; width: 100%;">
+                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Upper bound on tokens generated per reply. Applied immediately (no reload needed). Must fit within the context window.</div>
+
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                     <input type="checkbox" id="wllamaWebGpuToggle" checked>
                     <label for="wllamaWebGpuToggle" style="margin: 0; font-size: 0.85rem;">Enable WebGPU (Hardware Acceleration)</label>
@@ -3535,14 +3539,17 @@ Rules:
                     // detected/manual format for template-less GGUFs.
                     const choice = document.getElementById("settingWllamaTemplate")?.value || "auto";
                     const useEmbedded = choice === "auto" && wllamaHasEmbeddedTemplate;
+                    // Output-length cap read live from settings (0/blank/invalid -> default 2048).
+                    const parsedMaxTokens = parseInt(document.getElementById("settingWllamaMaxTokens")?.value, 10);
+                    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 2048;
 
                     if (useEmbedded) {
-                        wllamaLog("log", `Generating via embedded chat template (temp=${temperature}, max_tokens=2048, messages=${payload.messages.length})`);
+                        wllamaLog("log", `Generating via embedded chat template (temp=${temperature}, max_tokens=${maxTokens}, messages=${payload.messages.length})`);
                         // wllama's OpenAI-compatible chat path applies the GGUF's own
                         // tokenizer.chat_template; chunks arrive as choices[0].delta.content.
                         await wllamaInstance.createChatCompletion({
                             messages: payload.messages,
-                            max_tokens: 2048,
+                            max_tokens: maxTokens,
                             temperature,
                             stream: true,
                             abortSignal: signal,
@@ -3552,11 +3559,11 @@ Rules:
                         // Manual formatting for template-less models (or an explicit user override).
                         const key = choice === "auto" ? wllamaDetectedTemplate : choice;
                         const { prompt, stop } = buildWllamaPrompt(key, payload.messages);
-                        wllamaLog("log", `Generating via manual template "${key}" (temp=${temperature}, max_tokens=2048, stop=${JSON.stringify(stop)})`);
+                        wllamaLog("log", `Generating via manual template "${key}" (temp=${temperature}, max_tokens=${maxTokens}, stop=${JSON.stringify(stop)})`);
                         wllamaLog("debug", "Formatted prompt sent to model:\n" + prompt);
                         await wllamaInstance.createCompletion({
                             prompt,
-                            max_tokens: 2048,
+                            max_tokens: maxTokens,
                             temperature,
                             stop,
                             stream: true,
