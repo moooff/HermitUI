@@ -2067,6 +2067,17 @@ return He}()
             display: inline-flex; align-items: center; gap: 6px;
             margin: 0; font-size: 0.78rem; cursor: pointer;
         }
+        #debugConsoleHeader .dc-verbose select {
+            background: rgba(255,255,255,0.08);
+            color: #c9d1d9;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 6px;
+            padding: 2px 6px;
+            font-size: 0.72rem;
+            font-family: inherit;
+            cursor: pointer;
+            color-scheme: dark;
+        }
         #debugConsoleHeader .dc-spacer { flex: 1; }
         #debugConsole .dc-btn {
             background: rgba(255,255,255,0.08);
@@ -2257,7 +2268,15 @@ return He}()
     <div id="debugConsole">
         <div id="debugConsoleHeader">
             <span class="dc-title">🐛 Debug Console</span>
-            <label class="dc-verbose"><input type="checkbox" id="wllamaDebugToggle" checked> Verbose</label>
+            <label class="dc-verbose" for="wllamaVerbosity">Verbosity
+                <select id="wllamaVerbosity" title="How much wllama detail to show">
+                    <option value="0">Off</option>
+                    <option value="1">Errors</option>
+                    <option value="2">Warnings</option>
+                    <option value="3" selected>Info</option>
+                    <option value="4">Debug</option>
+                </select>
+            </label>
             <span class="dc-spacer"></span>
             <button type="button" id="wllamaDebugClear" class="dc-btn">Clear</button>
             <button type="button" id="debugConsoleClose" class="dc-btn" title="Close">✕</button>
@@ -2911,15 +2930,17 @@ Rules:
                 wllamaInstance = new WllamaClass(
                     { "default": "https://cdn.jsdelivr.net/npm/@wllama/wllama/esm/wasm/wllama.wasm" },
                     {
-                        // Route wllama's internal messages into the debug panel, and let the
-                        // native llama.cpp logs (context/KV cache/backend init/timings) through.
+                        // Route wllama's internal messages into the debug panel.
                         logger: {
                             debug: (...a) => wllamaLog("debug", "[core]", ...a),
                             log:   (...a) => wllamaLog("log",   "[core]", ...a),
                             warn:  (...a) => wllamaLog("warn",  "[core]", ...a),
                             error: (...a) => wllamaLog("error", "[core]", ...a),
                         },
-                        suppressNativeLog: false,
+                        // Native llama.cpp logs (context/KV cache/backend init/timings) are
+                        // the noisiest, so only let them through when Debug verbosity is set at
+                        // load time (change the level and reload the model to toggle them).
+                        suppressNativeLog: wllamaVerbosity() < WLLAMA_LOG_RANK.debug,
                     }
                 );
                 const useWebGpu = document.getElementById("wllamaWebGpuToggle").checked;
@@ -3669,11 +3690,17 @@ Rules:
         // Debug logging: mirror to the browser console AND stream into the in-UI panel
         // so users can watch engine/model/generation internals without opening devtools.
         const WLLAMA_LOG_COLORS = { debug: "#8b949e", log: "#c9d1d9", warn: "#e3b341", error: "#f85149" };
+        // Severity rank per level; a message shows only if its rank <= the selected
+        // verbosity threshold (Off=0, Errors=1, Warnings=2, Info=3, Debug=4).
+        const WLLAMA_LOG_RANK = { error: 1, warn: 2, log: 3, debug: 4 };
+        function wllamaVerbosity() {
+            const sel = document.getElementById("wllamaVerbosity");
+            return sel ? parseInt(sel.value, 10) : 3; // default: Info
+        }
         function wllamaLog(level, ...args) {
+            if ((WLLAMA_LOG_RANK[level] || 3) > wllamaVerbosity()) return; // below threshold
             const method = console[level] ? level : "log";
             console[method]("[wllama]", ...args);
-            const toggle = document.getElementById("wllamaDebugToggle");
-            if (toggle && !toggle.checked) return; // verbose logging disabled
             const panel = document.getElementById("wllamaDebugLog");
             if (!panel) return;
             const text = args.map(a =>
