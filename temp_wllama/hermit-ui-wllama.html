@@ -2033,6 +2033,82 @@ return He}()
             font-family: 'Inter', system-ui, sans-serif;
         }
         .action-btn:hover { background: #f3f4f6; color: var(--primary); }
+
+        /* ===== Quake-style debug console (slides down from the top) ===== */
+        #debugConsole {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 2000;
+            height: 45vh;
+            max-height: 480px;
+            display: flex;
+            flex-direction: column;
+            background: rgba(11, 14, 20, 0.97);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(255,255,255,0.14);
+            box-shadow: 0 14px 44px rgba(0,0,0,0.5);
+            transform: translateY(-100%);
+            transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        #debugConsole.open { transform: translateY(0); }
+        #debugConsoleHeader {
+            display: flex; align-items: center; gap: 12px;
+            flex-shrink: 0;
+            padding: 8px 14px;
+            color: #c9d1d9;
+            font-size: 0.8rem;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #debugConsoleHeader .dc-title { font-weight: 600; letter-spacing: 0.02em; }
+        #debugConsoleHeader .dc-verbose {
+            display: inline-flex; align-items: center; gap: 6px;
+            margin: 0; font-size: 0.78rem; cursor: pointer;
+        }
+        #debugConsoleHeader .dc-spacer { flex: 1; }
+        #debugConsole .dc-btn {
+            background: rgba(255,255,255,0.08);
+            color: #c9d1d9;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 6px;
+            padding: 3px 10px;
+            font-size: 0.72rem;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        #debugConsole .dc-btn:hover { background: rgba(255,255,255,0.18); }
+        #debugConsole #wllamaDebugLog {
+            margin: 0;
+            flex: 1;
+            overflow: auto;
+            padding: 10px 14px;
+            color: #c9d1d9;
+            font-size: 0.74rem;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: transparent;
+        }
+        #debugConsoleTab {
+            position: absolute;
+            display: none;
+            bottom: -26px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(11, 14, 20, 0.97);
+            color: #8b949e;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 3px 18px;
+            font-size: 0.7rem;
+            font-family: inherit;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+        }
+        #debugConsole.open #debugConsoleTab { display: block; }
+        #debugConsoleTab:hover { color: #c9d1d9; }
     </style>
     <style id="dark-mode-styles">
         /* Dark Mode Overrides */
@@ -2175,6 +2251,19 @@ return He}()
 </head>
 <body>
 
+    <!-- Quake-style debug console: drops down from the top of the screen (toggle with ` or the tab) -->
+    <div id="debugConsole">
+        <div id="debugConsoleHeader">
+            <span class="dc-title">🐛 Debug Console</span>
+            <label class="dc-verbose"><input type="checkbox" id="wllamaDebugToggle" checked> Verbose</label>
+            <span class="dc-spacer"></span>
+            <button type="button" id="wllamaDebugClear" class="dc-btn">Clear</button>
+            <button type="button" id="debugConsoleClose" class="dc-btn" title="Close (Esc or `)">✕</button>
+        </div>
+        <pre id="wllamaDebugLog"></pre>
+        <button type="button" id="debugConsoleTab" title="Toggle debug console (`)">▾ debug</button>
+    </div>
+
     <header>
         <div class="header-left">
             <h2>HermitUI <span class="version-badge">v0.5</span></h2>
@@ -2187,6 +2276,7 @@ return He}()
             <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
         </div>
         <div class="header-actions">
+            <button class="header-btn icon-only" id="debugToggleBtn" title="Debug Console (` key)" aria-label="Toggle Debug Console">🐛</button>
             <button class="header-btn icon-only" id="themeToggleBtn" title="Toggle Theme" aria-label="Toggle Theme">🌙</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
             <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
@@ -2258,17 +2348,7 @@ return He}()
                 </div>
                 <div style="font-size: 0.75rem; color: #999;">Note: On some systems (especially integrated graphics) WebGPU may be slower than CPU. Uncheck to force CPU-only mode.</div>
 
-                <div style="margin-top: 12px; border-top: 1px solid rgba(0,0,0,0.08); padding-top: 10px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="wllamaDebugToggle" checked>
-                            <label for="wllamaDebugToggle" style="margin: 0; font-size: 0.85rem;">Verbose debug log</label>
-                        </div>
-                        <button type="button" id="wllamaDebugClear" style="font-size: 0.72rem; padding: 3px 8px; cursor: pointer; border-radius: 6px;">Clear</button>
-                    </div>
-                    <pre id="wllamaDebugLog" style="margin: 0; min-height: 22px; max-height: 180px; overflow: auto; background: #0b0e14; color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.5; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word;"></pre>
-                    <div style="font-size: 0.72rem; color: #999; margin-top: 4px;">Engine load, model metadata, chosen chat template, the prompt sent, and tokens/sec. Mirrored to the browser console.</div>
-                </div>
+                <div style="font-size: 0.75rem; color: #999; margin-top: 10px;">🐛 Debug output (engine load, model metadata, chosen template, the prompt sent, tokens/sec) streams to the drop-down console at the top of the screen — press <code>`</code> or click the <b>▾ debug</b> tab.</div>
             </div>
 
             <div id="apiSettingsGroup">
@@ -2680,6 +2760,17 @@ Rules:
         
         // Global Keyboard Shortcuts
         document.addEventListener("keydown", (e) => {
+            // Backtick drops the debug console, Quake-style — but only when not typing
+            // (so backticks in the chat box / code still work) and without modifiers.
+            if (e.key === "`" && !e.ctrlKey && !e.metaKey && !e.altKey && !isEditableTarget(e.target)) {
+                e.preventDefault();
+                toggleDebugConsole();
+                return;
+            }
+            if (e.key === "Escape" && document.getElementById("debugConsole").classList.contains("open")) {
+                setDebugConsole(false);
+                return;
+            }
             if (e.key === "Escape" && settingsModal.classList.contains("active")) {
                 settingsModal.classList.remove("active");
                 return;
@@ -2779,6 +2870,24 @@ Rules:
             }
         });
         
+        // ===== Quake-style debug console controls =====
+        function isEditableTarget(el) {
+            if (!el) return false;
+            const tag = el.tagName;
+            return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+        }
+        function setDebugConsole(open) {
+            const con = document.getElementById("debugConsole");
+            con.classList.toggle("open", open);
+            document.getElementById("debugConsoleTab").textContent = (open ? "▴" : "▾") + " debug";
+        }
+        function toggleDebugConsole() {
+            setDebugConsole(!document.getElementById("debugConsole").classList.contains("open"));
+        }
+        document.getElementById("debugToggleBtn").addEventListener("click", toggleDebugConsole);
+        document.getElementById("debugConsoleTab").addEventListener("click", toggleDebugConsole);
+        document.getElementById("debugConsoleClose").addEventListener("click", () => setDebugConsole(false));
+
         document.getElementById("wllamaDebugClear").addEventListener("click", () => {
             const panel = document.getElementById("wllamaDebugLog");
             if (panel) panel.textContent = "";
