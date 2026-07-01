@@ -2350,7 +2350,12 @@ return He}()
             <div id="wllamaSettingsGroup" style="display: none; padding: 10px; background: rgba(0,0,0,0.02); border-radius: 8px; margin-bottom: 20px;">
                 <label for="settingWllamaFile">Load GGUF Model File</label>
                 <input type="file" id="settingWllamaFile" accept=".gguf" style="margin-bottom: 8px; width: 100%;">
-                <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; margin-bottom: 8px; word-break: break-all;">Status: Unloaded</div>
+                <div id="wllamaStatusContainer" style="margin-bottom: 8px;">
+                    <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; word-break: break-all; margin-bottom: 4px;">Status: Unloaded</div>
+                    <div id="wllamaProgressBarContainer" style="display: none; height: 6px; background: rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; width: 100%;">
+                        <div id="wllamaProgressBar" style="height: 100%; width: 0%; background: var(--primary); transition: width 0.1s linear;"></div>
+                    </div>
+                </div>
 
                 <label for="settingWllamaTemplate">Chat Format</label>
                 <select id="settingWllamaTemplate" style="margin-bottom: 8px; width: 100%;">
@@ -2913,7 +2918,11 @@ Rules:
             const file = e.target.files[0];
             if (!file) return;
             const statusEl = document.getElementById("wllamaStatus");
+            const pbContainer = document.getElementById("wllamaProgressBarContainer");
+            const pbBar = document.getElementById("wllamaProgressBar");
             statusEl.textContent = "Status: Loading Engine...";
+            pbContainer.style.display = "none";
+            pbBar.style.width = "0%";
             
             try {
                 if (!WllamaClass) {
@@ -2960,11 +2969,15 @@ Rules:
                 loadOptions.progressCallback = ({ loaded, total }) => {
                     const pct = total ? Math.round((loaded / total) * 100) : 0;
                     statusEl.textContent = `Status: Loading Model (${file.name}) ${pct}%`;
+                    pbContainer.style.display = "block";
+                    pbBar.style.width = pct + "%";
                     wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
                 };
                 wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
 
                 statusEl.textContent = `Status: Loading Model (${file.name})...`;
+                pbContainer.style.display = "block";
+                pbBar.style.width = "0%";
                 const loadStart = performance.now();
                 await wllamaInstance.loadModel([file], loadOptions);
                 wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
@@ -2987,9 +3000,11 @@ Rules:
                     ? "embedded template"
                     : `auto: ${wllamaDetectedTemplate}`;
                 statusEl.textContent = `Status: Ready 🟢 (${detail})`;
+                pbContainer.style.display = "none";
             } catch (err) {
                 wllamaLog("error", "Load failed:", err.message || err);
                 statusEl.textContent = "Status: Error - " + err.message;
+                pbContainer.style.display = "none";
             }
         });
 
