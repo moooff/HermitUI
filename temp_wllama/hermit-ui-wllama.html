@@ -2046,12 +2046,14 @@ return He}()
             background: rgba(11, 14, 20, 0.97);
             backdrop-filter: blur(8px);
             border-bottom: 1px solid rgba(255,255,255,0.14);
-            box-shadow: 0 14px 44px rgba(0,0,0,0.5);
             transform: translateY(-100%);
             transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         }
-        #debugConsole.open { transform: translateY(0); }
+        #debugConsole.open {
+            transform: translateY(0);
+            box-shadow: 0 14px 44px rgba(0,0,0,0.5);
+        }
         #debugConsoleHeader {
             display: flex; align-items: center; gap: 12px;
             flex-shrink: 0;
@@ -2251,17 +2253,17 @@ return He}()
 </head>
 <body>
 
-    <!-- Quake-style debug console: drops down from the top of the screen (toggle with ` or the tab) -->
+    <!-- Quake-style debug console: drops down from the top of the screen (toggle via the 🐛 header button or the tab) -->
     <div id="debugConsole">
         <div id="debugConsoleHeader">
             <span class="dc-title">🐛 Debug Console</span>
             <label class="dc-verbose"><input type="checkbox" id="wllamaDebugToggle" checked> Verbose</label>
             <span class="dc-spacer"></span>
             <button type="button" id="wllamaDebugClear" class="dc-btn">Clear</button>
-            <button type="button" id="debugConsoleClose" class="dc-btn" title="Close (Esc or `)">✕</button>
+            <button type="button" id="debugConsoleClose" class="dc-btn" title="Close">✕</button>
         </div>
         <pre id="wllamaDebugLog"></pre>
-        <button type="button" id="debugConsoleTab" title="Toggle debug console (`)">▾ debug</button>
+        <button type="button" id="debugConsoleTab" title="Toggle debug console">▾ debug</button>
     </div>
 
     <header>
@@ -2276,7 +2278,7 @@ return He}()
             <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
         </div>
         <div class="header-actions">
-            <button class="header-btn icon-only" id="debugToggleBtn" title="Debug Console (` key)" aria-label="Toggle Debug Console">🐛</button>
+            <button class="header-btn icon-only" id="debugToggleBtn" title="Debug Console" aria-label="Toggle Debug Console">🐛</button>
             <button class="header-btn icon-only" id="themeToggleBtn" title="Toggle Theme" aria-label="Toggle Theme">🌙</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
             <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
@@ -2348,7 +2350,7 @@ return He}()
                 </div>
                 <div style="font-size: 0.75rem; color: #999;">Note: On some systems (especially integrated graphics) WebGPU may be slower than CPU. Uncheck to force CPU-only mode.</div>
 
-                <div style="font-size: 0.75rem; color: #999; margin-top: 10px;">🐛 Debug output (engine load, model metadata, chosen template, the prompt sent, tokens/sec) streams to the drop-down console at the top of the screen — press <code>`</code> or click the <b>▾ debug</b> tab.</div>
+                <div style="font-size: 0.75rem; color: #999; margin-top: 10px;">🐛 Debug output (engine load, model metadata, chosen template, the prompt sent, tokens/sec) streams to the drop-down console at the top of the screen — click the <b>🐛</b> button in the header.</div>
             </div>
 
             <div id="apiSettingsGroup">
@@ -2760,17 +2762,6 @@ Rules:
         
         // Global Keyboard Shortcuts
         document.addEventListener("keydown", (e) => {
-            // Backtick drops the debug console, Quake-style — but only when not typing
-            // (so backticks in the chat box / code still work) and without modifiers.
-            if (e.key === "`" && !e.ctrlKey && !e.metaKey && !e.altKey && !isEditableTarget(e.target)) {
-                e.preventDefault();
-                toggleDebugConsole();
-                return;
-            }
-            if (e.key === "Escape" && document.getElementById("debugConsole").classList.contains("open")) {
-                setDebugConsole(false);
-                return;
-            }
             if (e.key === "Escape" && settingsModal.classList.contains("active")) {
                 settingsModal.classList.remove("active");
                 return;
@@ -2871,11 +2862,6 @@ Rules:
         });
         
         // ===== Quake-style debug console controls =====
-        function isEditableTarget(el) {
-            if (!el) return false;
-            const tag = el.tagName;
-            return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
-        }
         function setDebugConsole(open) {
             const con = document.getElementById("debugConsole");
             con.classList.toggle("open", open);
