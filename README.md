@@ -13,7 +13,8 @@
     <a href="#-quick-start">Quick Start</a> •
     <a href="#-troubleshooting-cors">Troubleshooting</a> •
     <a href="#-built-with">Built With</a> •
-    <a href="#-architecture--philosophy">Architecture</a>
+    <a href="#-architecture--philosophy">Architecture</a> •
+    <a href="#-roadmap">Roadmap</a>
   </p>
 </div>
 
@@ -136,6 +137,27 @@ This generates the standalone build at `dist/hermit-ui-standalone.html`, copies 
 *   [DOMPurify](https://github.com/cure53/DOMPurify) - For sanitizing HTML and preventing XSS
 *   [Highlight.js](https://highlightjs.org/) - For code syntax highlighting
 *   [Google Fonts (Inter)](https://fonts.google.com/specimen/Inter) - For clean, modern typography
+
+## 🗺️ Roadmap
+
+HermitUI is under active development. Here's what's in progress and on the horizon.
+
+### 🧪 In-Browser Inference (experimental)
+
+The biggest ongoing effort is **true offline inference that runs entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
+
+This currently lives as a standalone experimental variant at `temp_wllama/hermit-ui-wllama.html` and is **not yet merged** into the main single-file build. Work completed so far:
+
+*   **📂 Local GGUF loading:** Pick a `.gguf` file and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration.
+*   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`) and **max output tokens** per reply.
+*   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
+*   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.
+*   **⏱️ Live tokens/s:** A real-time generation-speed readout while the model streams.
+
+### 🔭 Under Consideration
+
+*   Folding the in-browser inference path into the main single-file app behind a backend toggle.
+*   Loading GGUF models directly by URL / Hugging Face repo (in addition to local files).
 
 ## 📄 License
 
