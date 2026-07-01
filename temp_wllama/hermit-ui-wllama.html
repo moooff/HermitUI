@@ -2233,7 +2233,21 @@ return He}()
                 <label for="settingWllamaFile">Load GGUF Model File</label>
                 <input type="file" id="settingWllamaFile" accept=".gguf" style="margin-bottom: 8px; width: 100%;">
                 <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; margin-bottom: 8px; word-break: break-all;">Status: Unloaded</div>
-                
+
+                <label for="settingWllamaTemplate">Chat Format</label>
+                <select id="settingWllamaTemplate" style="margin-bottom: 8px; width: 100%;">
+                    <option value="auto">Auto (detect from model)</option>
+                    <option value="chatml">ChatML (Qwen, Yi, OpenHermes)</option>
+                    <option value="llama3">Llama 3</option>
+                    <option value="mistral">Mistral / Mixtral</option>
+                    <option value="gemma">Gemma</option>
+                    <option value="phi3">Phi-3</option>
+                    <option value="zephyr">Zephyr</option>
+                    <option value="alpaca">Alpaca (instruct)</option>
+                    <option value="raw">Raw (no template)</option>
+                </select>
+                <div id="wllamaTemplateHint" style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Auto uses the model's embedded template when present, else infers from its architecture.</div>
+
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                     <input type="checkbox" id="wllamaWebGpuToggle" checked>
                     <label for="wllamaWebGpuToggle" style="margin: 0; font-size: 0.85rem;">Enable WebGPU (Hardware Acceleration)</label>
@@ -2781,7 +2795,23 @@ Rules:
                 
                 statusEl.textContent = `Status: Loading Model (${file.name})...`;
                 await wllamaInstance.loadModel([file], loadOptions);
-                statusEl.textContent = "Status: Ready 🟢";
+
+                // Inspect metadata so Auto mode can prefer the embedded template and,
+                // failing that, guess a sane format from the model architecture.
+                wllamaHasEmbeddedTemplate = false;
+                wllamaDetectedTemplate = "zephyr";
+                try {
+                    const meta = await wllamaInstance.getModelMetadata();
+                    const m = meta?.meta || meta || {};
+                    wllamaHasEmbeddedTemplate = !!m["tokenizer.chat_template"];
+                    wllamaDetectedTemplate = detectTemplateFromArch(m["general.architecture"]);
+                } catch (metaErr) {
+                    console.warn("Could not read model metadata:", metaErr);
+                }
+                const detail = wllamaHasEmbeddedTemplate
+                    ? "embedded template"
+                    : `auto: ${wllamaDetectedTemplate}`;
+                statusEl.textContent = `Status: Ready 🟢 (${detail})`;
             } catch (err) {
                 console.error(err);
                 statusEl.textContent = "Status: Error - " + err.message;
@@ -3344,30 +3374,48 @@ Rules:
                     return;
                 }
                 try {
-                    // Small/older GGUF models often lack the tokenizer.chat_template metadata,
-                    // which causes wllamaInstance.createChatCompletion to crash inside the C++ backend.
-                    // To support 'bring-your-own-model', we manually format the prompt and use createCompletion.
-                    let promptText = "";
-                    for (const msg of payload.messages) {
-                        promptText += `<|${msg.role}|>\n${msg.content}</s>\n`;
-                    }
-                    promptText += `<|assistant|>\n`;
-
-                    await wllamaInstance.createCompletion({
-                        prompt: promptText,
-                        nPredict: 2048,
-                        temperature: payload.temperature || 0.7,
-                        stream: true,
-                        onData: (chunk) => {
-                            if (signal.aborted) throw new Error("AbortError");
-                            const content = typeof chunk === 'string' ? chunk : 
-                                (chunk.choices?.[0]?.text || chunk.choices?.[0]?.delta?.content || chunk.content || "");
-                            if (content) {
-                                onChunk("", content, 0, 0); 
-                            }
+                    const onData = (chunk) => {
+                        if (signal.aborted) throw new Error("AbortError");
+                        const content = typeof chunk === 'string' ? chunk :
+                            (chunk.choices?.[0]?.text || chunk.choices?.[0]?.delta?.content || chunk.content || "");
+                        if (content) {
+                            onChunk("", content, 0, 0);
                         }
-                    });
-                    
+                    };
+                    const temperature = payload.temperature || 0.7;
+
+                    // Resolve which format to use. "auto" prefers the model's own embedded
+                    // chat template (via createChatCompletion) and only falls back to a
+                    // detected/manual format for template-less GGUFs.
+                    const choice = document.getElementById("settingWllamaTemplate")?.value || "auto";
+                    const useEmbedded = choice === "auto" && wllamaHasEmbeddedTemplate;
+
+                    if (useEmbedded) {
+                        // wllama's OpenAI-compatible chat path applies the GGUF's own
+                        // tokenizer.chat_template; chunks arrive as choices[0].delta.content.
+                        await wllamaInstance.createChatCompletion({
+                            messages: payload.messages,
+                            max_tokens: 2048,
+                            temperature,
+                            stream: true,
+                            abortSignal: signal,
+                            onData
+                        });
+                    } else {
+                        // Manual formatting for template-less models (or an explicit user override).
+                        const key = choice === "auto" ? wllamaDetectedTemplate : choice;
+                        const { prompt, stop } = buildWllamaPrompt(key, payload.messages);
+                        await wllamaInstance.createCompletion({
+                            prompt,
+                            max_tokens: 2048,
+                            temperature,
+                            stop,
+                            stream: true,
+                            abortSignal: signal,
+                            onData
+                        });
+                    }
+
                     onDone(0, 0);
                 } catch (err) {
                     if (err.message === "AbortError") {
@@ -3455,6 +3503,110 @@ Rules:
         let backendMode = "api";
         let WllamaClass = null;
         let wllamaInstance = null;
+        let wllamaHasEmbeddedTemplate = false; // GGUF ships tokenizer.chat_template
+        let wllamaDetectedTemplate = "zephyr"; // auto-detected fallback format
+
+        // Registry of chat prompt formats for template-less GGUFs. Each entry knows how
+        // to render a single message, the trailing tag that primes the assistant turn,
+        // and the stop tokens that mark end-of-turn so generation doesn't run on.
+        const CHAT_TEMPLATES = {
+            chatml: {
+                msg: m => `<|im_start|>${m.role}\n${m.content}<|im_end|>\n`,
+                tail: `<|im_start|>assistant\n`,
+                stop: ["<|im_end|>"]
+            },
+            llama3: {
+                msg: m => `<|start_header_id|>${m.role}<|end_header_id|>\n\n${m.content}<|eot_id|>`,
+                tail: `<|start_header_id|>assistant<|end_header_id|>\n\n`,
+                stop: ["<|eot_id|>", "<|end_of_text|>"]
+            },
+            mistral: {
+                // Mistral has no distinct system/assistant tags; fold system into the first [INST].
+                render: msgs => {
+                    let out = "<s>";
+                    let sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        if (m.role === "user") {
+                            const u = sys ? `${sys}\n\n${m.content}` : m.content;
+                            sys = "";
+                            out += `[INST] ${u} [/INST]`;
+                        } else if (m.role === "assistant") {
+                            out += ` ${m.content}</s>`;
+                        }
+                    }
+                    return out;
+                },
+                stop: ["</s>", "[INST]"]
+            },
+            gemma: {
+                // Gemma has no system role; map assistant->model and prepend system to first user turn.
+                render: msgs => {
+                    let out = "";
+                    let sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        const role = m.role === "assistant" ? "model" : "user";
+                        let content = m.content;
+                        if (role === "user" && sys) { content = `${sys}\n\n${content}`; sys = ""; }
+                        out += `<start_of_turn>${role}\n${content}<end_of_turn>\n`;
+                    }
+                    out += `<start_of_turn>model\n`;
+                    return out;
+                },
+                stop: ["<end_of_turn>"]
+            },
+            phi3: {
+                msg: m => `<|${m.role}|>\n${m.content}<|end|>\n`,
+                tail: `<|assistant|>\n`,
+                stop: ["<|end|>", "<|endoftext|>"]
+            },
+            zephyr: {
+                msg: m => `<|${m.role}|>\n${m.content}</s>\n`,
+                tail: `<|assistant|>\n`,
+                stop: ["</s>"]
+            },
+            alpaca: {
+                render: msgs => {
+                    let out = "";
+                    const sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    if (sys) out += `${sys}\n\n`;
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        if (m.role === "user") out += `### Instruction:\n${m.content}\n\n`;
+                        else if (m.role === "assistant") out += `### Response:\n${m.content}\n\n`;
+                    }
+                    out += `### Response:\n`;
+                    return out;
+                },
+                stop: ["### Instruction:"]
+            },
+            raw: {
+                render: msgs => msgs.map(m => m.content).join("\n") + "\n",
+                stop: []
+            }
+        };
+
+        // Map GGUF general.architecture -> template key. Used when the model lacks an
+        // embedded chat template and the user leaves the format on "Auto".
+        function detectTemplateFromArch(arch) {
+            const a = (arch || "").toLowerCase();
+            if (a.includes("qwen") || a.includes("yi")) return "chatml";
+            if (a.includes("llama")) return "llama3"; // llama-3.x; older llama-2 users can override
+            if (a.includes("mistral") || a.includes("mixtral")) return "mistral";
+            if (a.includes("gemma")) return "gemma";
+            if (a.includes("phi")) return "phi3";
+            return "zephyr";
+        }
+
+        // Build the final prompt string + stop tokens for a given template key.
+        function buildWllamaPrompt(key, msgs) {
+            const t = CHAT_TEMPLATES[key] || CHAT_TEMPLATES.zephyr;
+            if (t.render) return { prompt: t.render(msgs), stop: t.stop || [] };
+            let prompt = msgs.map(t.msg).join("");
+            prompt += t.tail || "";
+            return { prompt, stop: t.stop || [] };
+        }
 
         // ========== Main Submit Handler ==========
         chatForm.addEventListener("submit", async function(e) {
