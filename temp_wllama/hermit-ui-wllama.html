@@ -2257,6 +2257,18 @@ return He}()
                     <label for="wllamaWebGpuToggle" style="margin: 0; font-size: 0.85rem;">Enable WebGPU (Hardware Acceleration)</label>
                 </div>
                 <div style="font-size: 0.75rem; color: #999;">Note: On some systems (especially integrated graphics) WebGPU may be slower than CPU. Uncheck to force CPU-only mode.</div>
+
+                <div style="margin-top: 12px; border-top: 1px solid rgba(0,0,0,0.08); padding-top: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="wllamaDebugToggle" checked>
+                            <label for="wllamaDebugToggle" style="margin: 0; font-size: 0.85rem;">Verbose debug log</label>
+                        </div>
+                        <button type="button" id="wllamaDebugClear" style="font-size: 0.72rem; padding: 3px 8px; cursor: pointer; border-radius: 6px;">Clear</button>
+                    </div>
+                    <pre id="wllamaDebugLog" style="margin: 0; min-height: 22px; max-height: 180px; overflow: auto; background: #0b0e14; color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.5; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word;"></pre>
+                    <div style="font-size: 0.72rem; color: #999; margin-top: 4px;">Engine load, model metadata, chosen chat template, the prompt sent, and tokens/sec. Mirrored to the browser console.</div>
+                </div>
             </div>
 
             <div id="apiSettingsGroup">
@@ -2767,6 +2779,11 @@ Rules:
             }
         });
         
+        document.getElementById("wllamaDebugClear").addEventListener("click", () => {
+            const panel = document.getElementById("wllamaDebugLog");
+            if (panel) panel.textContent = "";
+        });
+
         document.getElementById("settingWllamaFile").addEventListener("change", async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -2791,17 +2808,39 @@ Rules:
                 }
                 
                 statusEl.textContent = "Status: Initializing Wllama...";
-                wllamaInstance = new WllamaClass({
-                    "default": "https://cdn.jsdelivr.net/npm/@wllama/wllama/esm/wasm/wllama.wasm"
-                });
+                wllamaLog("log", "Initializing Wllama engine…");
+                wllamaInstance = new WllamaClass(
+                    { "default": "https://cdn.jsdelivr.net/npm/@wllama/wllama/esm/wasm/wllama.wasm" },
+                    {
+                        // Route wllama's internal messages into the debug panel, and let the
+                        // native llama.cpp logs (context/KV cache/backend init/timings) through.
+                        logger: {
+                            debug: (...a) => wllamaLog("debug", "[core]", ...a),
+                            log:   (...a) => wllamaLog("log",   "[core]", ...a),
+                            warn:  (...a) => wllamaLog("warn",  "[core]", ...a),
+                            error: (...a) => wllamaLog("error", "[core]", ...a),
+                        },
+                        suppressNativeLog: false,
+                    }
+                );
                 const useWebGpu = document.getElementById("wllamaWebGpuToggle").checked;
                 const loadOptions = useWebGpu ? {} : { n_gpu_layers: 0 };
                 // 0 (or blank) leaves n_ctx unset so wllama uses the model's trained context.
                 const nCtx = parseInt(document.getElementById("settingWllamaCtx").value, 10);
                 if (Number.isFinite(nCtx) && nCtx > 0) loadOptions.n_ctx = nCtx;
-                
+
+                // Stream download/decode progress into the status line and debug panel.
+                loadOptions.progressCallback = ({ loaded, total }) => {
+                    const pct = total ? Math.round((loaded / total) * 100) : 0;
+                    statusEl.textContent = `Status: Loading Model (${file.name}) ${pct}%`;
+                    wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
+                };
+                wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
+
                 statusEl.textContent = `Status: Loading Model (${file.name})...`;
+                const loadStart = performance.now();
                 await wllamaInstance.loadModel([file], loadOptions);
+                wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
 
                 // Inspect metadata so Auto mode can prefer the embedded template and,
                 // failing that, guess a sane format from the model architecture.
@@ -2812,15 +2851,17 @@ Rules:
                     const m = meta?.meta || meta || {};
                     wllamaHasEmbeddedTemplate = !!m["tokenizer.chat_template"];
                     wllamaDetectedTemplate = detectTemplateFromArch(m["general.architecture"]);
+                    wllamaLog("log", `Metadata → arch=${m["general.architecture"] || "?"}, name=${m["general.name"] || "?"}, embedded_template=${wllamaHasEmbeddedTemplate}, detected_format=${wllamaDetectedTemplate}`);
+                    wllamaLog("debug", "Full model metadata:", m);
                 } catch (metaErr) {
-                    console.warn("Could not read model metadata:", metaErr);
+                    wllamaLog("warn", "Could not read model metadata:", metaErr.message || metaErr);
                 }
                 const detail = wllamaHasEmbeddedTemplate
                     ? "embedded template"
                     : `auto: ${wllamaDetectedTemplate}`;
                 statusEl.textContent = `Status: Ready 🟢 (${detail})`;
             } catch (err) {
-                console.error(err);
+                wllamaLog("error", "Load failed:", err.message || err);
                 statusEl.textContent = "Status: Error - " + err.message;
             }
         });
@@ -3380,12 +3421,15 @@ Rules:
                     onError(new Error("Local model not loaded. Please select a .gguf file in settings."));
                     return;
                 }
+                let genChunks = 0;
+                const genStart = performance.now();
                 try {
                     const onData = (chunk) => {
                         if (signal.aborted) throw new Error("AbortError");
                         const content = typeof chunk === 'string' ? chunk :
                             (chunk.choices?.[0]?.text || chunk.choices?.[0]?.delta?.content || chunk.content || "");
                         if (content) {
+                            genChunks++;
                             onChunk("", content, 0, 0);
                         }
                     };
@@ -3398,6 +3442,7 @@ Rules:
                     const useEmbedded = choice === "auto" && wllamaHasEmbeddedTemplate;
 
                     if (useEmbedded) {
+                        wllamaLog("log", `Generating via embedded chat template (temp=${temperature}, max_tokens=2048, messages=${payload.messages.length})`);
                         // wllama's OpenAI-compatible chat path applies the GGUF's own
                         // tokenizer.chat_template; chunks arrive as choices[0].delta.content.
                         await wllamaInstance.createChatCompletion({
@@ -3412,6 +3457,8 @@ Rules:
                         // Manual formatting for template-less models (or an explicit user override).
                         const key = choice === "auto" ? wllamaDetectedTemplate : choice;
                         const { prompt, stop } = buildWllamaPrompt(key, payload.messages);
+                        wllamaLog("log", `Generating via manual template "${key}" (temp=${temperature}, max_tokens=2048, stop=${JSON.stringify(stop)})`);
+                        wllamaLog("debug", "Formatted prompt sent to model:\n" + prompt);
                         await wllamaInstance.createCompletion({
                             prompt,
                             max_tokens: 2048,
@@ -3423,11 +3470,15 @@ Rules:
                         });
                     }
 
+                    const genSecs = (performance.now() - genStart) / 1000;
+                    wllamaLog("log", `Generation done: ~${genChunks} chunks in ${genSecs.toFixed(1)}s (${genSecs > 0 ? (genChunks / genSecs).toFixed(1) : "?"} chunks/s)`);
                     onDone(0, 0);
                 } catch (err) {
                     if (err.message === "AbortError") {
+                        wllamaLog("warn", `Generation aborted after ~${genChunks} chunks`);
                         onDone(0, 0);
                     } else {
+                        wllamaLog("error", "Generation failed:", err.message || err);
                         onError(err);
                     }
                 }
@@ -3512,6 +3563,27 @@ Rules:
         let wllamaInstance = null;
         let wllamaHasEmbeddedTemplate = false; // GGUF ships tokenizer.chat_template
         let wllamaDetectedTemplate = "zephyr"; // auto-detected fallback format
+
+        // Debug logging: mirror to the browser console AND stream into the in-UI panel
+        // so users can watch engine/model/generation internals without opening devtools.
+        const WLLAMA_LOG_COLORS = { debug: "#8b949e", log: "#c9d1d9", warn: "#e3b341", error: "#f85149" };
+        function wllamaLog(level, ...args) {
+            const method = console[level] ? level : "log";
+            console[method]("[wllama]", ...args);
+            const toggle = document.getElementById("wllamaDebugToggle");
+            if (toggle && !toggle.checked) return; // verbose logging disabled
+            const panel = document.getElementById("wllamaDebugLog");
+            if (!panel) return;
+            const text = args.map(a =>
+                typeof a === "string" ? a
+                    : (() => { try { return JSON.stringify(a, null, 2); } catch (e) { return String(a); } })()
+            ).join(" ");
+            const line = document.createElement("div");
+            line.style.color = WLLAMA_LOG_COLORS[level] || WLLAMA_LOG_COLORS.log;
+            line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
+            panel.appendChild(line);
+            panel.scrollTop = panel.scrollHeight;
+        }
 
         // Registry of chat prompt formats for template-less GGUFs. Each entry knows how
         // to render a single message, the trailing tag that primes the assistant turn,
