@@ -2248,6 +2248,10 @@ return He}()
                 </select>
                 <div id="wllamaTemplateHint" style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Auto uses the model's embedded template when present, else infers from its architecture.</div>
 
+                <label for="settingWllamaCtx">Context Window (tokens)</label>
+                <input type="number" id="settingWllamaCtx" value="4096" min="0" step="512" style="margin-bottom: 4px; width: 100%;">
+                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Larger = more history but more memory/slower load. 0 = use the model's built-in default. Applied when the model is loaded.</div>
+
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                     <input type="checkbox" id="wllamaWebGpuToggle" checked>
                     <label for="wllamaWebGpuToggle" style="margin: 0; font-size: 0.85rem;">Enable WebGPU (Hardware Acceleration)</label>
@@ -2792,6 +2796,9 @@ Rules:
                 });
                 const useWebGpu = document.getElementById("wllamaWebGpuToggle").checked;
                 const loadOptions = useWebGpu ? {} : { n_gpu_layers: 0 };
+                // 0 (or blank) leaves n_ctx unset so wllama uses the model's trained context.
+                const nCtx = parseInt(document.getElementById("settingWllamaCtx").value, 10);
+                if (Number.isFinite(nCtx) && nCtx > 0) loadOptions.n_ctx = nCtx;
                 
                 statusEl.textContent = `Status: Loading Model (${file.name})...`;
                 await wllamaInstance.loadModel([file], loadOptions);
