@@ -27,9 +27,9 @@
   <p><i>Works entirely in your browser. Just connect it to your local AI server!</i></p>
 </div>
 
-HermitUI is a highly responsive web interface tailored for interacting with local AI models. Its source code is built **entirely within a single `src/hermit-ui.src.html` file** using vanilla HTML, CSS, and JavaScript. 
+HermitUI is a highly responsive web interface tailored for interacting with local AI models. It ships as **a single, self-contained `.html` file** built with nothing but vanilla HTML, CSS, and JavaScript. During development the source is split into `src/index.html`, `src/style.css`, and `src/script.js` for maintainability, and `build.py` assembles them into the standalone single-file deliverable.
 
-No build steps, no backend, and no installation required—just open the file in your browser and start chatting!
+No backend and no installation required—just open the file in your browser and start chatting!
 
 ## 🎯 Ideal Use Cases
 
@@ -39,18 +39,20 @@ No build steps, no backend, and no installation required—just open the file in
 
 ## ✨ Features
 
-*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `src/hermit-ui.src.html`).
+*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) and the Inter font bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `dist/hermit-ui-cdn.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
+*   **🖼️ Image & Vision Support:** Upload, drag-and-drop, or paste (Ctrl+V) images straight into the input for vision-capable models. Attachments are sent as `image_url` content per the OpenAI schema, with automatic vision-model detection.
 *   **🎭 Personas:** Switch between preset system prompts on the fly via a dropdown to instantly re-shape the assistant's behavior.
 *   **📎 Context Attachments:** Drag-and-drop or upload text files to inject their contents directly into your prompt as context.
 *   **✏️ Edit & Regenerate:** Edit any previous message or regenerate the assistant's last response without restarting the conversation.
+*   **🎛️ Advanced Sampling Controls:** Tune `temperature`, `max_tokens`, `top_p`, `presence_penalty`, `frequency_penalty`, and `seed` from a collapsible panel in Settings. Params are only sent when set, keeping payloads compatible with minimal backends.
 *   **🎨 Modern UI/UX:** Clean, responsive design with smooth micro-animations, comprehensive CSS variables for easy theming, syntax highlighting, and a premium glassmorphism feel.
 *   **⚡ Real-Time Streaming:** Watch responses generate in real-time with an experience comparable to ChatGPT.
 *   **📊 Live Performance Stats:** Built-in dashboard to monitor Prompt Tokens, Completion Tokens, Generation Speed (Tokens/Second), and Total Duration.
 *   **📝 Markdown & Code Support:** Renders rich Markdown and provides one-click "Copy" buttons for code blocks.
 *   **💾 Chat Export:** Easily download your entire conversation history as a formatted Markdown file for safekeeping.
-*   **⚙️ Customizable Settings:** Quickly adjust the API URL, Model Name, and System Prompt via the on-page settings overlay.
+*   **⚙️ Customizable Settings:** Quickly adjust the API URL, Model Name, API Key, and System Prompt via the on-page settings overlay.
 
 ## 🚀 Quick Start
 
@@ -122,7 +124,7 @@ HermitUI enforces strict architectural constraints to remain lightweight and acc
 
 By default, the root `index.html` file (a copy of `dist/hermit-ui-standalone.html`) is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
 
-If you wish to modify the source code, edit `src/hermit-ui.src.html` (which uses CDNs for external libraries) and then run the build script to regenerate the standalone root file:
+If you wish to modify the source code, edit the modular sources in `src/` — `index.html`, `style.css`, and `script.js` (which reference external libraries via CDN for convenient local development) — and then run the build script to regenerate the standalone root file:
 
 ```bash
 python build.py
