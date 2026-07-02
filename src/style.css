@@ -762,6 +762,35 @@
         }
         .action-btn:hover { background: #f3f4f6; color: var(--primary); }
 
+        .vision-badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #059669;
+            background: rgba(16,185,129,0.12);
+            border: 1px solid rgba(16,185,129,0.25);
+            padding: 1px 7px;
+            border-radius: 10px;
+            line-height: 1.6;
+        }
+
+        .file-chip-thumb {
+            width: 28px;
+            height: 28px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+
+        .attached-image-preview {
+            max-width: 180px;
+            max-height: 180px;
+            border-radius: 8px;
+            margin: 6px 8px 6px 0;
+            border: 1px solid rgba(0,0,0,0.08);
+            vertical-align: top;
+        }
+
 /* Dark Mode Styles */
 /* Dark Mode Overrides */
         :root[data-theme="dark"] {
@@ -805,6 +834,9 @@
         }
         :root[data-theme="dark"] .msg-content {
             color: #e2e8f0;
+        }
+        :root[data-theme="dark"] .attached-image-preview {
+            border-color: rgba(255,255,255,0.15);
         }
         :root[data-theme="dark"] .msg-wrapper.user .msg-content {
             color: #f8fafc;

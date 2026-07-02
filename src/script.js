@@ -1,7 +1,8 @@
 // ========== Configuration ==========
         const CONSTANTS = {
             THROTTLE_MS: 80,
-            MAX_TEXTAREA_HEIGHT_PX: 200
+            MAX_TEXTAREA_HEIGHT_PX: 200,
+            MAX_IMAGE_DIM_PX: 1568
         };
 
         // Escape text destined for HTML / attribute contexts.
@@ -218,9 +219,17 @@ Rules:
                 const chip = document.createElement("div");
                 chip.style.cssText = "display: flex; align-items: center; background: rgba(59,130,246,0.1); color: var(--primary); padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; border: 1px solid rgba(59,130,246,0.2);";
 
+                if (f.kind === "image") {
+                    const thumb = document.createElement("img");
+                    thumb.className = "file-chip-thumb";
+                    thumb.src = f.dataUrl; // trusted: locally-read data URL
+                    thumb.alt = f.name;
+                    chip.appendChild(thumb);
+                }
+
                 const nameSpan = document.createElement("span");
                 nameSpan.style.cssText = "max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
-                nameSpan.textContent = `📄 ${f.name}`; // textContent: filename is untrusted, never inject as HTML
+                nameSpan.textContent = f.kind === "image" ? f.name : `📄 ${f.name}`; // textContent: filename is untrusted, never inject as HTML
 
                 const removeBtn = document.createElement("button");
                 removeBtn.type = "button";
@@ -246,20 +255,68 @@ Rules:
             return textExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
         }
 
+        function isImageFile(file) {
+            return file.type.startsWith("image/");
+        }
+
+        // Downscale large images via canvas to keep request payloads (and vision token
+        // cost) reasonable, then re-encode to a data URL. Returns a Promise<dataUrl>.
+        function loadImageDownscaled(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error("read failed"));
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onerror = () => reject(new Error("decode failed"));
+                    img.onload = () => {
+                        const MAX = CONSTANTS.MAX_IMAGE_DIM_PX || 1568;
+                        let { width, height } = img;
+                        if (width <= MAX && height <= MAX) {
+                            resolve(e.target.result); // already small enough — keep original bytes
+                            return;
+                        }
+                        const scale = MAX / Math.max(width, height);
+                        width = Math.round(width * scale);
+                        height = Math.round(height * scale);
+                        const canvas = document.createElement("canvas");
+                        canvas.width = width;
+                        canvas.height = height;
+                        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+                        // JPEG for photos keeps payloads small; PNG source with alpha stays PNG.
+                        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+                        resolve(canvas.toDataURL(outType, 0.85));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
         function processFiles(files) {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
+                if (isImageFile(file)) {
+                    if (file.size > 10 * 1024 * 1024) {
+                        showToast(`Image ${file.name} is too large (>10MB).`);
+                        continue;
+                    }
+                    loadImageDownscaled(file).then(dataUrl => {
+                        attachedFiles.push({ name: file.name, kind: "image", dataUrl });
+                        renderChips();
+                    }).catch(() => showToast(`Could not read image ${file.name}.`));
+                    continue;
+                }
                 if (file.size > 1024 * 1024) {
                     showToast(`File ${file.name} is too large (>1MB).`);
                     continue;
                 }
                 if (!isTextFile(file)) {
-                    showToast(`File ${file.name} does not appear to be a text file.`);
+                    showToast(`File ${file.name} does not appear to be a text or image file.`);
                     continue;
                 }
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    attachedFiles.push({ name: file.name, content: e.target.result });
+                    attachedFiles.push({ name: file.name, kind: "text", content: e.target.result });
                     renderChips();
                 };
                 reader.readAsText(file);
@@ -408,6 +465,7 @@ Rules:
             
             document.getElementById("settingTemperature").value = TEMPERATURE;
             document.getElementById("settingSystem").value = SYSTEM_PROMPT;
+            updateVisionBadge();
             settingsModal.classList.add("active");
         });
         document.getElementById("settingsCancel").addEventListener("click", () => {
@@ -482,6 +540,51 @@ Rules:
             toastTimeout = setTimeout(() => toast.classList.remove("show"), 2500);
         }
 
+        // ========== Vision capability detection (best-effort) ==========
+        // Models the server explicitly reports as accepting image input.
+        const VISION_MODELS = new Set();
+        // Name heuristic for backends that don't report modalities (OpenAI, most llama.cpp, etc.).
+        const VISION_NAME_RE = /gpt-4o|gpt-4\.1|gpt-5|vision|claude-3|claude-[45]|gemini|llava|bakllava|moondream|pixtral|internvl|-vl\b|qwen.*vl|minicpm-v|smolvlm|granite.*vision/i;
+
+        // Flatten a message's content (string or multimodal array) to plain text.
+        function contentToText(content) {
+            if (Array.isArray(content)) {
+                const parts = content.filter(p => p.type === "text").map(p => p.text);
+                const imgCount = content.filter(p => p.type === "image_url").length;
+                let out = parts.join(" ");
+                if (imgCount > 0) out += (out ? " " : "") + `[${imgCount} image${imgCount > 1 ? "s" : ""} attached]`;
+                return out;
+            }
+            return content == null ? "" : String(content);
+        }
+
+        function extractModelId(m) {
+            return (m && (m.id || m.name)) || m;
+        }
+        // Read any non-standard modality hints a server may expose.
+        function modelReportsVision(m) {
+            if (!m || typeof m !== "object") return false;
+            const modalities = (m.architecture && m.architecture.input_modalities) || m.input_modalities || m.modalities;
+            if (Array.isArray(modalities) && modalities.some(x => /image|vision/i.test(String(x)))) return true;
+            if (Array.isArray(m.capabilities) && m.capabilities.some(x => /vision|image/i.test(String(x)))) return true;
+            return false;
+        }
+        function modelSupportsVision(id) {
+            if (!id) return false;
+            return VISION_MODELS.has(id) || VISION_NAME_RE.test(id);
+        }
+        function currentSettingsModel() {
+            const select = document.getElementById("settingModelSelect");
+            const input = document.getElementById("settingModelInput");
+            if (select && select.style.display !== "none" && select.value && select.value !== "custom") return select.value;
+            return input ? input.value.trim() : "";
+        }
+        function updateVisionBadge() {
+            const badge = document.getElementById("visionBadge");
+            if (!badge) return;
+            badge.style.display = modelSupportsVision(currentSettingsModel()) ? "inline-block" : "none";
+        }
+
         // ========== Test Connection & Fetch Models ==========
         document.getElementById("testConnectionBtn").addEventListener("click", async (e) => {
             e.preventDefault();
@@ -520,8 +623,10 @@ Rules:
                 const input = document.getElementById("settingModelInput");
 
                 select.innerHTML = "";
+                VISION_MODELS.clear();
                 models.forEach(m => {
-                    const modelId = m.id || m.name || m;
+                    const modelId = extractModelId(m);
+                    if (modelReportsVision(m)) VISION_MODELS.add(modelId);
                     const opt = document.createElement("option");
                     opt.value = modelId;
                     opt.textContent = modelId;
@@ -541,6 +646,7 @@ Rules:
 
                 input.style.display = "none";
                 select.style.display = "block";
+                updateVisionBadge();
 
                 showToast(`✅ Connection successful! Found ${models.length} models.`);
             } catch (error) {
@@ -559,7 +665,9 @@ Rules:
                 input.style.display = "block";
                 input.focus();
             }
+            updateVisionBadge();
         });
+        document.getElementById("settingModelInput").addEventListener("input", updateVisionBadge);
 
         // ========== Export Chat ==========
         document.getElementById("exportBtn").addEventListener("click", () => {
@@ -568,9 +676,9 @@ Rules:
                 if (msg.role === "system") {
                     md += `> **System:** ${msg.content.replace(/\n/g, '\n> ')}\n\n---\n\n`;
                 } else if (msg.role === "user") {
-                    md += `## 🧑‍💻 You\n\n<div class="user-message">\n\n${msg.content}\n\n</div>\n\n`;
+                    md += `## 🧑‍💻 You\n\n<div class="user-message">\n\n${contentToText(msg.content)}\n\n</div>\n\n`;
                 } else if (msg.role === "assistant") {
-                    md += `## ✨ AI\n\n<div class="ai-message">\n\n${msg.content}\n\n</div>\n\n---\n\n`;
+                    md += `## ✨ AI\n\n<div class="ai-message">\n\n${contentToText(msg.content)}\n\n</div>\n\n---\n\n`;
                 }
             }
             const blob = new Blob([md], { type: "text/markdown" });
@@ -595,8 +703,8 @@ Rules:
             let transcript = "";
             for (const msg of messages) {
                 if (msg.isSummary) continue;
-                if (msg.role === "user") transcript += `User: ${msg.content}\n\n`;
-                else if (msg.role === "assistant") transcript += `AI: ${msg.content}\n\n`;
+                if (msg.role === "user") transcript += `User: ${contentToText(msg.content)}\n\n`;
+                else if (msg.role === "assistant") transcript += `AI: ${contentToText(msg.content)}\n\n`;
             }
 
             const summaryPrompt = `Summarize the following conversation:\n\n${transcript}`;
@@ -1051,45 +1159,65 @@ Rules:
                 const emptyState = document.getElementById("emptyState");
                 if (emptyState) emptyState.remove();
 
+                const textFiles = hasFiles ? attachedFiles.filter(f => f.kind !== "image") : [];
+                const imageFiles = hasFiles ? attachedFiles.filter(f => f.kind === "image") : [];
+
                 let payloadText = text;
                 let contextBlocks = [];
-                
+
                 if (contextText) {
                     contextBlocks.push(`<context>\n${contextText}\n</context>`);
                 }
-                if (hasFiles) {
-                    attachedFiles.forEach(f => {
-                        contextBlocks.push(`<file name="${escapeHtml(f.name)}">\n${f.content}\n</file>`);
-                    });
-                }
+                textFiles.forEach(f => {
+                    contextBlocks.push(`<file name="${escapeHtml(f.name)}">\n${f.content}\n</file>`);
+                });
                 if (contextBlocks.length > 0) {
                     payloadText = contextBlocks.join("\n\n") + "\n\n" + text;
                 }
 
-                messages.push({"role": "user", "content": payloadText});
+                // When images are attached, send OpenAI multimodal content-array; otherwise
+                // keep the plain-string form for maximum backend compatibility.
+                if (imageFiles.length > 0) {
+                    const parts = [{ type: "text", text: payloadText }];
+                    imageFiles.forEach(f => {
+                        parts.push({ type: "image_url", image_url: { url: f.dataUrl } });
+                    });
+                    messages.push({ "role": "user", "content": parts });
+                } else {
+                    messages.push({ "role": "user", "content": payloadText });
+                }
                 userScrolledUp = false; // Force scroll to bottom for new message
-                
+
                 const safeText = escapeHtml(text).replace(/\n/g, '<br>');
                 let uiText = safeText;
 
-                if (contextBlocks.length > 0) {
+                if (contextText || textFiles.length > 0) {
                     let combinedSafeContext = "";
                     if (contextText) {
                         combinedSafeContext += escapeHtml(contextText) + "\n\n";
                     }
-                    if (hasFiles) {
-                        attachedFiles.forEach(f => {
-                            combinedSafeContext += `--- ${escapeHtml(f.name)} ---\n` + escapeHtml(f.content) + "\n\n";
-                        });
-                    }
-                    uiText = `<details class="attached-context" style="margin-bottom: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; padding: 10px; border: 1px solid rgba(0,0,0,0.05);"><summary style="cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; user-select: none;">📎 Attached Context</summary><pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; color: #4b5563; font-family: inherit; overflow-x: auto;">${combinedSafeContext.trim()}</pre></details>` + safeText;
+                    textFiles.forEach(f => {
+                        combinedSafeContext += `--- ${escapeHtml(f.name)} ---\n` + escapeHtml(f.content) + "\n\n";
+                    });
+                    uiText = `<details class="attached-context" style="margin-bottom: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; padding: 10px; border: 1px solid rgba(0,0,0,0.05);"><summary style="cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; user-select: none;">📎 Attached Context</summary><pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; color: #4b5563; font-family: inherit; overflow-x: auto;">${combinedSafeContext.trim()}</pre></details>` + uiText;
                 }
-                
+                if (imageFiles.length > 0) {
+                    // src is a locally-read/re-encoded data URL; alt is escaped filename.
+                    const imgHtml = imageFiles.map(f =>
+                        `<img class="attached-image-preview" src="${f.dataUrl}" alt="${escapeHtml(f.name)}">`
+                    ).join("");
+                    uiText = `<div class="attached-images">${imgHtml}</div>` + uiText;
+                }
+
                 uiText = DOMPurify.sanitize(uiText);
                 appendMessage("You", uiText, "user", "🧑‍💻", true, {
                     text: text,
                     contextText: contextText,
-                    files: typeof attachedFiles !== "undefined" ? attachedFiles.map(f => ({ name: f.name, content: f.content })) : []
+                    files: typeof attachedFiles !== "undefined" ? attachedFiles.map(f => (
+                        f.kind === "image"
+                            ? { name: f.name, kind: "image", dataUrl: f.dataUrl }
+                            : { name: f.name, kind: "text", content: f.content }
+                    )) : []
                 });
             }
             
@@ -1203,7 +1331,10 @@ Rules:
                 }
                 if (promptTokens === 0) {
                     const promptMsgs = messages.length > 0 && messages[messages.length - 1].role === "assistant" ? messages.slice(0, -1) : messages;
-                    let promptStr = promptMsgs.map(m => m.content).join(" ");
+                    // content may be a multimodal array; estimate from text parts only.
+                    let promptStr = promptMsgs.map(m => Array.isArray(m.content)
+                        ? m.content.filter(p => p.type === "text").map(p => p.text).join(" ")
+                        : m.content).join(" ");
                     promptTokens = Math.ceil(promptStr.length / 4);
                 }
                 
@@ -1270,7 +1401,11 @@ Rules:
                                 if (contextInput) contextInput.value = rawData.contextText || "";
                             }
                             if (rawData.files && rawData.files.length > 0) {
-                                attachedFiles = rawData.files.map(f => ({ name: f.name, content: f.content }));
+                                attachedFiles = rawData.files.map(f => (
+                                    f.kind === "image"
+                                        ? { name: f.name, kind: "image", dataUrl: f.dataUrl }
+                                        : { name: f.name, kind: "text", content: f.content }
+                                ));
                                 if (typeof renderChips === "function") renderChips();
                             }
                         }
