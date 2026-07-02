@@ -106,6 +106,7 @@ Rules:
         let API_KEY = "dummy";
         let MODEL_NAME = "local-model";
         let TEMPERATURE = 0.7;
+        let MAX_TOKENS = null, TOP_P = 1, PRESENCE_PENALTY = 0, FREQUENCY_PENALTY = 0, SEED = null;
         let SYSTEM_PROMPT = PERSONAS.technical.prompt;
 
         // ========== DOM References ==========
@@ -384,6 +385,28 @@ Rules:
                 chatForm.dispatchEvent(new Event("submit", { cancelable: true }));
             }
         });
+
+        // Clipboard image paste: pasted screenshots/images go through the same
+        // processFiles pipeline as upload/drag-drop. Text paste is left untouched.
+        inputField.addEventListener("paste", (e) => {
+            const items = (e.clipboardData && e.clipboardData.items) || [];
+            const imageFiles = [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === "file" && item.type.startsWith("image/")) {
+                    const file = item.getAsFile();
+                    if (file) imageFiles.push(file);
+                }
+            }
+            if (!imageFiles.length) return; // no image → normal text paste
+            e.preventDefault();
+            processFiles(imageFiles);
+            // Reveal the context pane so the new chip is visible (mirrors attach-context-btn).
+            if (contextPane && contextPane.style.display === "none") {
+                contextPane.style.display = "flex";
+                if (attachContextBtn) attachContextBtn.style.color = "var(--primary)";
+            }
+        });
         
         // Global Keyboard Shortcuts
         document.addEventListener("keydown", (e) => {
@@ -471,6 +494,11 @@ Rules:
             }
             
             document.getElementById("settingTemperature").value = TEMPERATURE;
+            document.getElementById("settingMaxTokens").value = MAX_TOKENS == null ? "" : MAX_TOKENS;
+            document.getElementById("settingTopP").value = TOP_P;
+            document.getElementById("settingPresencePenalty").value = PRESENCE_PENALTY;
+            document.getElementById("settingFrequencyPenalty").value = FREQUENCY_PENALTY;
+            document.getElementById("settingSeed").value = SEED == null ? "" : SEED;
             document.getElementById("settingSystem").value = SYSTEM_PROMPT;
             updateVisionBadge();
             settingsModal.classList.add("active");
@@ -495,6 +523,21 @@ Rules:
             
             let tempVal = parseFloat(document.getElementById("settingTemperature").value);
             TEMPERATURE = isNaN(tempVal) ? 0.7 : tempVal;
+
+            // Advanced sampling params. Blank max_tokens/seed stay unset (null → omitted from
+            // payload); top_p/penalties fall back to their neutral defaults. Values are clamped.
+            const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+            const maxTokVal = parseInt(document.getElementById("settingMaxTokens").value, 10);
+            MAX_TOKENS = isNaN(maxTokVal) || maxTokVal <= 0 ? null : maxTokVal;
+            const topPVal = parseFloat(document.getElementById("settingTopP").value);
+            TOP_P = isNaN(topPVal) ? 1 : clamp(topPVal, 0, 1);
+            const presVal = parseFloat(document.getElementById("settingPresencePenalty").value);
+            PRESENCE_PENALTY = isNaN(presVal) ? 0 : clamp(presVal, -2, 2);
+            const freqVal = parseFloat(document.getElementById("settingFrequencyPenalty").value);
+            FREQUENCY_PENALTY = isNaN(freqVal) ? 0 : clamp(freqVal, -2, 2);
+            const seedVal = parseInt(document.getElementById("settingSeed").value, 10);
+            SEED = isNaN(seedVal) ? null : seedVal;
+
             const newPrompt = document.getElementById("settingSystem").value.trim();
             SYSTEM_PROMPT = newPrompt;
             messages[0].content = SYSTEM_PROMPT;
@@ -1279,13 +1322,21 @@ Rules:
             document.getElementById('chatForm').classList.add('is-generating');
             responseContainer.classList.add('cursor');
 
-            await fetchAndStreamChat({
+            const chatPayload = {
                 model: MODEL_NAME,
                 messages: messages.filter(m => !m.isSummary),
                 temperature: TEMPERATURE,
                 stream: true,
                 stream_options: { include_usage: true }
-            }, abortController.signal, {
+            };
+            // Only send advanced params when set / non-default, for maximal backend compatibility.
+            if (MAX_TOKENS != null) chatPayload.max_tokens = MAX_TOKENS;
+            if (TOP_P !== 1) chatPayload.top_p = TOP_P;
+            if (PRESENCE_PENALTY !== 0) chatPayload.presence_penalty = PRESENCE_PENALTY;
+            if (FREQUENCY_PENALTY !== 0) chatPayload.frequency_penalty = FREQUENCY_PENALTY;
+            if (SEED != null) chatPayload.seed = SEED;
+
+            await fetchAndStreamChat(chatPayload, abortController.signal, {
                 onChunk: (reasoningChunk, contentChunk, pt, ct) => {
                     if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
                     if (contentChunk) ctx.fullRawText += contentChunk;

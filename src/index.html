@@ -84,6 +84,19 @@
             <input type="text" id="settingModelInput" value="local-model">
             <label for="settingTemperature">Temperature</label>
             <input type="number" id="settingTemperature" value="0.7" step="0.1" min="0" max="2">
+            <details class="advanced-params">
+                <summary>Advanced parameters</summary>
+                <label for="settingMaxTokens">Max Tokens</label>
+                <input type="number" id="settingMaxTokens" placeholder="unlimited" step="1" min="1">
+                <label for="settingTopP">Top P</label>
+                <input type="number" id="settingTopP" value="1" step="0.05" min="0" max="1">
+                <label for="settingPresencePenalty">Presence Penalty</label>
+                <input type="number" id="settingPresencePenalty" value="0" step="0.1" min="-2" max="2">
+                <label for="settingFrequencyPenalty">Frequency Penalty</label>
+                <input type="number" id="settingFrequencyPenalty" value="0" step="0.1" min="-2" max="2">
+                <label for="settingSeed">Seed</label>
+                <input type="number" id="settingSeed" placeholder="random" step="1">
+            </details>
             <label for="settingSystem">System Prompt</label>
             <textarea id="settingSystem">You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts.</textarea>
             <div class="modal-actions">

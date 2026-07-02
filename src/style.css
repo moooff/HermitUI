@@ -639,6 +639,25 @@
             min-height: 80px;
             line-height: 1.5;
         }
+        .advanced-params {
+            margin-bottom: 20px;
+        }
+        .advanced-params > summary {
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+            user-select: none;
+        }
+        .advanced-params > summary:hover {
+            opacity: 0.8;
+        }
+        .advanced-params input:last-child {
+            margin-bottom: 0;
+        }
         .modal-actions {
             display: flex;
             justify-content: flex-end;
