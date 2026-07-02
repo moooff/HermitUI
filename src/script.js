@@ -255,8 +255,11 @@ Rules:
             return textExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
         }
 
+        // Raster formats accepted by the OpenAI vision content-array. SVG is excluded:
+        // vision endpoints reject image/svg+xml and it can't be rasterized safely here.
+        const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
         function isImageFile(file) {
-            return file.type.startsWith("image/");
+            return SUPPORTED_IMAGE_TYPES.includes(file.type);
         }
 
         // Downscale large images via canvas to keep request payloads (and vision token
@@ -304,6 +307,10 @@ Rules:
                         attachedFiles.push({ name: file.name, kind: "image", dataUrl });
                         renderChips();
                     }).catch(() => showToast(`Could not read image ${file.name}.`));
+                    continue;
+                }
+                if (file.type.startsWith("image/")) {
+                    showToast(`Image format not supported: ${file.name}. Use PNG, JPEG, GIF, or WebP.`);
                     continue;
                 }
                 if (file.size > 1024 * 1024) {
