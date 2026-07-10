@@ -19,6 +19,7 @@ This document tracks upcoming features, tasks, and ideas for the HermitUI projec
 
 ## ✅ Completed
 - [x] Create backlog.md
+- [x] **wllama: fully inline the engine** — `build.py` embeds `index.js` + `wllama.wasm` (gzip + base64, decompressed in-browser via `DecompressionStream`) into `dist/hermit-ui-wllama.html`, so first model load needs zero network; dev source keeps the CDN `import()` fallback
 - [x] **wllama: merged into the main tree** — ported from `temp_wllama/` into `src/` behind `@wllama:start/end` build markers; ships as `dist/hermit-ui-wllama.html`
 - [x] **wllama: Resource Cleanup** — `await wllamaInstance.exit()` before initializing a new model
 - [x] **wllama: Global `window.Worker` Mutation Leak** — patch is scoped to the model load and restored in a `finally`

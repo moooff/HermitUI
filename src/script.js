@@ -630,8 +630,10 @@ Rules:
             fileInput.disabled = true; // no concurrent loads while one is in flight
 
             try {
+                const engine = await resolveWllamaEngine();
                 if (!WllamaClass) {
-                    const module = await import(`${WLLAMA_CDN_BASE}/index.js`);
+                    wllamaLog("log", `Loading wllama engine from ${engine.source}…`);
+                    const module = await import(engine.js);
                     WllamaClass = module.Wllama;
                 }
 
@@ -646,7 +648,7 @@ Rules:
                 statusEl.textContent = "Status: Initializing Wllama...";
                 wllamaLog("log", "Initializing Wllama engine…");
                 wllamaInstance = new WllamaClass(
-                    { "default": `${WLLAMA_CDN_BASE}/wasm/wllama.wasm` },
+                    { "default": engine.wasm },
                     {
                         // Route wllama's internal messages into the debug panel.
                         logger: {
@@ -1278,6 +1280,46 @@ Rules:
         let wllamaInstance = null;
         let wllamaHasEmbeddedTemplate = false; // GGUF ships tokenizer.chat_template
         let wllamaDetectedTemplate = "zephyr"; // auto-detected fallback format
+
+        // The dedicated wllama build embeds the engine (gzip + base64, injected by
+        // build.py as window.__WLLAMA_INLINE__) so model loading needs zero network
+        // access. Without the injection (unbuilt dev source) the engine comes from
+        // the pinned CDN instead.
+        let wllamaEngineUrls = null; // resolved once; module imports cache per URL
+        async function gunzipToBytes(b64) {
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+            return new Uint8Array(await new Response(stream).arrayBuffer());
+        }
+        function bytesToBase64(bytes) {
+            let bin = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+                bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            return btoa(bin);
+        }
+        async function resolveWllamaEngine() {
+            if (wllamaEngineUrls) return wllamaEngineUrls;
+            const inline = window.__WLLAMA_INLINE__;
+            if (inline) {
+                const jsBytes = await gunzipToBytes(inline.js);
+                // The wasm must be a data: URI with exactly this MIME prefix — Emscripten's
+                // loader decodes it in-place, whereas a blob: URL from a file:// page
+                // (origin "null") is not XHR-loadable inside wllama's worker.
+                wllamaEngineUrls = {
+                    js: URL.createObjectURL(new Blob([jsBytes], { type: "text/javascript" })),
+                    wasm: "data:application/octet-stream;base64," + bytesToBase64(await gunzipToBytes(inline.wasm)),
+                    source: "inline (offline)",
+                };
+            } else {
+                wllamaEngineUrls = {
+                    js: `${WLLAMA_CDN_BASE}/index.js`,
+                    wasm: `${WLLAMA_CDN_BASE}/wasm/wllama.wasm`,
+                    source: "CDN",
+                };
+            }
+            return wllamaEngineUrls;
+        }
 
         // Debug logging: mirror to the browser console AND stream into the in-UI panel
         // so users can watch engine/model/generation internals without opening devtools.

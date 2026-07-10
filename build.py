@@ -3,6 +3,7 @@ import os
 import sys
 import urllib.request
 import base64
+import gzip
 import shutil
 import re
 
@@ -99,7 +100,25 @@ def build():
         
     with open("src/script.js", "r", encoding="utf-8") as f:
         local_js = f.read()
-        
+
+    # Wllama engine assets for the fully-offline wllama output. The version pin lives
+    # only in src/script.js (WLLAMA_CDN_BASE); the assets are gzipped + base64-encoded
+    # and injected as window.__WLLAMA_INLINE__ so first model load needs zero network.
+    m = re.search(r'WLLAMA_CDN_BASE\s*=\s*"([^"]+)"', local_js)
+    if not m:
+        print("❌ WLLAMA_CDN_BASE constant not found in src/script.js.")
+        sys.exit(1)
+    wllama_base = m.group(1)
+    os.makedirs("libs/wllama", exist_ok=True)
+    print("📥 Downloading wllama engine assets...")
+    wllama_inline = {}
+    for key, path in [("js", "index.js"), ("wasm", "wasm/wllama.wasm")]:
+        print(f"  -> Fetching wllama {path}...")
+        content = fetch(f"{wllama_base}/{path}")
+        with open(f"libs/wllama/{os.path.basename(path)}", "wb") as f:
+            f.write(content)
+        wllama_inline[key] = base64.b64encode(gzip.compress(content, 9)).decode("utf-8")
+
     html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
     html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js}\n    </script>')
 
@@ -178,14 +197,24 @@ def build():
     print("  ✅ dist/hermit-ui-standalone.html (Entirely integrated single-file)")
 
     # 4. Wllama Version (standalone-style, with the in-browser GGUF inference backend
-    #    kept in; the wllama engine itself is a pinned CDN import at model-load time)
+    #    kept in and the wllama engine itself embedded, so it runs fully offline)
     wllama_html = html_wllama
     for pattern, _, inline_repl in ASSETS:
         wllama_html = re.sub(pattern, inline_repl, wllama_html)
 
+    engine_placeholder = "<!-- @wllama:inline-engine -->"
+    if engine_placeholder not in wllama_html:
+        print("❌ @wllama:inline-engine placeholder not found in src/index.html.")
+        sys.exit(1)
+    engine_script = (
+        f'<script>window.__WLLAMA_INLINE__ = {{ js: "{wllama_inline["js"]}", '
+        f'wasm: "{wllama_inline["wasm"]}" }};</script>'
+    )
+    wllama_html = wllama_html.replace(engine_placeholder, engine_script)
+
     with open("dist/hermit-ui-wllama.html", "w", encoding="utf-8") as f:
         f.write(wllama_html)
-    print("  ✅ dist/hermit-ui-wllama.html (Standalone + in-browser wllama inference)")
+    print("  ✅ dist/hermit-ui-wllama.html (Standalone + fully-offline in-browser wllama inference)")
 
     # Final step: copy the standalone build out to root index.html for GitHub Pages.
     shutil.copyfile("dist/hermit-ui-standalone.html", "index.html")

@@ -148,8 +148,9 @@ HermitUI is under active development. Here's what's in progress and on the horiz
 
 HermitUI can run **true offline inference entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
 
-This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time. The wllama engine itself (~2 MB) is fetched once from a version-pinned CDN when you load a model; the model file never leaves your machine. Feature highlights:
+This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time. Feature highlights:
 
+*   **🔌 Truly zero-network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~5 MB file needs **no network access at all** — perfect for USB-stick distribution to air-gapped machines. The model file never leaves your machine.
 *   **📂 Local GGUF loading:** Pick a `.gguf` file and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration.
 *   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`) and **max output tokens** per reply; temperature, top-p, and seed from the regular settings apply too.
 *   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
@@ -158,7 +159,6 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 
 ### 🔭 Under Consideration
 
-*   Fully inlining the wllama engine (WASM) into `hermit-ui-wllama.html` so even the first model load needs zero network.
 *   Loading GGUF models directly by URL / Hugging Face repo (in addition to local files).
 
 ## 📄 License
