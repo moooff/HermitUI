@@ -144,21 +144,21 @@ This generates the standalone build at `dist/hermit-ui-standalone.html`, copies 
 
 HermitUI is under active development. Here's what's in progress and on the horizon.
 
-### 🧪 In-Browser Inference (experimental)
+### 🧪 In-Browser Inference (wllama build)
 
-The biggest ongoing effort is **true offline inference that runs entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
+HermitUI can run **true offline inference entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
 
-This currently lives as a standalone experimental variant at `temp_wllama/hermit-ui-wllama.html` and is **not yet merged** into the main single-file build. Work completed so far:
+This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time. The wllama engine itself (~2 MB) is fetched once from a version-pinned CDN when you load a model; the model file never leaves your machine. Feature highlights:
 
 *   **📂 Local GGUF loading:** Pick a `.gguf` file and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration.
-*   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`) and **max output tokens** per reply.
+*   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`) and **max output tokens** per reply; temperature, top-p, and seed from the regular settings apply too.
 *   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
 *   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.
 *   **⏱️ Live tokens/s:** A real-time generation-speed readout while the model streams.
 
 ### 🔭 Under Consideration
 
-*   Folding the in-browser inference path into the main single-file app behind a backend toggle.
+*   Fully inlining the wllama engine (WASM) into `hermit-ui-wllama.html` so even the first model load needs zero network.
 *   Loading GGUF models directly by URL / Hugging Face repo (in addition to local files).
 
 ## 📄 License

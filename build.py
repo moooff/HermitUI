@@ -24,6 +24,18 @@ def fetch(url, headers=None):
         print(f"❌ Failed to fetch {url}: {e}")
         sys.exit(1)
 
+def strip_wllama(text):
+    """Remove @wllama:start/@wllama:end marker blocks (HTML, CSS, and JS comment styles).
+
+    The in-browser inference (wllama) feature lives in src/ between these markers and is
+    only kept for the dedicated dist/hermit-ui-wllama.html output; every other output is
+    built from the stripped source so it stays as lean as before the feature existed.
+    """
+    text = re.sub(r'[ \t]*<!-- @wllama:start -->.*?<!-- @wllama:end -->\n?', '', text, flags=re.DOTALL)
+    text = re.sub(r'[ \t]*/\* @wllama:start \*/.*?/\* @wllama:end \*/\n?', '', text, flags=re.DOTALL)
+    text = re.sub(r'[ \t]*// @wllama:start\n.*?// @wllama:end[^\n]*\n?', '', text, flags=re.DOTALL)
+    return text
+
 def build():
     os.makedirs("libs/fonts", exist_ok=True)
     # Start from a clean dist/ so renamed/stale outputs don't linger between builds.
@@ -103,6 +115,14 @@ def build():
     except Exception as e:
         print(f"⚠️ Could not inline favicon.svg: {e}")
 
+    # Keep the full source (with the wllama in-browser inference feature) for the
+    # dedicated wllama output; everything else builds from the stripped variant.
+    html_wllama = html
+    html = strip_wllama(html)
+    if "@wllama" in html:
+        print("❌ Unbalanced @wllama:start/@wllama:end markers — stripping left residue.")
+        sys.exit(1)
+
     print("\n🔨 Generating HTML versions in dist/ ...")
 
     # 1. CDN Version
@@ -156,6 +176,16 @@ def build():
     with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
     print("  ✅ dist/hermit-ui-standalone.html (Entirely integrated single-file)")
+
+    # 4. Wllama Version (standalone-style, with the in-browser GGUF inference backend
+    #    kept in; the wllama engine itself is a pinned CDN import at model-load time)
+    wllama_html = html_wllama
+    for pattern, _, inline_repl in ASSETS:
+        wllama_html = re.sub(pattern, inline_repl, wllama_html)
+
+    with open("dist/hermit-ui-wllama.html", "w", encoding="utf-8") as f:
+        f.write(wllama_html)
+    print("  ✅ dist/hermit-ui-wllama.html (Standalone + in-browser wllama inference)")
 
     # Final step: copy the standalone build out to root index.html for GitHub Pages.
     shutil.copyfile("dist/hermit-ui-standalone.html", "index.html")

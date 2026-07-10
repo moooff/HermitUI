@@ -501,6 +501,10 @@ Rules:
             document.getElementById("settingSeed").value = SEED == null ? "" : SEED;
             document.getElementById("settingSystem").value = SYSTEM_PROMPT;
             updateVisionBadge();
+            // @wllama:start
+            document.getElementById("settingBackendMode").value = backendMode;
+            document.getElementById("settingBackendMode").dispatchEvent(new Event("change"));
+            // @wllama:end
             settingsModal.classList.add("active");
         });
         document.getElementById("settingsCancel").addEventListener("click", () => {
@@ -510,6 +514,9 @@ Rules:
             if (e.target === settingsModal) settingsModal.classList.remove("active");
         });
         document.getElementById("settingsSave").addEventListener("click", () => {
+            // @wllama:start
+            backendMode = document.getElementById("settingBackendMode").value;
+            // @wllama:end
             API_URL = document.getElementById("settingUrl").value.trim();
             API_KEY = document.getElementById("settingApiKey").value.trim() || "dummy";
             
@@ -566,6 +573,156 @@ Rules:
             settingsModal.classList.remove("active");
         });
 
+        // @wllama:start
+        document.getElementById("settingBackendMode").addEventListener("change", (e) => {
+            if (e.target.value === "wllama") {
+                document.getElementById("apiSettingsGroup").style.display = "none";
+                document.getElementById("wllamaSettingsGroup").style.display = "block";
+            } else {
+                document.getElementById("apiSettingsGroup").style.display = "block";
+                document.getElementById("wllamaSettingsGroup").style.display = "none";
+            }
+        });
+
+        // ===== Quake-style debug console controls =====
+        function setDebugConsole(open) {
+            const con = document.getElementById("debugConsole");
+            con.classList.toggle("open", open);
+            document.getElementById("debugConsoleTab").textContent = (open ? "▴" : "▾") + " debug";
+        }
+        function toggleDebugConsole() {
+            setDebugConsole(!document.getElementById("debugConsole").classList.contains("open"));
+        }
+        document.getElementById("debugToggleBtn").addEventListener("click", toggleDebugConsole);
+        document.getElementById("debugConsoleTab").addEventListener("click", toggleDebugConsole);
+        document.getElementById("debugConsoleClose").addEventListener("click", () => setDebugConsole(false));
+
+        document.getElementById("wllamaDebugClear").addEventListener("click", () => {
+            const panel = document.getElementById("wllamaDebugLog");
+            if (panel) panel.textContent = "";
+        });
+
+        document.getElementById("settingWllamaFile").addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const fileInput = e.target;
+            const statusEl = document.getElementById("wllamaStatus");
+            const pbContainer = document.getElementById("wllamaProgressBarContainer");
+            const pbBar = document.getElementById("wllamaProgressBar");
+            statusEl.textContent = "Status: Loading Engine...";
+            pbContainer.style.display = "block";
+            pbBar.className = "pb-indeterminate";
+            pbBar.style.width = "50%";
+
+            // Chrome restricts module workers created from cross-origin redirected scripts
+            // (like our jsdelivr import). Since Wllama's worker doesn't actually use ES module
+            // features (it's a massive string literal), we can intercept the Worker constructor
+            // and strip { type: "module" } to bypass Chrome's block. The patch is scoped to
+            // this load and restored in the finally below so other workers are unaffected.
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                if (options && options.type === "module") {
+                    options = Object.assign({}, options);
+                    delete options.type;
+                }
+                return new OriginalWorker(url, options);
+            };
+            fileInput.disabled = true; // no concurrent loads while one is in flight
+
+            try {
+                if (!WllamaClass) {
+                    const module = await import(`${WLLAMA_CDN_BASE}/index.js`);
+                    WllamaClass = module.Wllama;
+                }
+
+                // Flush the previous engine's RAM/VRAM before initializing a new one.
+                if (wllamaInstance) {
+                    wllamaLog("log", "Unloading previous model…");
+                    try { await wllamaInstance.exit(); }
+                    catch (exitErr) { wllamaLog("warn", "Engine cleanup failed:", exitErr.message || exitErr); }
+                    wllamaInstance = null;
+                }
+
+                statusEl.textContent = "Status: Initializing Wllama...";
+                wllamaLog("log", "Initializing Wllama engine…");
+                wllamaInstance = new WllamaClass(
+                    { "default": `${WLLAMA_CDN_BASE}/wasm/wllama.wasm` },
+                    {
+                        // Route wllama's internal messages into the debug panel.
+                        logger: {
+                            debug: (...a) => wllamaLog("debug", "[core]", ...a),
+                            log:   (...a) => wllamaLog("log",   "[core]", ...a),
+                            warn:  (...a) => wllamaLog("warn",  "[core]", ...a),
+                            error: (...a) => wllamaLog("error", "[core]", ...a),
+                        },
+                        // Native llama.cpp logs (context/KV cache/backend init/timings) are
+                        // the noisiest, so only let them through when Debug verbosity is set at
+                        // load time (change the level and reload the model to toggle them).
+                        suppressNativeLog: wllamaVerbosity() < WLLAMA_LOG_RANK.debug,
+                    }
+                );
+                const useWebGpu = document.getElementById("wllamaWebGpuToggle").checked;
+                const loadOptions = useWebGpu ? {} : { n_gpu_layers: 0 };
+                // 0 (or blank) leaves n_ctx unset so wllama uses the model's trained context.
+                const nCtx = parseInt(document.getElementById("settingWllamaCtx").value, 10);
+                if (Number.isFinite(nCtx) && nCtx > 0) loadOptions.n_ctx = nCtx;
+
+                // Stream download/decode progress into the status line and debug panel.
+                loadOptions.progressCallback = ({ loaded, total }) => {
+                    const pct = total ? Math.round((loaded / total) * 100) : 0;
+                    statusEl.textContent = `Status: Loading Model (${file.name}) ${pct}%`;
+                    pbContainer.style.display = "block";
+                    if (pct > 0 && pct < 100) {
+                        pbBar.className = "";
+                        pbBar.style.width = pct + "%";
+                        pbBar.style.backgroundColor = "var(--primary)";
+                        pbBar.style.transition = "width 0.1s linear";
+                    } else if (pct === 100) {
+                        // After loading instantly, we are usually blocking on decoding/initializing.
+                        pbBar.className = "pb-indeterminate";
+                        pbBar.style.width = "50%";
+                    }
+                    wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
+                };
+                wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
+
+                statusEl.textContent = `Status: Loading Model (${file.name})...`;
+                pbContainer.style.display = "block";
+                pbBar.className = "pb-indeterminate";
+                pbBar.style.width = "50%";
+                const loadStart = performance.now();
+                await wllamaInstance.loadModel([file], loadOptions);
+                wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
+
+                // Inspect metadata so Auto mode can prefer the embedded template and,
+                // failing that, guess a sane format from the model architecture.
+                wllamaHasEmbeddedTemplate = false;
+                wllamaDetectedTemplate = "zephyr";
+                try {
+                    const meta = await wllamaInstance.getModelMetadata();
+                    const m = meta?.meta || meta || {};
+                    wllamaHasEmbeddedTemplate = !!m["tokenizer.chat_template"];
+                    wllamaDetectedTemplate = detectTemplateFromArch(m["general.architecture"]);
+                    wllamaLog("log", `Metadata → arch=${m["general.architecture"] || "?"}, name=${m["general.name"] || "?"}, embedded_template=${wllamaHasEmbeddedTemplate}, detected_format=${wllamaDetectedTemplate}`);
+                    wllamaLog("debug", "Full model metadata:", m);
+                } catch (metaErr) {
+                    wllamaLog("warn", "Could not read model metadata:", metaErr.message || metaErr);
+                }
+                const detail = wllamaHasEmbeddedTemplate
+                    ? "embedded template"
+                    : `auto: ${wllamaDetectedTemplate}`;
+                statusEl.textContent = `Status: Ready 🟢 (${detail})`;
+                pbContainer.style.display = "none";
+            } catch (err) {
+                wllamaLog("error", "Load failed:", err.message || err);
+                statusEl.textContent = "Status: Error - " + err.message;
+                pbContainer.style.display = "none";
+            } finally {
+                window.Worker = OriginalWorker;
+                fileInput.disabled = false;
+            }
+        });
+        // @wllama:end
         // ========== New Chat ==========
         document.getElementById("clearBtn").addEventListener("click", () => {
             if (isWaiting) return; // Don't clear during generation
@@ -1113,9 +1270,250 @@ Rules:
             return finalContent;
         }
 
+        // @wllama:start
+        // ========== In-Browser Inference (wllama) ==========
+        const WLLAMA_CDN_BASE = "https://cdn.jsdelivr.net/npm/@wllama/wllama@3.5.1/esm";
+        let backendMode = "api";
+        let WllamaClass = null;
+        let wllamaInstance = null;
+        let wllamaHasEmbeddedTemplate = false; // GGUF ships tokenizer.chat_template
+        let wllamaDetectedTemplate = "zephyr"; // auto-detected fallback format
+
+        // Debug logging: mirror to the browser console AND stream into the in-UI panel
+        // so users can watch engine/model/generation internals without opening devtools.
+        const WLLAMA_LOG_COLORS = { debug: "#8b949e", log: "#c9d1d9", warn: "#e3b341", error: "#f85149" };
+        // Severity rank per level; a message shows only if its rank <= the selected
+        // verbosity threshold (Off=0, Errors=1, Warnings=2, Info=3, Debug=4).
+        const WLLAMA_LOG_RANK = { error: 1, warn: 2, log: 3, debug: 4 };
+        function wllamaVerbosity() {
+            const sel = document.getElementById("wllamaVerbosity");
+            return sel ? parseInt(sel.value, 10) : 3; // default: Info
+        }
+        function wllamaLog(level, ...args) {
+            if ((WLLAMA_LOG_RANK[level] || 3) > wllamaVerbosity()) return; // below threshold
+            const method = console[level] ? level : "log";
+            console[method]("[wllama]", ...args);
+            const panel = document.getElementById("wllamaDebugLog");
+            if (!panel) return;
+            const text = args.map(a =>
+                typeof a === "string" ? a
+                    : (() => { try { return JSON.stringify(a, null, 2); } catch (e) { return String(a); } })()
+            ).join(" ");
+            const line = document.createElement("div");
+            line.style.color = WLLAMA_LOG_COLORS[level] || WLLAMA_LOG_COLORS.log;
+            line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
+            panel.appendChild(line);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        // Registry of chat prompt formats for template-less GGUFs. Each entry knows how
+        // to render a single message, the trailing tag that primes the assistant turn,
+        // and the stop tokens that mark end-of-turn so generation doesn't run on.
+        const CHAT_TEMPLATES = {
+            chatml: {
+                msg: m => `<|im_start|>${m.role}\n${m.content}<|im_end|>\n`,
+                tail: `<|im_start|>assistant\n`,
+                stop: ["<|im_end|>"]
+            },
+            llama3: {
+                msg: m => `<|start_header_id|>${m.role}<|end_header_id|>\n\n${m.content}<|eot_id|>`,
+                tail: `<|start_header_id|>assistant<|end_header_id|>\n\n`,
+                stop: ["<|eot_id|>", "<|end_of_text|>"]
+            },
+            mistral: {
+                // Mistral has no distinct system/assistant tags; fold system into the first [INST].
+                render: msgs => {
+                    let out = "<s>";
+                    let sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        if (m.role === "user") {
+                            const u = sys ? `${sys}\n\n${m.content}` : m.content;
+                            sys = "";
+                            out += `[INST] ${u} [/INST]`;
+                        } else if (m.role === "assistant") {
+                            out += ` ${m.content}</s>`;
+                        }
+                    }
+                    return out;
+                },
+                stop: ["</s>", "[INST]"]
+            },
+            gemma: {
+                // Gemma has no system role; map assistant->model and prepend system to first user turn.
+                render: msgs => {
+                    let out = "";
+                    let sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        const role = m.role === "assistant" ? "model" : "user";
+                        let content = m.content;
+                        if (role === "user" && sys) { content = `${sys}\n\n${content}`; sys = ""; }
+                        out += `<start_of_turn>${role}\n${content}<end_of_turn>\n`;
+                    }
+                    out += `<start_of_turn>model\n`;
+                    return out;
+                },
+                stop: ["<end_of_turn>"]
+            },
+            phi3: {
+                msg: m => `<|${m.role}|>\n${m.content}<|end|>\n`,
+                tail: `<|assistant|>\n`,
+                stop: ["<|end|>", "<|endoftext|>"]
+            },
+            zephyr: {
+                msg: m => `<|${m.role}|>\n${m.content}</s>\n`,
+                tail: `<|assistant|>\n`,
+                stop: ["</s>"]
+            },
+            alpaca: {
+                render: msgs => {
+                    let out = "";
+                    const sys = msgs.filter(m => m.role === "system").map(m => m.content).join("\n");
+                    if (sys) out += `${sys}\n\n`;
+                    for (const m of msgs) {
+                        if (m.role === "system") continue;
+                        if (m.role === "user") out += `### Instruction:\n${m.content}\n\n`;
+                        else if (m.role === "assistant") out += `### Response:\n${m.content}\n\n`;
+                    }
+                    out += `### Response:\n`;
+                    return out;
+                },
+                stop: ["### Instruction:"]
+            },
+            raw: {
+                render: msgs => msgs.map(m => m.content).join("\n") + "\n",
+                stop: []
+            }
+        };
+
+        // Map GGUF general.architecture -> template key. Used when the model lacks an
+        // embedded chat template and the user leaves the format on "Auto".
+        function detectTemplateFromArch(arch) {
+            const a = (arch || "").toLowerCase();
+            if (a.includes("qwen") || a.includes("yi")) return "chatml";
+            if (a.includes("llama")) return "llama3"; // llama-3.x; older llama-2 users can override
+            if (a.includes("mistral") || a.includes("mixtral")) return "mistral";
+            if (a.includes("gemma")) return "gemma";
+            if (a.includes("phi")) return "phi3";
+            return "zephyr";
+        }
+
+        // Build the final prompt string + stop tokens for a given template key.
+        function buildWllamaPrompt(key, msgs) {
+            const t = CHAT_TEMPLATES[key] || CHAT_TEMPLATES.zephyr;
+            if (t.render) return { prompt: t.render(msgs), stop: t.stop || [] };
+            let prompt = msgs.map(t.msg).join("");
+            prompt += t.tail || "";
+            return { prompt, stop: t.stop || [] };
+        }
+        // @wllama:end
         // ========== Stream Fetch Helper ==========
         async function fetchAndStreamChat(payload, signal, callbacks) {
             const { onChunk, onDone, onError } = callbacks;
+            // @wllama:start
+            if (backendMode === "wllama") {
+                if (!wllamaInstance) {
+                    onError(new Error("Local model not loaded. Please select a .gguf file in settings."));
+                    return;
+                }
+                // Local GGUF text models can't see images: flatten multimodal content
+                // arrays to their text parts (contentToText notes "[N images attached]").
+                if (payload.messages.some(m => Array.isArray(m.content))) {
+                    wllamaLog("warn", "Image attachments are not supported by the local GGUF backend; sending text only.");
+                }
+                const wllamaMessages = payload.messages.map(m =>
+                    Array.isArray(m.content) ? { role: m.role, content: contentToText(m.content) } : m
+                );
+                // Each streamed piece from wllama is one decoded token, so counting them
+                // gives an exact token count and a live tokens/sec rate we compute ourselves.
+                let genTokens = 0;
+                const genStart = performance.now();
+                const liveStatEl = document.getElementById("wllamaLiveStat");
+                let lastLiveUpdate = 0;
+                if (liveStatEl) liveStatEl.textContent = "⏳ generating…";
+                try {
+                    const onData = (chunk) => {
+                        if (signal.aborted) throw new Error("AbortError");
+                        const content = typeof chunk === 'string' ? chunk :
+                            (chunk.choices?.[0]?.text || chunk.choices?.[0]?.delta?.content || chunk.content || "");
+                        if (content) {
+                            genTokens++;
+                            onChunk("", content, 0, 0);
+                            const now = performance.now();
+                            if (liveStatEl && now - lastLiveUpdate > 200) { // throttle DOM writes
+                                lastLiveUpdate = now;
+                                const secs = (now - genStart) / 1000;
+                                liveStatEl.textContent = `${genTokens} tok · ${secs > 0 ? (genTokens / secs).toFixed(1) : "0.0"} tok/s`;
+                            }
+                        }
+                    };
+                    const temperature = payload.temperature || 0.7;
+                    // Optional sampling params (Advanced parameters) are forwarded when the
+                    // payload carries them; penalties are not supported by the wllama API.
+                    const sampling = {};
+                    if (payload.top_p !== undefined) sampling.top_p = payload.top_p;
+                    if (payload.seed !== undefined) sampling.seed = payload.seed;
+
+                    // Resolve which format to use. "auto" prefers the model's own embedded
+                    // chat template (via createChatCompletion) and only falls back to a
+                    // detected/manual format for template-less GGUFs.
+                    const choice = document.getElementById("settingWllamaTemplate")?.value || "auto";
+                    const useEmbedded = choice === "auto" && wllamaHasEmbeddedTemplate;
+                    // Output-length cap read live from settings (0/blank/invalid -> default 2048).
+                    const parsedMaxTokens = parseInt(document.getElementById("settingWllamaMaxTokens")?.value, 10);
+                    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 2048;
+
+                    if (useEmbedded) {
+                        wllamaLog("log", `Generating via embedded chat template (temp=${temperature}, max_tokens=${maxTokens}, messages=${wllamaMessages.length})`);
+                        // wllama's OpenAI-compatible chat path applies the GGUF's own
+                        // tokenizer.chat_template; chunks arrive as choices[0].delta.content.
+                        await wllamaInstance.createChatCompletion({
+                            messages: wllamaMessages,
+                            max_tokens: maxTokens,
+                            temperature,
+                            ...sampling,
+                            stream: true,
+                            abortSignal: signal,
+                            onData
+                        });
+                    } else {
+                        // Manual formatting for template-less models (or an explicit user override).
+                        const key = choice === "auto" ? wllamaDetectedTemplate : choice;
+                        const { prompt, stop } = buildWllamaPrompt(key, wllamaMessages);
+                        wllamaLog("log", `Generating via manual template "${key}" (temp=${temperature}, max_tokens=${maxTokens}, stop=${JSON.stringify(stop)})`);
+                        wllamaLog("debug", "Formatted prompt sent to model:\n" + prompt);
+                        await wllamaInstance.createCompletion({
+                            prompt,
+                            max_tokens: maxTokens,
+                            temperature,
+                            ...sampling,
+                            stop,
+                            stream: true,
+                            abortSignal: signal,
+                            onData
+                        });
+                    }
+
+                    const genSecs = (performance.now() - genStart) / 1000;
+                    const finalTps = genSecs > 0 ? (genTokens / genSecs).toFixed(1) : "0.0";
+                    if (liveStatEl) liveStatEl.textContent = `${genTokens} tok · ${finalTps} tok/s`;
+                    wllamaLog("log", `Generation done: ${genTokens} tokens in ${genSecs.toFixed(1)}s (${finalTps} tok/s)`);
+                    onDone(0, genTokens);
+                } catch (err) {
+                    if (err.message === "AbortError") {
+                        const abortSecs = (performance.now() - genStart) / 1000;
+                        if (liveStatEl) liveStatEl.textContent = `${genTokens} tok · ${abortSecs > 0 ? (genTokens / abortSecs).toFixed(1) : "0.0"} tok/s (stopped)`;
+                        wllamaLog("warn", `Generation aborted after ${genTokens} tokens`);
+                        onDone(0, genTokens);
+                    } else {
+                        wllamaLog("error", "Generation failed:", err.message || err);
+                        onError(err);
+                    }
+                }
+                return;
+            }
+            // @wllama:end
             let promptTokens = 0;
             let completionTokens = 0;
             let chatUrl = API_URL.trim().replace(/\/+$/, "");

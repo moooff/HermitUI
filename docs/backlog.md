@@ -11,15 +11,6 @@ This document tracks upcoming features, tasks, and ideas for the HermitUI projec
   - Use `Transformers.js` with WebGPU acceleration (with a fallback to WebAssembly).
   - Target ultra-small models (< 200MB) like specialized T5 or SmolLM.
   - Dedicated specifically for text analysis and summarization tasks.
-- [ ] **wllama: Resource Cleanup**
-  - Call `await wllamaInstance.exit()` before initializing a new model if one already exists to flush VRAM/RAM.
-  - *Complexity: Low* | *Severity: High*
-- [ ] **wllama: Global `window.Worker` Mutation Leak**
-  - Restore `window.Worker` immediately after importing the module to prevent side-effects on future web workers.
-  - *Complexity: Low* | *Severity: Medium*
-- [ ] **wllama: Loading State Protection**
-  - Disable the file input while a model is loading to prevent race conditions.
-  - *Complexity: Low* | *Severity: Low*
 - [ ] **wllama: Gemma Template Strictness**
   - Ensure the prompt template for Gemma 2 matches expected whitespace perfectly without trailing/leading spaces.
   - *Complexity: Low* | *Severity: Low*
@@ -28,4 +19,8 @@ This document tracks upcoming features, tasks, and ideas for the HermitUI projec
 
 ## ✅ Completed
 - [x] Create backlog.md
+- [x] **wllama: merged into the main tree** — ported from `temp_wllama/` into `src/` behind `@wllama:start/end` build markers; ships as `dist/hermit-ui-wllama.html`
+- [x] **wllama: Resource Cleanup** — `await wllamaInstance.exit()` before initializing a new model
+- [x] **wllama: Global `window.Worker` Mutation Leak** — patch is scoped to the model load and restored in a `finally`
+- [x] **wllama: Loading State Protection** — file input disabled while a load is in flight
 

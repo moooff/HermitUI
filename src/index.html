@@ -15,6 +15,29 @@
 </head>
 <body>
 
+    <!-- @wllama:start -->
+    <!-- Quake-style debug console: drops down from the top of the screen (toggle via the 🐛 header button or the tab) -->
+    <div id="debugConsole">
+        <div id="debugConsoleHeader">
+            <span class="dc-title">🐛 Debug Console</span>
+            <label class="dc-verbose" for="wllamaVerbosity">Verbosity
+                <select id="wllamaVerbosity" title="How much wllama detail to show">
+                    <option value="0">Off</option>
+                    <option value="1">Errors</option>
+                    <option value="2">Warnings</option>
+                    <option value="3" selected>Info</option>
+                    <option value="4">Debug</option>
+                </select>
+            </label>
+            <span id="wllamaLiveStat" class="dc-live"></span>
+            <span class="dc-spacer"></span>
+            <button type="button" id="wllamaDebugClear" class="dc-btn">Clear</button>
+            <button type="button" id="debugConsoleClose" class="dc-btn" title="Close">✕</button>
+        </div>
+        <pre id="wllamaDebugLog"></pre>
+        <button type="button" id="debugConsoleTab" title="Toggle debug console">▾ debug</button>
+    </div>
+    <!-- @wllama:end -->
     <header>
         <div class="header-left">
             <h2>HermitUI <span class="version-badge">v0.6</span></h2>
@@ -27,6 +50,9 @@
             <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
         </div>
         <div class="header-actions">
+            <!-- @wllama:start -->
+            <button class="header-btn icon-only" id="debugToggleBtn" title="Debug Console" aria-label="Toggle Debug Console">🐛</button>
+            <!-- @wllama:end -->
             <button class="header-btn icon-only" id="themeToggleBtn" title="Toggle Theme" aria-label="Toggle Theme">🌙</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
             <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
@@ -62,6 +88,56 @@
     <div class="modal-overlay" id="settingsModal">
         <div class="modal">
             <h3>⚙️ Settings</h3>
+            <!-- @wllama:start -->
+            <label for="settingBackendMode">Backend Mode</label>
+            <select id="settingBackendMode" style="width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #d1d5db; font-size: 0.95rem; font-family: 'Inter', system-ui, sans-serif; color: var(--text-main); margin-bottom: 20px; outline: none; background: #fff; cursor: pointer;">
+                <option value="api">Remote / Local API (OpenAI Compatible)</option>
+                <option value="wllama">True Offline (Wllama GGUF)</option>
+            </select>
+
+            <div id="wllamaSettingsGroup" style="display: none; padding: 10px; background: rgba(0,0,0,0.02); border-radius: 8px; margin-bottom: 20px;">
+                <label for="settingWllamaFile">Load GGUF Model File</label>
+                <input type="file" id="settingWllamaFile" accept=".gguf" style="margin-bottom: 8px; width: 100%;">
+                <div id="wllamaStatusContainer" style="margin-bottom: 8px;">
+                    <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; word-break: break-all; margin-bottom: 4px;">Status: Unloaded</div>
+                    <div id="wllamaProgressBarContainer" style="display: none; height: 6px; background: rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; width: 100%;">
+                        <div id="wllamaProgressBar" class="pb-indeterminate"></div>
+                    </div>
+                </div>
+
+                <label for="settingWllamaTemplate">Chat Format</label>
+                <select id="settingWllamaTemplate" style="margin-bottom: 8px; width: 100%;">
+                    <option value="auto">Auto (detect from model)</option>
+                    <option value="chatml">ChatML (Qwen, Yi, OpenHermes)</option>
+                    <option value="llama3">Llama 3</option>
+                    <option value="mistral">Mistral / Mixtral</option>
+                    <option value="gemma">Gemma</option>
+                    <option value="phi3">Phi-3</option>
+                    <option value="zephyr">Zephyr</option>
+                    <option value="alpaca">Alpaca (instruct)</option>
+                    <option value="raw">Raw (no template)</option>
+                </select>
+                <div id="wllamaTemplateHint" style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Auto uses the model's embedded template when present, else infers from its architecture.</div>
+
+                <label for="settingWllamaCtx">Context Window (tokens)</label>
+                <input type="number" id="settingWllamaCtx" value="4096" min="0" step="512" style="margin-bottom: 4px; width: 100%;">
+                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Larger = more history but more memory/slower load. 0 = use the model's built-in default. Applied when the model is loaded.</div>
+
+                <label for="settingWllamaMaxTokens">Max Output Tokens (per reply)</label>
+                <input type="number" id="settingWllamaMaxTokens" value="2048" min="1" step="128" style="margin-bottom: 4px; width: 100%;">
+                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Upper bound on tokens generated per reply. Applied immediately (no reload needed). Must fit within the context window.</div>
+
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <input type="checkbox" id="wllamaWebGpuToggle" checked>
+                    <label for="wllamaWebGpuToggle" style="margin: 0; font-size: 0.85rem;">Enable WebGPU (Hardware Acceleration)</label>
+                </div>
+                <div style="font-size: 0.75rem; color: #999;">Note: On some systems (especially integrated graphics) WebGPU may be slower than CPU. Uncheck to force CPU-only mode.</div>
+
+                <div style="font-size: 0.75rem; color: #999; margin-top: 10px;">🐛 Debug output (engine load, model metadata, chosen template, the prompt sent, tokens/sec) streams to the drop-down console at the top of the screen — click the <b>🐛</b> button in the header.</div>
+            </div>
+
+            <div id="apiSettingsGroup">
+            <!-- @wllama:end -->
             <label for="settingUrl">API Base URL</label>
             <input type="text" id="settingUrl" value="http://localhost:1234/v1">
             <div id="cloudWarning" style="display: none; background: rgba(254, 243, 199, 0.8); color: #92400e; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; font-size: 0.85rem; border: 1px solid #fcd34d; align-items: flex-start; gap: 8px;">
@@ -82,6 +158,9 @@
             <select id="settingModelSelect" style="display: none; width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #d1d5db; font-size: 0.95rem; font-family: 'Inter', system-ui, sans-serif; color: var(--text-main); margin-bottom: 20px; outline: none; background: #fff; cursor: pointer;">
             </select>
             <input type="text" id="settingModelInput" value="local-model">
+            <!-- @wllama:start -->
+            </div>
+            <!-- @wllama:end -->
             <label for="settingTemperature">Temperature</label>
             <input type="number" id="settingTemperature" value="0.7" step="0.1" min="0" max="2">
             <details class="advanced-params">

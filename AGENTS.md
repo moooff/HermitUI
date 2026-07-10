@@ -21,8 +21,9 @@ python build.py   # or python3 build.py — regenerates all outputs from src/
 - `index.html` (root) — copy of the standalone build, served as the GitHub Pages landing page (the final build step copies it out of `dist/`).
 - `dist/hermit-ui-cdn.html` — same as the source (CDN links).
 - `dist/hermit-ui-local.html` — links rewritten to point at `../libs/`.
+- `dist/hermit-ui-wllama.html` — standalone build **plus** the in-browser (wllama) inference backend. All wllama code in `src/` lives between `@wllama:start`/`@wllama:end` marker comments (`<!-- -->` in HTML, `/* */` in CSS, `//` in JS); `build.py` strips those blocks for every other output, so the main app stays lean. The wllama engine itself is a version-pinned jsDelivr `import()` at model-load time (see `WLLAMA_CDN_BASE` in `src/script.js`).
 
-There is no test suite, linter, or package manager. To verify a change, open `index.html` (or `dist/hermit-ui-standalone.html`) in a browser after building. `dist/hermit-ui-standalone.html` and `dist/hermit-ui-cdn.html` are committed (browsable on GitHub); `dist/hermit-ui-local.html` and `libs/` are gitignored.
+There is no test suite, linter, or package manager. To verify a change, open `index.html` (or `dist/hermit-ui-standalone.html`) in a browser after building. `dist/hermit-ui-standalone.html`, `dist/hermit-ui-cdn.html`, and `dist/hermit-ui-wllama.html` are committed (browsable on GitHub); `dist/hermit-ui-local.html` and `libs/` are gitignored.
 
 ## 🧩 Code Structure within `src/`
 The code is split into `index.html`, `style.css` (which contains both the light theme and dark mode overrides), and `script.js`. Theming is driven by CSS variables and a `data-theme` attribute on `:root`. Key JS areas:
@@ -33,6 +34,7 @@ The code is split into `index.html`, `style.css` (which contains both the light 
 - **Settings & connection** (settings modal handlers, `testConnectionBtn`): API URL, model name, system prompt, API key; live performance stats via `updateGlobalStats`.
 - **Context attachments** (`processFiles`, `renderChips`, `isTextFile`): drag-drop / upload of text files injected into the prompt.
 - **Export** (`exportBtn`): downloads the conversation as Markdown.
+- **In-browser inference** (`@wllama:start`/`@wllama:end` blocks: `backendMode`, `CHAT_TEMPLATES`, `buildWllamaPrompt`, GGUF load handler, wllama branch in `fetchAndStreamChat`): local GGUF chat via wllama, only present in `dist/hermit-ui-wllama.html`. New wllama-only code must stay inside marker blocks, and stripping must leave the remaining code valid.
 
 ## 🎨 Styling & UI/UX
 - **Aesthetics:** Maintain the modern "glassmorphism" feel. Use smooth animations, CSS variables for theming, and the `Inter` font.
