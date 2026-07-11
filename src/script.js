@@ -23,10 +23,155 @@
                     const language = (lang || '').match(/\S*/)[0];
                     const validLanguage = hljs.getLanguage(language) ? language : 'plaintext';
                     const highlighted = hljs.highlight(text || '', { language: validLanguage, ignoreIllegals: true }).value;
-                    return `<pre><code class="hljs language-${validLanguage}">${highlighted}</code></pre>`;
+                    // Keep the real "mermaid" tag (hljs doesn't know it and would say
+                    // "plaintext") so the diagram post-pass can find these fences.
+                    const cssLang = language === 'mermaid' ? 'mermaid' : validLanguage;
+                    return `<pre><code class="hljs language-${cssLang}">${highlighted}</code></pre>`;
                 }
             }
         });
+
+        // ========== Math Rendering (KaTeX → native MathML) ==========
+        // KaTeX is used in MathML-only mode: browsers render <math> natively, so none
+        // of KaTeX's webfonts or CSS are needed — only katex.min.js ships in the build.
+        function renderMathTex(tex, displayMode) {
+            if (typeof katex === 'undefined') return null;
+            try {
+                return katex.renderToString(tex, { displayMode, output: 'mathml', throwOnError: false });
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // marked extensions so math participates in normal Markdown tokenization.
+        // Fenced/inline code is tokenized positionally before these ever run, so
+        // "$..$" inside code blocks is never treated as math.
+        marked.use({
+            extensions: [
+                {
+                    name: 'mathBlock',
+                    level: 'block',
+                    start(src) {
+                        const m = src.match(/\$\$|\\\[/);
+                        return m ? m.index : undefined;
+                    },
+                    tokenizer(src) {
+                        const match = src.match(/^\$\$([\s\S]+?)\$\$/) || src.match(/^\\\[([\s\S]+?)\\\]/);
+                        if (match) return { type: 'mathBlock', raw: match[0], text: match[1].trim() };
+                    },
+                    renderer(token) {
+                        const html = renderMathTex(token.text, true);
+                        return html !== null ? `<p class="math-block">${html}</p>` : `<p>${escapeHtml(token.raw)}</p>`;
+                    }
+                },
+                {
+                    name: 'mathInline',
+                    level: 'inline',
+                    start(src) {
+                        const m = src.match(/\$|\\\(/);
+                        return m ? m.index : undefined;
+                    },
+                    tokenizer(src) {
+                        let match = src.match(/^\\\(([\s\S]+?)\\\)/) || src.match(/^\$\$([^$\n]+?)\$\$/);
+                        // Currency guard for single-$ math: no space right after the
+                        // opening $ or before the closing $, and the closing $ must not
+                        // be followed by a digit — so "$5 and $10" stays plain text.
+                        if (!match) match = src.match(/^\$(?!\s)((?:\\.|[^$\\\n])+?)(?<!\s)\$(?!\d)/);
+                        if (match) {
+                            return { type: 'mathInline', raw: match[0], text: match[1], display: match[0].startsWith('$$') };
+                        }
+                    },
+                    renderer(token) {
+                        const html = renderMathTex(token.text, token.display);
+                        return html !== null ? html : escapeHtml(token.raw);
+                    }
+                }
+            ]
+        });
+
+        // ========== Mermaid Diagrams ==========
+        // Shared with the wllama engine loader: build.py embeds heavyweight assets
+        // gzipped + base64-encoded, and they are inflated in-browser on first use via
+        // the native DecompressionStream API.
+        async function gunzipToBytes(b64) {
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+            return new Uint8Array(await new Response(stream).arrayBuffer());
+        }
+
+        // The dev source / CDN / local builds load mermaid via a <script> tag; the
+        // single-file builds carry it as window.__MERMAID_INLINE__ (gzip + base64,
+        // injected by build.py) and only pay the inflate cost when a diagram appears.
+        let mermaidLoadPromise = null;
+        let mermaidSeq = 0;
+        function loadMermaid() {
+            if (mermaidLoadPromise) return mermaidLoadPromise;
+            mermaidLoadPromise = (async () => {
+                if (typeof window.mermaid === 'undefined') {
+                    if (!window.__MERMAID_INLINE__) throw new Error('Mermaid engine not available');
+                    const bytes = await gunzipToBytes(window.__MERMAID_INLINE__);
+                    const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
+                    await new Promise((resolve, reject) => {
+                        const s = document.createElement('script');
+                        s.src = blobUrl;
+                        s.onload = resolve;
+                        s.onerror = () => reject(new Error('Failed to load embedded mermaid engine'));
+                        document.head.appendChild(s);
+                    });
+                }
+                return window.mermaid;
+            })();
+            mermaidLoadPromise.catch(() => { mermaidLoadPromise = null; }); // allow retry
+            return mermaidLoadPromise;
+        }
+
+        // Replace finished ```mermaid fences with rendered diagrams. Runs only on
+        // final message renders (streaming keeps showing the code block). Any invalid
+        // diagram source simply stays a code block.
+        async function renderMermaidBlocks(container) {
+            const blocks = container.querySelectorAll('pre > code.language-mermaid');
+            if (blocks.length === 0) return;
+            let mermaid;
+            try {
+                mermaid = await loadMermaid();
+            } catch (e) {
+                return;
+            }
+            // Re-initialized per pass so new diagrams follow the current theme.
+            // htmlLabels stays off: labels render as plain SVG text, so no
+            // <foreignObject> for DOMPurify to strip below.
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: 'strict',
+                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
+                htmlLabels: false,
+                flowchart: { htmlLabels: false }
+            });
+            for (const code of blocks) {
+                const pre = code.closest('pre');
+                if (!pre || !pre.parentNode) continue;
+                const renderId = `hermit-mermaid-${++mermaidSeq}`;
+                try {
+                    const { svg } = await mermaid.render(renderId, code.textContent);
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'mermaid-diagram';
+                    // Mermaid (strict mode) sanitizes labels itself; this outer pass
+                    // enforces the project rule that all AI-derived HTML goes through
+                    // DOMPurify. <style> must be re-allowed — mermaid themes its SVG
+                    // with an embedded, self-generated stylesheet.
+                    wrapper.innerHTML = DOMPurify.sanitize(svg, {
+                        USE_PROFILES: { svg: true, svgFilters: true },
+                        ADD_TAGS: ['style']
+                    });
+                    if (!wrapper.querySelector('svg')) continue;
+                    pre.replaceWith(wrapper);
+                } catch (e) {
+                    // Mermaid can leave an error placeholder element behind on failure.
+                    const stray = document.getElementById('d' + renderId);
+                    if (stray) stray.remove();
+                }
+            }
+        }
 
         // ========== Persona Presets ==========
         const BASE_PROMPT = `You are a helpful AI assistant running inside HermitUI, a local-first, privacy-focused chat interface. All data stays on the user's machine — never add privacy disclaimers or data-sharing warnings.
@@ -1258,6 +1403,10 @@ Rules:
             
             injectCopyButtons(ctx.responseContainer);
 
+            // Diagrams only render once the message is complete; while streaming the
+            // fence stays visible as a plain code block.
+            if (isFinal) renderMermaidBlocks(ctx.responseContainer);
+
             if (!userScrolledUp) {
                 chatbox.scrollTop = chatbox.scrollHeight;
             }
@@ -1284,13 +1433,8 @@ Rules:
         // The dedicated wllama build embeds the engine (gzip + base64, injected by
         // build.py as window.__WLLAMA_INLINE__) so model loading needs zero network
         // access. Without the injection (unbuilt dev source) the engine comes from
-        // the pinned CDN instead.
+        // the pinned CDN instead. Inflation reuses the shared gunzipToBytes helper.
         let wllamaEngineUrls = null; // resolved once; module imports cache per URL
-        async function gunzipToBytes(b64) {
-            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-            return new Uint8Array(await new Response(stream).arrayBuffer());
-        }
         function bytesToBase64(bytes) {
             let bin = "";
             for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -1870,6 +2014,7 @@ Rules:
                 }
             } else {
                 contentDiv.innerHTML = DOMPurify.sanitize(text); // AI messages may contain HTML
+                renderMermaidBlocks(contentDiv);
             }
             
             const timeDiv = document.createElement("div");

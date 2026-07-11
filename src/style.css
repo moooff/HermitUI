@@ -278,6 +278,23 @@
             color: #db2777; 
         }
         pre code { padding: 0; background: transparent; border-radius: 0; color: inherit; }
+
+        /* Mermaid diagrams (rendered in place of ```mermaid code fences) */
+        .mermaid-diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+            overflow-x: auto;
+            text-align: center;
+        }
+        .mermaid-diagram svg { max-width: 100%; height: auto; }
+
+        /* Math (KaTeX → native MathML) */
+        .math-block { text-align: center; }
+        math { font-size: 1.05em; }
+
         a { color: var(--primary); text-decoration: none; font-weight: 500; }
         a:hover { text-decoration: underline; }
 

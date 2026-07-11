@@ -51,6 +51,8 @@ No backend and no installation required—just open the file in your browser and
 *   **⚡ Real-Time Streaming:** Watch responses generate in real-time with an experience comparable to ChatGPT.
 *   **📊 Live Performance Stats:** Built-in dashboard to monitor Prompt Tokens, Completion Tokens, Generation Speed (Tokens/Second), and Total Duration.
 *   **📝 Markdown & Code Support:** Renders rich Markdown and provides one-click "Copy" buttons for code blocks.
+*   **🧮 Math Rendering:** LaTeX math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) is rendered via KaTeX to native browser MathML — no webfonts or extra CSS required, and it works mid-stream and fully offline. Currency amounts like "$5 and $10" are left alone.
+*   **📈 Mermaid Diagrams:** ` ```mermaid ` code fences turn into rendered diagrams (flowcharts, sequence diagrams, pie charts, …) once a message finishes streaming. The Mermaid engine is embedded gzipped into the single-file builds and only decompressed the first time a diagram actually appears, so there is no cost for chats without diagrams.
 *   **💾 Chat Export:** Easily download your entire conversation history as a formatted Markdown file for safekeeping.
 *   **⚙️ Customizable Settings:** Quickly adjust the API URL, Model Name, API Key, and System Prompt via the on-page settings overlay.
 
@@ -138,6 +140,8 @@ This generates the standalone build at `dist/hermit-ui-standalone.html`, copies 
 *   [Marked.js](https://marked.js.org/) - For parsing Markdown
 *   [DOMPurify](https://github.com/cure53/DOMPurify) - For sanitizing HTML and preventing XSS
 *   [Highlight.js](https://highlightjs.org/) - For code syntax highlighting
+*   [KaTeX](https://katex.org/) - For LaTeX math rendering (MathML output)
+*   [Mermaid](https://mermaid.js.org/) - For diagram rendering from ```` ```mermaid ```` fences
 *   [Google Fonts (Inter)](https://fonts.google.com/specimen/Inter) - For clean, modern typography
 
 ## 🗺️ Roadmap

@@ -12,6 +12,7 @@ URLS = {
     "dompurify.js": "https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js",
     "highlight.css": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css",
     "highlight.js": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js",
+    "katex.js": "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js",
     "inter.css": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 }
 
@@ -119,6 +120,22 @@ def build():
             f.write(content)
         wllama_inline[key] = base64.b64encode(gzip.compress(content, 9)).decode("utf-8")
 
+    # Mermaid is ~3.5 MB raw — far too heavy to inline plainly into the single-file
+    # outputs. Like the wllama engine it is gzipped + base64-encoded and injected as
+    # window.__MERMAID_INLINE__; src/script.js decompresses it lazily (via the native
+    # DecompressionStream API) only when a chat message actually contains a diagram.
+    # The version pin lives only in the src/index.html CDN <script> tag.
+    m = re.search(r'<script\s+defer\s+src=["\'](https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+)["\']', html)
+    if not m:
+        print("❌ Mermaid CDN <script> tag not found in src/index.html.")
+        sys.exit(1)
+    print("📥 Downloading mermaid...")
+    print("  -> Fetching mermaid.js...")
+    mermaid_raw = fetch(m.group(1))
+    with open("libs/mermaid.js", "wb") as f:
+        f.write(mermaid_raw)
+    mermaid_b64 = base64.b64encode(gzip.compress(mermaid_raw, 9)).decode("utf-8")
+
     html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
     html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js}\n    </script>')
 
@@ -155,6 +172,7 @@ def build():
     dompurify_script = cache["dompurify.js"].decode("utf-8").replace("</script>", r"<\/script>")
     hl_css = cache["highlight.css"].decode("utf-8")
     hl_script = cache["highlight.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    katex_script = cache["katex.js"].decode("utf-8").replace("</script>", r"<\/script>")
     inter_inline = cache["inter_inline.css"].decode("utf-8")
 
     # Single source of truth per asset: each CDN tag's regex lives once and drives both
@@ -173,6 +191,12 @@ def build():
         (r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>',
          '<script src="../libs/highlight.js"></script>',
          lambda m: f'<script>{hl_script}</script>'),
+        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/katex@[^"\']+["\']\s*></script>',
+         '<script src="../libs/katex.js"></script>',
+         lambda m: f'<script>{katex_script}</script>'),
+        (r'<script\s+defer\s+src=["\']https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+["\']\s*></script>',
+         '<script defer src="../libs/mermaid.js"></script>',
+         lambda m: f'<script>window.__MERMAID_INLINE__ = "{mermaid_b64}";</script>'),
         (r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>',
          '<link href="../libs/inter.css" rel="stylesheet">',
          lambda m: f'<style>{inter_inline}</style>'),

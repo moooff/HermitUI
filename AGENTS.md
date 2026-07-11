@@ -16,7 +16,7 @@ Run the build with:
 python build.py   # or python3 build.py — regenerates all outputs from src/
 ```
 
-`build.py` downloads the pinned library versions (Marked.js, DOMPurify, Highlight.js, Inter font) into `libs/`, inlines `src/favicon.svg`, then does regex-based substitution of the CDN `<script>`/`<link>` tags. If you change a CDN tag in the source, the matching regex in `build.py` must still match it. Generated outputs:
+`build.py` downloads the pinned library versions (Marked.js, DOMPurify, Highlight.js, KaTeX, Mermaid, Inter font) into `libs/`, inlines `src/favicon.svg`, then does regex-based substitution of the CDN `<script>`/`<link>` tags. If you change a CDN tag in the source, the matching regex in `build.py` must still match it. Mermaid (~3.5 MB) is special-cased: instead of being inlined plainly it is gzipped + base64-encoded and injected as `window.__MERMAID_INLINE__` into the single-file outputs (its version pin lives only in the `src/index.html` CDN tag), and `src/script.js` inflates it in-browser via `DecompressionStream` the first time a diagram is rendered. Generated outputs:
 - `dist/hermit-ui-standalone.html` — fully standalone: all JS/CSS/fonts inlined and base64-encoded. The primary deliverable.
 - `index.html` (root) — copy of the standalone build, served as the GitHub Pages landing page (the final build step copies it out of `dist/`).
 - `dist/hermit-ui-cdn.html` — same as the source (CDN links).
@@ -31,6 +31,7 @@ The code is split into `index.html`, `style.css` (which contains both the light 
 - **Streaming** (`fetchAndStreamChat`): SSE-style fetch loop that parses streamed chunks and fires `onChunk`/`onDone`/`onError` callbacks; `createThrottle` rate-limits UI re-renders during streaming.
 - **Thinking-tag parsing** (`parseThinkSegments`): extracts and renders `<think>`/`<thought>`/`<reasoning>` segments separately from the answer. Preserve this when touching rendering.
 - **Message rendering** (`updateMessageUI`, `appendMessage`, `injectCopyButtons`): Markdown via Marked.js, syntax highlight via Highlight.js, per-code-block copy buttons; supports edit/regenerate.
+- **Math & diagrams** (marked math extensions + `renderMathTex`, `loadMermaid`/`renderMermaidBlocks`, shared `gunzipToBytes`): LaTeX math renders through KaTeX in MathML-only mode (no fonts/CSS) inside the normal `marked.parse` → `DOMPurify.sanitize` pipeline; ```` ```mermaid ```` fences are replaced with sanitized SVG only on final message renders (`securityLevel: "strict"`, HTML labels off — output must stay pure SVG so DOMPurify doesn't gut it). Invalid diagrams must keep degrading to plain code blocks.
 - **Settings & connection** (settings modal handlers, `testConnectionBtn`): API URL, model name, system prompt, API key; live performance stats via `updateGlobalStats`.
 - **Context attachments** (`processFiles`, `renderChips`, `isTextFile`): drag-drop / upload of text files injected into the prompt.
 - **Export** (`exportBtn`): downloads the conversation as Markdown.
