@@ -35,7 +35,7 @@ The code is split into `index.html`, `style.css` (which contains both the light 
 - **Settings & connection** (settings modal handlers, `testConnectionBtn`): API URL, model name, system prompt, API key; live performance stats via `updateGlobalStats`.
 - **Context attachments** (`processFiles`, `renderChips`, `isTextFile`): drag-drop / upload of text files injected into the prompt.
 - **Export** (`exportBtn`): downloads the conversation as Markdown.
-- **In-browser inference** (`@wllama:start`/`@wllama:end` blocks: `backendMode`, `CHAT_TEMPLATES`, `buildWllamaPrompt`, GGUF load handler, wllama branch in `fetchAndStreamChat`): local GGUF chat via wllama, only present in `dist/hermit-ui-wllama.html`. New wllama-only code must stay inside marker blocks, and stripping must leave the remaining code valid.
+- **In-browser inference** (`@wllama:start`/`@wllama:end` blocks: `backendMode`, `CHAT_TEMPLATES`, `buildWllamaPrompt`, shared `loadWllamaModel`, wllama branch in `fetchAndStreamChat`): local GGUF chat via wllama, only present in `dist/hermit-ui-wllama.html`. Models load from a local file picker or by URL (`normalizeGgufUrl` accepts direct `.gguf` links, HF `/blob/` URLs rewritten to `/resolve/`, and the `hf:user/repo/file.gguf` shorthand; `downloadGgufToBlob` streams into an **in-memory Blob**). Do NOT switch to wllama's `loadModelFromUrl` — it persists models to OPFS even with `useCache: false`, violating the ephemerality rule. New wllama-only code must stay inside marker blocks, and stripping must leave the remaining code valid.
 
 ## 🎨 Styling & UI/UX
 - **Aesthetics:** Maintain the modern "glassmorphism" feel. Use smooth animations, CSS variables for theming, and the `Inter` font.

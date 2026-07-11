@@ -42,7 +42,7 @@
     <!-- @wllama:end -->
     <header>
         <div class="header-left">
-            <h2>HermitUI <span class="version-badge">v0.7</span></h2>
+            <h2>HermitUI <span class="version-badge">v0.8</span></h2>
             <div class="model-badge" title="Current Model">
                 🤖 <span id="overlayModel">local-model</span> @ <span id="overlayUrl">http://localhost:1234</span>
             </div>
@@ -100,6 +100,14 @@
             <div id="wllamaSettingsGroup" style="display: none; padding: 10px; background: rgba(0,0,0,0.02); border-radius: 8px; margin-bottom: 20px;">
                 <label for="settingWllamaFile">Load GGUF Model File</label>
                 <input type="file" id="settingWllamaFile" accept=".gguf" style="margin-bottom: 8px; width: 100%;">
+
+                <label for="settingWllamaUrl">…or Load from URL (Hugging Face)</label>
+                <div style="display: flex; gap: 6px; align-items: stretch;">
+                    <input type="text" id="settingWllamaUrl" placeholder="https://huggingface.co/…/resolve/main/model.gguf  or  hf:user/repo/file.gguf" style="flex: 1; margin-bottom: 0; min-width: 0;">
+                    <button type="button" class="action-btn" id="wllamaUrlLoadBtn" style="flex-shrink: 0; color: var(--primary); font-weight: 600; font-size: 0.85rem; padding: 0 14px; border: 1px solid var(--primary); border-radius: 12px;">⬇️ Load</button>
+                </div>
+                <div style="font-size: 0.75rem; color: #999; margin: 4px 0 8px;">Accepts direct <code>.gguf</code> links, Hugging Face <code>/blob/</code> page URLs, or <code>hf:user/repo/file.gguf</code>. The model is downloaded straight into memory and re-downloaded next session — nothing is ever stored.</div>
+
                 <div id="wllamaStatusContainer" style="margin-bottom: 8px;">
                     <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; word-break: break-all; margin-bottom: 4px;">Status: Unloaded</div>
                     <div id="wllamaProgressBarContainer" style="display: none; height: 6px; background: rgba(0,0,0,0.1); border-radius: 4px; overflow: hidden; width: 100%;">

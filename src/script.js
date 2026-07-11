@@ -747,10 +747,19 @@ Rules:
             if (panel) panel.textContent = "";
         });
 
-        document.getElementById("settingWllamaFile").addEventListener("change", async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const fileInput = e.target;
+        // Disable every model-loading control while a load/download is in flight
+        // (both entry points share the engine instance, so no concurrency allowed).
+        function setWllamaLoadBusy(busy) {
+            document.getElementById("settingWllamaFile").disabled = busy;
+            document.getElementById("settingWllamaUrl").disabled = busy;
+            document.getElementById("wllamaUrlLoadBtn").disabled = busy;
+        }
+
+        // Shared load path for both entry points (local file picker and by-URL
+        // download). `blobs` is what wllama's loadModel expects; `label` is only
+        // used for status messages. Errors are reported in the status line and
+        // debug console rather than thrown.
+        async function loadWllamaModel(blobs, label) {
             const statusEl = document.getElementById("wllamaStatus");
             const pbContainer = document.getElementById("wllamaProgressBarContainer");
             const pbBar = document.getElementById("wllamaProgressBar");
@@ -772,7 +781,6 @@ Rules:
                 }
                 return new OriginalWorker(url, options);
             };
-            fileInput.disabled = true; // no concurrent loads while one is in flight
 
             try {
                 const engine = await resolveWllamaEngine();
@@ -817,7 +825,7 @@ Rules:
                 // Stream download/decode progress into the status line and debug panel.
                 loadOptions.progressCallback = ({ loaded, total }) => {
                     const pct = total ? Math.round((loaded / total) * 100) : 0;
-                    statusEl.textContent = `Status: Loading Model (${file.name}) ${pct}%`;
+                    statusEl.textContent = `Status: Loading Model (${label}) ${pct}%`;
                     pbContainer.style.display = "block";
                     if (pct > 0 && pct < 100) {
                         pbBar.className = "";
@@ -833,12 +841,12 @@ Rules:
                 };
                 wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
 
-                statusEl.textContent = `Status: Loading Model (${file.name})...`;
+                statusEl.textContent = `Status: Loading Model (${label})...`;
                 pbContainer.style.display = "block";
                 pbBar.className = "pb-indeterminate";
                 pbBar.style.width = "50%";
                 const loadStart = performance.now();
-                await wllamaInstance.loadModel([file], loadOptions);
+                await wllamaInstance.loadModel(blobs, loadOptions);
                 wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
 
                 // Inspect metadata so Auto mode can prefer the embedded template and,
@@ -866,8 +874,100 @@ Rules:
                 pbContainer.style.display = "none";
             } finally {
                 window.Worker = OriginalWorker;
-                fileInput.disabled = false;
             }
+        }
+
+        document.getElementById("settingWllamaFile").addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            setWllamaLoadBusy(true);
+            try { await loadWllamaModel([file], file.name); }
+            finally { setWllamaLoadBusy(false); }
+        });
+
+        // Accept the three URL shapes people realistically paste and normalize them
+        // to a direct, CORS-enabled download link. Throws with a human hint otherwise.
+        function normalizeGgufUrl(raw) {
+            let url = (raw || "").trim();
+            if (!url) throw new Error("Enter a model URL first.");
+            const hf = url.match(/^hf:\/{0,2}([^\/\s]+)\/([^\/\s]+)\/(\S+\.gguf)$/i);
+            if (hf) url = `https://huggingface.co/${hf[1]}/${hf[2]}/resolve/main/${hf[3]}`;
+            if (!/^https?:\/\//i.test(url)) throw new Error("Not a URL. Use https://… or the hf:user/repo/file.gguf shorthand.");
+            // Hugging Face "blob" browser pages aren't downloadable; the same path under /resolve/ is.
+            if (/^https:\/\/huggingface\.co\//i.test(url)) url = url.replace(/\/blob\//, "/resolve/");
+            if (!/\.gguf(\?.*)?$/i.test(url)) throw new Error("URL must point directly to a single .gguf file.");
+            if (/-\d{5}-of-\d{5}\.gguf(\?.*)?$/i.test(url)) throw new Error("Split GGUFs (…-00001-of-000NN.gguf) aren't supported — pick a single-file quant.");
+            return url;
+        }
+
+        // Stream the GGUF into memory (never into browser storage — ephemerality is a
+        // hard project rule, and wllama's own URL loader would persist it to OPFS).
+        // The blob then goes through the exact same loadModel path as a local file.
+        async function downloadGgufToBlob(url, onProgress) {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
+            const total = parseInt(res.headers.get("content-length") || "0", 10);
+            const reader = res.body.getReader();
+            const chunks = [];
+            let loaded = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                loaded += value.byteLength;
+                onProgress({ loaded, total });
+            }
+            return new Blob(chunks);
+        }
+
+        async function loadWllamaModelFromUrl() {
+            const statusEl = document.getElementById("wllamaStatus");
+            const pbContainer = document.getElementById("wllamaProgressBarContainer");
+            const pbBar = document.getElementById("wllamaProgressBar");
+            let url;
+            try {
+                url = normalizeGgufUrl(document.getElementById("settingWllamaUrl").value);
+            } catch (err) {
+                statusEl.textContent = "Status: " + err.message;
+                return;
+            }
+            const label = decodeURIComponent(url.split("?")[0].split("/").pop());
+            setWllamaLoadBusy(true);
+            try {
+                wllamaLog("log", `Downloading model from ${url}`);
+                pbContainer.style.display = "block";
+                pbBar.className = "pb-indeterminate";
+                pbBar.style.width = "50%";
+                const fmtMB = b => (b / 1048576).toFixed(0) + " MB";
+                const downloadStart = performance.now();
+                const blob = await downloadGgufToBlob(url, ({ loaded, total }) => {
+                    if (total > 0) {
+                        const pct = Math.round((loaded / total) * 100);
+                        statusEl.textContent = `Status: Downloading ${label} ${pct}% (${fmtMB(loaded)} / ${fmtMB(total)})`;
+                        pbBar.className = "";
+                        pbBar.style.width = pct + "%";
+                        pbBar.style.backgroundColor = "var(--primary)";
+                        pbBar.style.transition = "width 0.1s linear";
+                    } else {
+                        statusEl.textContent = `Status: Downloading ${label} (${fmtMB(loaded)})`;
+                    }
+                });
+                wllamaLog("log", `Downloaded ${fmtMB(blob.size)} in ${((performance.now() - downloadStart) / 1000).toFixed(1)}s`);
+                await loadWllamaModel([blob], label);
+            } catch (err) {
+                wllamaLog("error", "Download failed:", err.message || err);
+                const hint = err instanceof TypeError
+                    ? " (network/CORS blocked — make sure it's a direct /resolve/ link to a public file)"
+                    : "";
+                statusEl.textContent = "Status: Error - " + (err.message || err) + hint;
+                pbContainer.style.display = "none";
+            } finally {
+                setWllamaLoadBusy(false);
+            }
+        }
+        document.getElementById("wllamaUrlLoadBtn").addEventListener("click", loadWllamaModelFromUrl);
+        document.getElementById("settingWllamaUrl").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); loadWllamaModelFromUrl(); }
         });
         // @wllama:end
         // ========== New Chat ==========
