@@ -747,6 +747,35 @@ Rules:
             if (panel) panel.textContent = "";
         });
 
+        // Without JSPI (WebAssembly.Suspending — Firefox < 153, Safari) wllama can't
+        // stream-load GGUFs and instead copies the whole file into its 4 GiB wasm heap,
+        // where oversized allocations fail unchecked ("source array is too long").
+        // Capability-based, not browser-sniffing: Firefox 153+ passes the JSPI check.
+        const WLLAMA_HAS_JSPI = typeof WebAssembly !== "undefined" && !!WebAssembly.Suspending;
+        const WLLAMA_HAS_WEBGPU = !!navigator.gpu;
+        // Heap is 4 GiB; leave headroom for KV cache and compute buffers.
+        const WLLAMA_NO_JSPI_MAX_BYTES = 3 * 1024 * 1024 * 1024;
+
+        (function renderWllamaCapabilityHint() {
+            const warnings = [];
+            if (!WLLAMA_HAS_JSPI) warnings.push("⚠️ This browser can't stream-load models (no WebAssembly JSPI) — GGUF files over ~3 GB will fail. Use Chrome/Edge or Firefox 153+.");
+            if (!WLLAMA_HAS_WEBGPU) warnings.push("⚠️ WebGPU is unavailable — inference will run on CPU only (slower).");
+            if (warnings.length) {
+                const el = document.getElementById("wllamaCapabilityHint");
+                el.textContent = warnings.join(" ");
+                el.style.display = "block";
+            }
+        })();
+
+        // Returns an error message when the model can't fit this browser's wasm heap,
+        // else null. Checked before loading a local file and before streaming a download.
+        function wllamaPreflightSize(bytes) {
+            if (!WLLAMA_HAS_JSPI && bytes >= WLLAMA_NO_JSPI_MAX_BYTES) {
+                return `This model is ${(bytes / 1073741824).toFixed(1)} GB, but without WebAssembly JSPI this browser must fit the whole file into a 4 GB WASM heap and the load will fail. Use Chrome/Edge or Firefox 153+, or pick a smaller quantization.`;
+            }
+            return null;
+        }
+
         // Disable every model-loading control while a load/download is in flight
         // (both entry points share the engine instance, so no concurrency allowed).
         function setWllamaLoadBusy(busy) {
@@ -870,7 +899,15 @@ Rules:
                 pbContainer.style.display = "none";
             } catch (err) {
                 wllamaLog("error", "Load failed:", err.message || err);
-                statusEl.textContent = "Status: Error - " + err.message;
+                let msg = err.message || String(err);
+                // wllama doesn't check its heap allocations; an oversized model surfaces
+                // as a raw TypedArray.set RangeError (wording differs per browser).
+                if (err instanceof RangeError || /source array is too long|is out of bounds/i.test(msg)) {
+                    msg = "the model doesn't fit in browser memory."
+                        + (WLLAMA_HAS_JSPI ? "" : " Without WebAssembly JSPI this browser caps models at ~3 GB — use Chrome/Edge or Firefox 153+.")
+                        + " Try a smaller quantization.";
+                }
+                statusEl.textContent = "Status: Error - " + msg;
                 pbContainer.style.display = "none";
             } finally {
                 window.Worker = OriginalWorker;
@@ -880,6 +917,13 @@ Rules:
         document.getElementById("settingWllamaFile").addEventListener("change", async (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            const sizeErr = wllamaPreflightSize(file.size);
+            if (sizeErr) {
+                wllamaLog("error", sizeErr);
+                document.getElementById("wllamaStatus").textContent = "Status: Error - " + sizeErr;
+                e.target.value = "";
+                return;
+            }
             setWllamaLoadBusy(true);
             try { await loadWllamaModel([file], file.name); }
             finally { setWllamaLoadBusy(false); }
@@ -907,6 +951,12 @@ Rules:
             const res = await fetch(url);
             if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
             const total = parseInt(res.headers.get("content-length") || "0", 10);
+            // Fail before pulling gigabytes the engine can't load anyway.
+            const sizeErr = wllamaPreflightSize(total);
+            if (sizeErr) {
+                try { await res.body.cancel(); } catch { /* already closed */ }
+                throw new Error(sizeErr);
+            }
             const reader = res.body.getReader();
             const chunks = [];
             let loaded = 0;
