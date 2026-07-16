@@ -103,6 +103,29 @@ You are not limited to local models! HermitUI works perfectly with any cloud pro
 2. **Model Name:** The specific model you want to use (e.g., `anthropic/claude-3.5-sonnet`, `gpt-4o`).
 3. **API Key:** Enter your provider's API key in the settings menu.
 
+## 🔗 Configuration via URL
+
+You can pre-configure HermitUI through the URL **fragment** (the part after `#`), so a single link or bookmark carries the whole connection setup:
+
+```
+hermit-ui-standalone.html#api=http://localhost:8080/v1&model=qwen3-8b
+hermit-ui-standalone.html#api=https://api.groq.com/openai/v1&key=gsk_...&model=llama-3.3-70b
+hermit-ui-wllama.html#gguf=hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf
+```
+
+| Parameter | Effect |
+|---|---|
+| `api` | API base URL (same as the Settings field) |
+| `model` | Model name |
+| `key` | API key |
+| `persona` | Preset persona: `technical`, `general`, `writing`, or `tutor` |
+| `gguf` | *(wllama build only)* GGUF model to load in-browser — direct URL, Hugging Face link, or `hf:user/repo/file.gguf` shorthand. Shows a one-click confirmation banner before downloading. |
+
+Why the fragment and not `?query`: the part after `#` **never leaves your browser** — it is not sent in any HTTP request — and nothing is stored, so this stays true to the ephemerality promise (the URL *is* the config; refresh keeps your setup). Applied settings are always announced in a toast, so a shared link can't reconfigure the app invisibly. Free-text system prompts are deliberately not supported as a parameter, since a link could smuggle a malicious prompt.
+
+> [!NOTE]
+> A `key` in the URL is never transmitted, but it does end up in your **browser history** (and any bookmark you save). Prefer entering keys in Settings on shared machines.
+
 ## 🔧 Troubleshooting (CORS)
 
 If HermitUI fails to connect to your local AI server (e.g., getting a "Network Error"), it is most likely due to **CORS (Cross-Origin Resource Sharing)** restrictions. Because HermitUI runs as a local file (`file://`), modern browsers will block its requests to `http://localhost` unless the server explicitly allows it.
@@ -156,7 +179,7 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 
 *   **🔌 Truly zero-network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~5 MB file needs **no network access at all** — perfect for USB-stick distribution to air-gapped machines. The model file never leaves your machine.
 *   **📂 Local GGUF loading:** Pick a `.gguf` file and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration.
-*   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage, so it re-downloads each session.
+*   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage, so it re-downloads each session. A model can also be baked into a shareable link: `hermit-ui-wllama.html#gguf=hf:user/repo/file.gguf` (see [Configuration via URL](#-configuration-via-url)).
 *   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`) and **max output tokens** per reply; temperature, top-p, and seed from the regular settings apply too.
 *   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
 *   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.

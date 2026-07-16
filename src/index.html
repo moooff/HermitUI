@@ -202,6 +202,14 @@
                 <span style="font-size: 1.1rem;">⚠️</span>
                 <span><b>Privacy Warning:</b> You are using a cloud provider (<span id="mainCloudProviderName"></span>). Your chat data leaves your local machine.</span>
             </div>
+            <!-- @wllama:start -->
+            <div id="wllamaHashBanner" style="display: none; background: rgba(219, 234, 254, 0.85); color: #1e40af; padding: 10px 16px; font-size: 0.85rem; border-bottom: 1px solid #93c5fd; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.05); z-index: 10;">
+                <span style="font-size: 1.1rem;">🔗</span>
+                <span>This link wants to load <b id="wllamaHashModelName"></b> from <span id="wllamaHashHost"></span> for in-browser inference.</span>
+                <button type="button" id="wllamaHashLoadBtn" style="background: var(--primary); color: white; border: none; padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; font-weight: 600; box-shadow: 0 2px 5px rgba(59,130,246,0.3);">⬇️ Load model</button>
+                <button type="button" id="wllamaHashDismissBtn" style="background: transparent; color: inherit; border: 1px solid #93c5fd; padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; font-weight: 600;">Dismiss</button>
+            </div>
+            <!-- @wllama:end -->
             <div id="chatbox"></div>
            
             <div class="input-container">

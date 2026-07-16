@@ -1019,6 +1019,36 @@ Rules:
         document.getElementById("settingWllamaUrl").addEventListener("keydown", (e) => {
             if (e.key === "Enter") { e.preventDefault(); loadWllamaModelFromUrl(); }
         });
+
+        // Hash-config hook, called by applyHashConfig() when a #gguf=… param is
+        // present. It only prefills and shows a confirmation banner — a shared
+        // link must never start a multi-GB download without one explicit click.
+        function handleWllamaHashParams(params) {
+            const raw = (params.get("gguf") || "").trim();
+            if (!raw) return;
+            let url;
+            try {
+                url = normalizeGgufUrl(raw);
+            } catch (err) {
+                showToast(`🔗 gguf link ignored: ${err.message}`);
+                return;
+            }
+            document.getElementById("settingWllamaUrl").value = url;
+            document.getElementById("wllamaHashModelName").textContent = decodeURIComponent(url.split("?")[0].split("/").pop());
+            document.getElementById("wllamaHashHost").textContent = new URL(url).host;
+            document.getElementById("wllamaHashBanner").style.display = "flex";
+        }
+        document.getElementById("wllamaHashLoadBtn").addEventListener("click", () => {
+            document.getElementById("wllamaHashBanner").style.display = "none";
+            backendMode = "wllama";
+            // Open settings so the existing status line and progress bar are
+            // visible, then reuse the normal URL-load path.
+            document.getElementById("settingsBtn").click();
+            loadWllamaModelFromUrl();
+        });
+        document.getElementById("wllamaHashDismissBtn").addEventListener("click", () => {
+            document.getElementById("wllamaHashBanner").style.display = "none";
+        });
         // @wllama:end
         // ========== New Chat ==========
         document.getElementById("clearBtn").addEventListener("click", () => {
@@ -2281,3 +2311,51 @@ Rules:
                 applyTheme();
             });
         }
+
+        // ========== URL-Fragment Configuration ==========
+        // A link can pre-wire the setup via hash params: #api=…&model=…&key=…&persona=…
+        // (plus #gguf=… in the wllama build). The fragment never leaves the browser —
+        // it isn't sent in HTTP requests — so this stays within the ephemerality rule:
+        // the URL *is* the config, nothing is stored, and nothing is written back.
+        // Applied once at startup; everything set here is announced via toast so a
+        // shared link can't reconfigure the app invisibly. Free-text system prompts
+        // are deliberately not supported (a link could smuggle a malicious prompt).
+        function applyHashConfig() {
+            if (location.hash.length < 2) return;
+            const params = new URLSearchParams(location.hash.slice(1));
+            const applied = [];
+
+            const api = (params.get("api") || "").trim();
+            if (api) {
+                API_URL = api;
+                let origin = api;
+                // Opaque origins (e.g. protocol-less input) stringify to "null" — show the raw value instead.
+                try { origin = new URL(api).origin; } catch { /* show as-is */ }
+                if (origin === "null") origin = api;
+                applied.push(`server ${origin}`);
+            }
+            const model = (params.get("model") || "").trim();
+            if (model) {
+                MODEL_NAME = model;
+                applied.push(`model ${model}`);
+            }
+            const key = (params.get("key") || "").trim();
+            if (key) {
+                API_KEY = key;
+                applied.push("API key (note: it stays in your browser history)");
+            }
+            const persona = (params.get("persona") || "").trim();
+            if (persona && PERSONAS[persona]) {
+                switchPersona(persona);
+                applied.push(`persona ${PERSONAS[persona].label}`);
+            }
+
+            if (applied.length > 0) {
+                updateOverlay();
+                updateMainCloudWarning();
+                showToast(`🔗 Applied from URL: ${applied.join(", ")}`);
+            }
+            // typeof-guard keeps this valid in the builds where the wllama block is stripped.
+            if (typeof handleWllamaHashParams === "function") handleWllamaHashParams(params);
+        }
+        applyHashConfig();
