@@ -24,7 +24,10 @@
   <a href="https://moooff.github.io/HermitUI">
     <img src="https://img.shields.io/badge/🚀_Try_the_Live_Online_Demo-2ea44f?style=for-the-badge" alt="Try the Live Online Demo" />
   </a>
-  <p><i>Works entirely in your browser. Just connect it to your local AI server!</i></p>
+  <a href="https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:bartowski/SmolLM2-135M-Instruct-GGUF/SmolLM2-135M-Instruct-Q8_0.gguf">
+    <img src="https://img.shields.io/badge/🧠_Try_the_In--Browser_AI_Demo-8A2BE2?style=for-the-badge" alt="Try the In-Browser AI Demo" />
+  </a>
+  <p><i>Left: connect it to your local AI server. Right: one click downloads a small model (SmolLM2-135M, ~140 MB) and chats <b>fully inside your browser</b> — no server at all.</i></p>
 </div>
 
 HermitUI is a highly responsive web interface tailored for interacting with local AI models. It ships as **a single, self-contained `.html` file** built with nothing but vanilla HTML, CSS, and JavaScript. During development the source is split into `src/index.html`, `src/style.css`, and `src/script.js` for maintainability, and `build.py` assembles them into the standalone single-file deliverable.
@@ -186,6 +189,10 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 *   **⏱️ Live tokens/s:** A real-time generation-speed readout while the model streams.
 
 #### Try it in 60 seconds
+
+**One click:** open the [🧠 In-Browser AI Demo](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:bartowski/SmolLM2-135M-Instruct-GGUF/SmolLM2-135M-Instruct-Q8_0.gguf) — it pre-fills SmolLM2-135M (~140 MB) via the `#gguf=` URL parameter; confirm the banner and chat.
+
+Or manually, with a bigger model:
 
 1. Open [`dist/hermit-ui-wllama.html`](dist/hermit-ui-wllama.html) in your browser (download the raw file first).
 2. Settings → Backend Mode → **True Offline (Wllama GGUF)**, then paste into the URL field: `hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf`
