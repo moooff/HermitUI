@@ -619,6 +619,9 @@
             max-width: 520px;
             box-shadow: 0 25px 60px rgba(0,0,0,0.15);
             border: 1px solid #e5e7eb;
+            /* Settings can outgrow small viewports; scroll so Save/Cancel stay reachable. */
+            max-height: 90vh;
+            overflow-y: auto;
         }
         .modal h3 {
             font-size: 1.25rem;
@@ -809,6 +812,78 @@
             line-height: 1.6;
         }
 
+        /* Context pane (attach data/files). display is toggled inline by JS. */
+        #context-pane {
+            width: 100%;
+            flex-direction: column;
+            gap: 8px;
+            border-radius: 16px;
+            border: 2px dashed rgba(0,0,0,0.1);
+            padding: 12px;
+            background: rgba(255,255,255,0.9);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            transition: all 0.3s;
+        }
+        #context-pane.drag-over {
+            border-color: var(--primary);
+            background: rgba(59,130,246,0.05);
+        }
+        #context-input {
+            border-radius: 8px;
+            border: 1px solid rgba(0,0,0,0.1);
+            padding: 10px;
+            resize: vertical;
+            width: 100%;
+            font-family: inherit;
+            font-size: 0.95rem;
+            background: #f9fafb;
+            outline: none;
+        }
+
+        #attach-context-btn {
+            background: transparent;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: #6b7280;
+            transition: color 0.2s;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #attach-context-btn:hover,
+        #attach-context-btn.active {
+            color: var(--primary);
+        }
+
+        .file-chip {
+            display: flex;
+            align-items: center;
+            background: rgba(59,130,246,0.1);
+            color: var(--primary);
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            border: 1px solid rgba(59,130,246,0.2);
+        }
+        .file-chip-name {
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-chip-remove {
+            background: none;
+            border: none;
+            color: inherit;
+            margin-left: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+        }
+
         .file-chip-thumb {
             width: 28px;
             height: 28px;
@@ -827,7 +902,6 @@
             vertical-align: top;
         }
 
-/* Dark Mode Styles */
 /* Dark Mode Overrides */
         :root[data-theme="dark"] {
             --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -955,12 +1029,16 @@
             color: #94a3b8;
         }
         :root[data-theme="dark"] #context-pane {
-            background: rgba(30, 41, 59, 0.9) !important;
-            border-color: #475569 !important;
+            background: rgba(30, 41, 59, 0.9);
+            border-color: #475569;
+        }
+        :root[data-theme="dark"] #context-pane.drag-over {
+            border-color: var(--primary);
+            background: rgba(96, 165, 250, 0.08);
         }
         :root[data-theme="dark"] #context-input {
-            background: #0f172a !important;
-            border-color: #475569 !important;
+            background: #0f172a;
+            border-color: #475569;
             color: #f8fafc;
         }
         :root[data-theme="dark"] #chatForm > div:last-child {
@@ -968,13 +1046,6 @@
             border-color: #475569 !important;
         }
         /* @wllama:start */
-        /* The wllama settings group makes the modal taller than small viewports:
-           cap its height and let it scroll so Save/Cancel stay reachable. */
-        .modal {
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
         /* ===== Quake-style debug console (slides down from the top) ===== */
         #debugConsole {
             position: fixed;

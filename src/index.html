@@ -188,7 +188,8 @@
                 <input type="number" id="settingSeed" placeholder="random" step="1">
             </details>
             <label for="settingSystem">System Prompt</label>
-            <textarea id="settingSystem">You are a technical assistant. Your answers are free of marketing fluff and lengthy explanations. Use bullet points, bold keywords, and short paragraphs for maximum clarity. Always answer in a factual, structured, and solution-oriented manner. When code is requested, output primarily the code and only comment on complex or important parts.</textarea>
+            <!-- Filled from the active persona whenever the modal opens; a hardcoded prompt here would only drift. -->
+            <textarea id="settingSystem"></textarea>
             <div class="modal-actions">
                 <button class="cancel-btn" id="settingsCancel">Cancel</button>
                 <button class="primary-btn" id="settingsSave">Save</button>
@@ -222,19 +223,19 @@
                         <option value="tutor">🎓 Tutor</option>
                     </select>
                     <form id="chatForm" style="flex-grow: 1; max-width: 850px; display: flex; flex-direction: column; gap: 8px; position: relative;">
-                        <div id="context-pane" style="display: none; width: 100%; flex-direction: column; gap: 8px; border-radius: 16px; border: 2px dashed rgba(0,0,0,0.1); padding: 12px; background: rgba(255,255,255,0.9); box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: all 0.3s;">
+                        <div id="context-pane" style="display: none;">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <span style="font-size: 0.85rem; font-weight: 600; color: #6b7280; display: flex; align-items: center; gap: 6px;">📎 Attach Data or Files</span>
                                 <button type="button" id="add-file-btn" style="background: var(--primary); color: white; border: none; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; font-weight: 600; box-shadow: 0 2px 5px rgba(59,130,246,0.3); transition: transform 0.2s;">+ Add Files</button>
                                 <input type="file" id="file-upload" multiple accept="image/png,image/jpeg,image/gif,image/webp,text/*,.json,.js,.py,.md,.html,.css,.txt,.csv,.xml,.yml,.yaml,.sh" style="display: none;">
                             </div>
                             <div id="file-chips" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
-                            <textarea id="context-input" placeholder="Paste text here or drop files into this area..." rows="3" style="border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); padding: 10px; resize: vertical; width: 100%; font-family: inherit; font-size: 0.95rem; background: #f9fafb; outline: none;"></textarea>
+                            <textarea id="context-input" placeholder="Paste text here or drop files into this area..." rows="3"></textarea>
                         </div>
                         <div style="position: relative; display: flex; width: 100%; background: #fff; border-radius: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid var(--border-color);">
                             <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
                             <div class="send-btn-container" style="display: flex; align-items: center; gap: 8px;">
-                                <button type="button" id="attach-context-btn" title="Attach context/data" style="background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: #6b7280; transition: color 0.2s; padding: 4px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='#6b7280'">📎</button>
+                                <button type="button" id="attach-context-btn" title="Attach context/data">📎</button>
                                 <button type="submit" class="primary-btn" id="sendBtn" title="Send message">↑</button>
                                 <button type="button" class="primary-btn" id="stopBtn" title="Stop generation">■</button>
                             </div>

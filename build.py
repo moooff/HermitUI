@@ -4,8 +4,15 @@ import sys
 import urllib.request
 import base64
 import gzip
+import json
 import shutil
 import re
+
+# libs/ doubles as a download cache: files are reused when they were fetched from
+# the exact (version-pinned) URL recorded in this manifest, so version bumps
+# re-download automatically. `python3 build.py --refresh` forces re-downloading.
+MANIFEST_PATH = "libs/.urls.json"
+REFRESH = "--refresh" in sys.argv
 
 URLS = {
     "marked.js": "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js",
@@ -20,11 +27,25 @@ def fetch(url, headers=None):
     if headers is None: headers = {}
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=60) as response:
             return response.read()
     except Exception as e:
         print(f"❌ Failed to fetch {url}: {e}")
         sys.exit(1)
+
+
+def sub_required(pattern, repl, text, what):
+    """re.sub that fails the build when the pattern matches nothing.
+
+    Guards against a CDN tag in src/index.html drifting out of sync with its
+    regex here — without this, a 'standalone' output would silently keep the
+    live CDN link.
+    """
+    new_text, n = re.subn(pattern, repl, text)
+    if n == 0:
+        print(f"❌ {what}: pattern matched nothing — CDN tag in src/index.html out of sync with build.py.")
+        sys.exit(1)
+    return new_text
 
 def strip_wllama(text):
     """Remove @wllama:start/@wllama:end marker blocks (HTML, CSS, and JS comment styles).
@@ -43,23 +64,41 @@ def build():
     # Start from a clean dist/ so renamed/stale outputs don't linger between builds.
     shutil.rmtree("dist", ignore_errors=True)
     os.makedirs("dist", exist_ok=True)
-    
+
+    manifest = {}
+    if os.path.exists(MANIFEST_PATH):
+        try:
+            with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception:
+            manifest = {}
+
+    def fetch_cached(url, cache_path, headers=None):
+        if not REFRESH and manifest.get(cache_path) == url and os.path.exists(cache_path):
+            print(f"  -> {os.path.basename(cache_path)} (cached)")
+            with open(cache_path, "rb") as f:
+                return f.read()
+        print(f"  -> Fetching {os.path.basename(cache_path)}...")
+        content = fetch(url, headers)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "wb") as f:
+            f.write(content)
+        manifest[cache_path] = url
+        return content
+
     print("📥 Downloading libraries from CDNs...")
     cache = {}
-    
+
     for name, url in URLS.items():
-        print(f"  -> Fetching {name}...")
         headers = {}
         # Emulate modern browser to get woff2 font format for Inter
         if "fonts.googleapis.com" in url:
             headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
-        
-        content = fetch(url, headers)
-        cache[name] = content
-        
-        if name != "inter.css":
-            with open(f"libs/{name}", "wb") as f:
-                f.write(content)
+
+        # libs/inter.css holds the *processed* (font-path-rewritten) CSS, so the
+        # raw Google response is cached under its own name.
+        cache_path = "libs/inter-google.css" if name == "inter.css" else f"libs/{name}"
+        cache[name] = fetch_cached(url, cache_path, headers)
 
     print("🖋️ Processing Inter fonts...")
     inter_css = cache["inter.css"].decode("utf-8")
@@ -72,12 +111,8 @@ def build():
     # Download and process each woff2 font file
     for font_url in set(font_urls):
         font_filename = font_url.split("/")[-1]
-        print(f"  -> Fetching font {font_filename}...")
-        font_content = fetch(font_url)
-        
-        with open(f"libs/fonts/{font_filename}", "wb") as f:
-            f.write(font_content)
-            
+        font_content = fetch_cached(font_url, f"libs/fonts/{font_filename}")
+
         # Update path for local CSS
         inter_local_css = inter_local_css.replace(font_url, f"fonts/{font_filename}")
         
@@ -110,14 +145,10 @@ def build():
         print("❌ WLLAMA_CDN_BASE constant not found in src/script.js.")
         sys.exit(1)
     wllama_base = m.group(1)
-    os.makedirs("libs/wllama", exist_ok=True)
     print("📥 Downloading wllama engine assets...")
     wllama_inline = {}
     for key, path in [("js", "index.js"), ("wasm", "wasm/wllama.wasm")]:
-        print(f"  -> Fetching wllama {path}...")
-        content = fetch(f"{wllama_base}/{path}")
-        with open(f"libs/wllama/{os.path.basename(path)}", "wb") as f:
-            f.write(content)
+        content = fetch_cached(f"{wllama_base}/{path}", f"libs/wllama/{os.path.basename(path)}")
         wllama_inline[key] = base64.b64encode(gzip.compress(content, 9)).decode("utf-8")
 
     # Mermaid is ~3.5 MB raw — far too heavy to inline plainly into the single-file
@@ -130,10 +161,7 @@ def build():
         print("❌ Mermaid CDN <script> tag not found in src/index.html.")
         sys.exit(1)
     print("📥 Downloading mermaid...")
-    print("  -> Fetching mermaid.js...")
-    mermaid_raw = fetch(m.group(1))
-    with open("libs/mermaid.js", "wb") as f:
-        f.write(mermaid_raw)
+    mermaid_raw = fetch_cached(m.group(1), "libs/mermaid.js")
     mermaid_b64 = base64.b64encode(gzip.compress(mermaid_raw, 9)).decode("utf-8")
 
     html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
@@ -179,33 +207,40 @@ def build():
     # the local (link to ../libs/) and standalone (inline content) rewrites. The inline
     # replacements are callables so their text isn't treated as regex backreferences.
     ASSETS = [
-        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>',
+        ("marked",
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>',
          '<script src="../libs/marked.js"></script>',
          lambda m: f'<script>{marked_script}</script>'),
-        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>',
+        ("dompurify",
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>',
          '<script src="../libs/dompurify.js"></script>',
          lambda m: f'<script>{dompurify_script}</script>'),
-        (r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>',
+        ("highlight.css",
+         r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>',
          '<link rel="stylesheet" href="../libs/highlight.css">',
          lambda m: f'<style>{hl_css}</style>'),
-        (r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>',
+        ("highlight.js",
+         r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>',
          '<script src="../libs/highlight.js"></script>',
          lambda m: f'<script>{hl_script}</script>'),
-        (r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/katex@[^"\']+["\']\s*></script>',
+        ("katex",
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/katex@[^"\']+["\']\s*></script>',
          '<script src="../libs/katex.js"></script>',
          lambda m: f'<script>{katex_script}</script>'),
-        (r'<script\s+defer\s+src=["\']https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+["\']\s*></script>',
+        ("mermaid",
+         r'<script\s+defer\s+src=["\']https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+["\']\s*></script>',
          '<script defer src="../libs/mermaid.js"></script>',
          lambda m: f'<script>window.__MERMAID_INLINE__ = "{mermaid_b64}";</script>'),
-        (r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>',
+        ("inter",
+         r'<link\s+href=["\']https://fonts\.googleapis\.com/css2[^"\']+["\']\s+rel=["\']stylesheet["\']\s*>',
          '<link href="../libs/inter.css" rel="stylesheet">',
          lambda m: f'<style>{inter_inline}</style>'),
     ]
 
     # 2. Local Version (CDN links rewritten to point at the local libs/ directory)
     local_html = html
-    for pattern, local_repl, _ in ASSETS:
-        local_html = re.sub(pattern, local_repl, local_html)
+    for name, pattern, local_repl, _ in ASSETS:
+        local_html = sub_required(pattern, local_repl, local_html, f"local rewrite of {name}")
 
     with open("dist/hermit-ui-local.html", "w", encoding="utf-8") as f:
         f.write(local_html)
@@ -213,8 +248,8 @@ def build():
 
     # 3. Standalone Version (all libraries inlined directly into the file)
     standalone_html = html
-    for pattern, _, inline_repl in ASSETS:
-        standalone_html = re.sub(pattern, inline_repl, standalone_html)
+    for name, pattern, _, inline_repl in ASSETS:
+        standalone_html = sub_required(pattern, inline_repl, standalone_html, f"inlining of {name}")
 
     with open("dist/hermit-ui-standalone.html", "w", encoding="utf-8") as f:
         f.write(standalone_html)
@@ -223,8 +258,8 @@ def build():
     # 4. Wllama Version (standalone-style, with the in-browser GGUF inference backend
     #    kept in and the wllama engine itself embedded, so it runs fully offline)
     wllama_html = html_wllama
-    for pattern, _, inline_repl in ASSETS:
-        wllama_html = re.sub(pattern, inline_repl, wllama_html)
+    for name, pattern, _, inline_repl in ASSETS:
+        wllama_html = sub_required(pattern, inline_repl, wllama_html, f"inlining of {name} (wllama)")
 
     engine_placeholder = "<!-- @wllama:inline-engine -->"
     if engine_placeholder not in wllama_html:
@@ -243,6 +278,9 @@ def build():
     # Final step: copy the standalone build out to root index.html for GitHub Pages.
     shutil.copyfile("dist/hermit-ui-standalone.html", "index.html")
     print("  ✅ index.html (Copy of the standalone build, served as the GitHub Pages landing page)")
+
+    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=1)
 
     print("\n🎉 Build complete!")
 

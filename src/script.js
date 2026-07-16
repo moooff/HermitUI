@@ -11,7 +11,8 @@
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         marked.use({
@@ -314,10 +315,23 @@ Rules:
         }
         updateOverlay();
 
+        // Domains whose use means chat data leaves the local machine. Matched as
+        // hostname suffixes (never substrings, so "box.ai" can't match "x.ai");
+        // googleapis.com covers Gemini's OpenAI-compatible endpoint.
+        const CLOUD_PROVIDERS = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "googleapis.com", "cloudflare.com"];
+        function detectCloudProvider(rawUrl) {
+            let host;
+            try { host = new URL(rawUrl).hostname; }
+            catch {
+                // Tolerate protocol-less input while the user is still typing.
+                try { host = new URL("https://" + rawUrl).hostname; } catch { return null; }
+            }
+            host = host.toLowerCase();
+            return CLOUD_PROVIDERS.find(p => host === p || host.endsWith("." + p)) || null;
+        }
+
         function updateMainCloudWarning() {
-            const url = API_URL.toLowerCase();
-            const cloudProviders = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "api.gemini.com", "cloudflare.com"];
-            const match = cloudProviders.find(p => url.includes(p));
+            const match = detectCloudProvider(API_URL);
             const banner = document.getElementById("mainScreenCloudWarning");
             if (banner) {
                 if (match) {
@@ -363,7 +377,7 @@ Rules:
             fileChips.innerHTML = "";
             attachedFiles.forEach((f, idx) => {
                 const chip = document.createElement("div");
-                chip.style.cssText = "display: flex; align-items: center; background: rgba(59,130,246,0.1); color: var(--primary); padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; border: 1px solid rgba(59,130,246,0.2);";
+                chip.className = "file-chip";
 
                 if (f.kind === "image") {
                     const thumb = document.createElement("img");
@@ -374,13 +388,13 @@ Rules:
                 }
 
                 const nameSpan = document.createElement("span");
-                nameSpan.style.cssText = "max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
+                nameSpan.className = "file-chip-name";
                 nameSpan.textContent = f.kind === "image" ? f.name : `📄 ${f.name}`; // textContent: filename is untrusted, never inject as HTML
 
                 const removeBtn = document.createElement("button");
                 removeBtn.type = "button";
                 removeBtn.title = "Remove file";
-                removeBtn.style.cssText = "background: none; border: none; color: inherit; margin-left: 6px; cursor: pointer; font-size: 1rem; line-height: 1;";
+                removeBtn.className = "file-chip-remove";
                 removeBtn.textContent = "×";
                 removeBtn.addEventListener("click", () => removeAttachedFile(idx));
 
@@ -390,10 +404,10 @@ Rules:
             });
         }
 
-        window.removeAttachedFile = function(idx) {
+        function removeAttachedFile(idx) {
             attachedFiles.splice(idx, 1);
             renderChips();
-        };
+        }
 
         function isTextFile(file) {
             if (file.type.startsWith("text/")) return true;
@@ -489,18 +503,15 @@ Rules:
         if (contextPane) {
             contextPane.addEventListener("dragover", (e) => {
                 e.preventDefault();
-                contextPane.style.borderColor = "var(--primary)";
-                contextPane.style.background = "rgba(59,130,246,0.05)";
+                contextPane.classList.add("drag-over");
             });
             contextPane.addEventListener("dragleave", (e) => {
                 e.preventDefault();
-                contextPane.style.borderColor = "rgba(0,0,0,0.1)";
-                contextPane.style.background = "rgba(255,255,255,0.9)";
+                contextPane.classList.remove("drag-over");
             });
             contextPane.addEventListener("drop", (e) => {
                 e.preventDefault();
-                contextPane.style.borderColor = "rgba(0,0,0,0.1)";
-                contextPane.style.background = "rgba(255,255,255,0.9)";
+                contextPane.classList.remove("drag-over");
                 if (e.dataTransfer.files.length) {
                     processFiles(e.dataTransfer.files);
                 }
@@ -512,10 +523,10 @@ Rules:
                 if (contextPane.style.display === "none") {
                     contextPane.style.display = "flex";
                     contextInput.focus();
-                    attachContextBtn.style.color = "var(--primary)";
+                    attachContextBtn.classList.add("active");
                 } else {
                     contextPane.style.display = "none";
-                    attachContextBtn.style.color = "#6b7280";
+                    attachContextBtn.classList.remove("active");
                 }
             });
         }
@@ -549,15 +560,18 @@ Rules:
             // Reveal the context pane so the new chip is visible (mirrors attach-context-btn).
             if (contextPane && contextPane.style.display === "none") {
                 contextPane.style.display = "flex";
-                if (attachContextBtn) attachContextBtn.style.color = "var(--primary)";
+                if (attachContextBtn) attachContextBtn.classList.add("active");
             }
         });
         
         // Global Keyboard Shortcuts
         document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape" && settingsModal.classList.contains("active")) {
-                settingsModal.classList.remove("active");
-                return;
+            if (e.key === "Escape") {
+                const openModal = document.querySelector(".modal-overlay.active");
+                if (openModal) {
+                    openModal.classList.remove("active");
+                    return;
+                }
             }
             if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
@@ -582,8 +596,6 @@ Rules:
         });
 
         // ========== Stats Dashboard ==========
-        const inlineStats = document.getElementById("inlineStats");
-
         function updateGlobalStats(prompt, completion, tps, time, isEst = false) {
             document.getElementById("stat-prompt").textContent = prompt;
             document.getElementById("stat-completion").textContent = completion;
@@ -609,9 +621,7 @@ Rules:
         const settingsModal = document.getElementById("settingsModal");
         
         function checkCloudWarning() {
-            const url = document.getElementById("settingUrl").value.toLowerCase();
-            const cloudProviders = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "api.gemini.com", "cloudflare.com"];
-            const isCloud = cloudProviders.some(p => url.includes(p));
+            const isCloud = detectCloudProvider(document.getElementById("settingUrl").value) !== null;
             document.getElementById("cloudWarning").style.display = isCloud ? "flex" : "none";
         }
         document.getElementById("settingUrl").addEventListener("input", checkCloudWarning);
@@ -1157,6 +1167,14 @@ Rules:
             badge.style.display = modelSupportsVision(currentSettingsModel()) ? "inline-block" : "none";
         }
 
+        // Normalize a base URL (or a pasted full chat endpoint) to the given API path.
+        function apiEndpoint(base, path) {
+            let url = base.trim().replace(/\/+$/, "");
+            if (url.endsWith("/chat/completions")) url = url.slice(0, -"/chat/completions".length);
+            if (!url.endsWith(path)) url += path;
+            return url;
+        }
+
         // ========== Test Connection & Fetch Models ==========
         document.getElementById("testConnectionBtn").addEventListener("click", async (e) => {
             e.preventDefault();
@@ -1166,15 +1184,8 @@ Rules:
             btn.disabled = true;
 
             try {
-                let currentUrl = document.getElementById("settingUrl").value.trim();
                 let currentKey = document.getElementById("settingApiKey").value.trim();
-                
-                let modelsUrl = currentUrl.trim().replace(/\/+$/, "");
-                if (modelsUrl.endsWith("/chat/completions")) {
-                    modelsUrl = modelsUrl.replace("/chat/completions", "/models");
-                } else if (!modelsUrl.endsWith("/models")) {
-                    modelsUrl = modelsUrl + "/models";
-                }
+                const modelsUrl = apiEndpoint(document.getElementById("settingUrl").value, "/models");
 
                 const response = await fetch(modelsUrl, {
                     method: "GET",
@@ -1280,18 +1291,10 @@ Rules:
             }
 
             const summaryPrompt = `Summarize the following conversation:\n\n${transcript}`;
-            
-            // UI update
-            inputField.disabled = true;
-            sendBtn.style.display = "none";
-            stopBtn.style.display = "flex";
-            isWaiting = true;
             userScrolledUp = false;
-            abortController = new AbortController();
 
-            const responseContainerId = appendMessage("AI", "", "summary", "📋");
-            const responseContainer = document.getElementById(responseContainerId);
-            
+            const uid = nextMsgUid++;
+            const responseContainer = document.getElementById(appendMessage("AI", "", "summary", "📋", false, "", uid));
             responseContainer.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
@@ -1299,76 +1302,39 @@ Rules:
                 </div>
                 <div class="ai-response-body"></div>
             `;
-            
-            let ctx = {
-                aiReasoning: "",
-                fullRawText: "",
-                startTime: Date.now(),
-                responseContainer: responseContainer.querySelector('.ai-response-body')
-            };
-            let promptTokens = 0;
-            let completionTokens = 0;
 
-            const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
-
-            document.getElementById('chatForm').classList.add('is-generating');
-            responseContainer.classList.add('cursor');
-
-            await fetchAndStreamChat({
-                model: MODEL_NAME,
-                messages: [
-                    {"role": "system", "content": "You are a concise summarization assistant. Your output is rendered as Markdown.\n\nOutput format:\n## TL;DR\nOne-sentence summary.\n\n## Key Topics\n- Bulleted list of main subjects discussed.\n\n## Conclusions & Answers\n- Bulleted list of decisions, solutions, or answers reached. If the conversation is primarily code or debugging, include the specific technical solution or fix here.\n\n## Action Items\n- Bulleted list (or \"None\" if no action items were identified).\n\nKeep the summary proportional: 50-100 words for short conversations, up to 300 for longer ones."},
-                    {"role": "user", "content": summaryPrompt}
-                ],
-                temperature: 0.3,
-                stream: true,
-                stream_options: { include_usage: true }
-            }, abortController.signal, {
-                onChunk: (reasoningChunk, contentChunk, pt, ct) => {
-                    if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
-                    if (contentChunk) ctx.fullRawText += contentChunk;
-                    promptTokens = pt;
-                    completionTokens = ct;
-                    throttledRender(() => { updateMessageUI(ctx, false); });
+            const ctx = await runStreamingResponse({
+                payload: {
+                    model: MODEL_NAME,
+                    messages: [
+                        {"role": "system", "content": "You are a concise summarization assistant. Your output is rendered as Markdown.\n\nOutput format:\n## TL;DR\nOne-sentence summary.\n\n## Key Topics\n- Bulleted list of main subjects discussed.\n\n## Conclusions & Answers\n- Bulleted list of decisions, solutions, or answers reached. If the conversation is primarily code or debugging, include the specific technical solution or fix here.\n\n## Action Items\n- Bulleted list (or \"None\" if no action items were identified).\n\nKeep the summary proportional: 50-100 words for short conversations, up to 300 for longer ones."},
+                        {"role": "user", "content": summaryPrompt}
+                    ],
+                    temperature: 0.3,
+                    stream: true,
+                    stream_options: { include_usage: true }
                 },
-                onDone: (pt, ct) => {
-                    promptTokens = pt;
-                    completionTokens = ct;
-                    updateMessageUI(ctx, true);
-                    messages.push({"role": "assistant", "content": "## Summary\n\n" + buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), "isSummary": true});
-                    finishGeneration();
-                },
-                onError: (error) => {
-                    if (error.name !== 'AbortError') {
-                        responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
+                outerEl: responseContainer,
+                bodyEl: responseContainer.querySelector('.ai-response-body'),
+                estimatePromptTokens: () => Math.ceil(summaryPrompt.length / 4),
+                onFinal: (ctx, aborted) => {
+                    if (!aborted) {
+                        messages.push({"role": "assistant", "content": "## Summary\n\n" + buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), "isSummary": true, uid});
                     }
-                    finishGeneration();
+                },
+                onFailure: (error, ctx) => {
+                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
                 }
             });
 
-            function finishGeneration() {
-                throttledRender.cancel();
-                document.getElementById('chatForm').classList.remove('is-generating');
-                responseContainer.classList.remove('cursor');
-                sendBtn.style.display = "flex";
-                stopBtn.style.display = "none";
-                inputField.disabled = false;
-                isWaiting = false;
-                inputField.focus();
-                let durationSec = (Date.now() - ctx.startTime) / 1000;
-                if (completionTokens === 0) completionTokens = Math.ceil(ctx.fullRawText.length / 4);
-                if (promptTokens === 0) promptTokens = Math.ceil(summaryPrompt.length / 4);
-                let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
-                if (typeof updateGlobalStats === 'function') updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
-                const copyBtn = responseContainer.querySelector(".copy-summary-btn");
-                if (copyBtn) {
-                    copyBtn.addEventListener("click", () => {
-                        navigator.clipboard.writeText(ctx.fullRawText).then(() => {
-                            copyBtn.textContent = "✅ Copied!";
-                            setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
-                        });
+            const copyBtn = responseContainer.querySelector(".copy-summary-btn");
+            if (copyBtn) {
+                copyBtn.addEventListener("click", () => {
+                    navigator.clipboard.writeText(ctx.fullRawText).then(() => {
+                        copyBtn.textContent = "✅ Copied!";
+                        setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
                     });
-                }
+                });
             }
         });
 
@@ -1434,6 +1400,9 @@ Rules:
             let segments = [];
             let currentIdx = 0;
             const openRegex = /<\|?(?:think|thought|reasoning|thought_start)[^>]*>/gi;
+            // The "/" is optional because some models emit unslashed closers like
+            // <|thought_end|>. Side effect: a literal nested open tag inside a think
+            // section also terminates it — acceptable, models don't nest these.
             const closeRegex = /<\/?\|?(?:think|thought|reasoning|thought_end)[^>]*>/gi;
 
             while (true) {
@@ -1829,6 +1798,93 @@ Rules:
             return { prompt, stop: t.stop || [] };
         }
         // @wllama:end
+        // ========== Shared Streaming Driver ==========
+        // Wires up everything a streamed AI response needs — busy UI state, the
+        // throttled incremental render, live stats, abort handling, and final
+        // token/duration stats — around fetchAndStreamChat. Used by the main chat
+        // submit handler and the Summarize feature.
+        //   payload                request body for fetchAndStreamChat
+        //   outerEl                the .msg-content element (gets the blinking cursor)
+        //   bodyEl                 the .ai-response-body element rendered into
+        //   estimatePromptTokens   fallback () => count when the server sends no usage
+        //   onFinal(ctx, aborted)  commit the finished (or aborted) text to history
+        //   onFailure(error, ctx)  render a non-abort error into the message body
+        // Resolves with ctx ({aiReasoning, fullRawText, …}) once generation ended.
+        async function runStreamingResponse({ payload, outerEl, bodyEl, estimatePromptTokens, onFinal, onFailure }) {
+            inputField.disabled = true;
+            sendBtn.style.display = "none";
+            stopBtn.style.display = "flex";
+            isWaiting = true;
+            abortController = new AbortController();
+
+            const ctx = {
+                aiReasoning: "",
+                fullRawText: "",
+                startTime: Date.now(),
+                responseContainer: bodyEl
+            };
+            let promptTokens = 0;
+            let completionTokens = 0;
+
+            // Throttled render function (avoids re-parsing markdown 50x/sec)
+            const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
+            updateGlobalStats("...", "...", "...", "0.0");
+            document.getElementById('chatForm').classList.add('is-generating');
+            outerEl.classList.add('cursor');
+
+            function finishGeneration() {
+                throttledRender.cancel();
+                document.getElementById('chatForm').classList.remove('is-generating');
+                outerEl.classList.remove('cursor');
+                sendBtn.style.display = "flex";
+                stopBtn.style.display = "none";
+                inputField.disabled = false;
+                isWaiting = false;
+                inputField.focus();
+                const durationSec = (Date.now() - ctx.startTime) / 1000;
+                if (completionTokens === 0) completionTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
+                if (promptTokens === 0 && estimatePromptTokens) promptTokens = estimatePromptTokens();
+                const tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
+                updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
+                if (!userScrolledUp) {
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                }
+            }
+
+            await fetchAndStreamChat(payload, abortController.signal, {
+                onChunk: (reasoningChunk, contentChunk, pt, ct) => {
+                    if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
+                    if (contentChunk) ctx.fullRawText += contentChunk;
+                    promptTokens = pt;
+                    completionTokens = ct;
+                    throttledRender(() => {
+                        updateMessageUI(ctx, false);
+                        const currentDuration = (Date.now() - ctx.startTime) / 1000;
+                        const estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
+                        const currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
+                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
+                    });
+                },
+                onDone: (pt, ct) => {
+                    promptTokens = pt;
+                    completionTokens = ct;
+                    updateMessageUI(ctx, true);
+                    onFinal(ctx, false);
+                    finishGeneration();
+                },
+                onError: (error) => {
+                    if (error.name === 'AbortError') {
+                        updateMessageUI(ctx, true);
+                        onFinal(ctx, true);
+                    } else {
+                        onFailure(error, ctx);
+                    }
+                    finishGeneration();
+                }
+            });
+            return ctx;
+        }
+
         // ========== Stream Fetch Helper ==========
         async function fetchAndStreamChat(payload, signal, callbacks) {
             const { onChunk, onDone, onError } = callbacks;
@@ -1937,11 +1993,8 @@ Rules:
             // @wllama:end
             let promptTokens = 0;
             let completionTokens = 0;
-            let chatUrl = API_URL.trim().replace(/\/+$/, "");
-            if (!chatUrl.endsWith("/chat/completions")) {
-                chatUrl = chatUrl + "/chat/completions";
-            }
-            
+            const chatUrl = apiEndpoint(API_URL, "/chat/completions");
+
             try {
                 const response = await fetch(chatUrl, {
                     method: "POST",
@@ -1964,9 +2017,10 @@ Rules:
                 let buffer = "";
 
                 const processLine = (line) => {
-                    if (line.trim() === "" || !line.startsWith("data: ")) return;
-                    const dataStr = line.substring(6).trim();
-                    if (dataStr === "[DONE]") return;
+                    // SSE allows "data:" with or without a following space.
+                    if (!line.startsWith("data:")) return;
+                    const dataStr = line.slice(5).trim();
+                    if (dataStr === "" || dataStr === "[DONE]") return;
 
                     try {
                         const data = JSON.parse(dataStr);
@@ -2007,6 +2061,11 @@ Rules:
         // ========== State ==========
         let messages = [{"role": "system", "content": SYSTEM_PROMPT}];
         let isWaiting = false;
+        // Each chat message carries a unique uid, mirrored into its DOM wrapper's
+        // button closures, so Edit/Regenerate never have to infer positions from
+        // DOM node counts (which desync around error bubbles and summaries).
+        // uids are stripped from API payloads before sending.
+        let nextMsgUid = 1;
 
         // ========== Main Submit Handler ==========
         chatForm.addEventListener("submit", async function(e) {
@@ -2046,14 +2105,15 @@ Rules:
 
                 // When images are attached, send OpenAI multimodal content-array; otherwise
                 // keep the plain-string form for maximum backend compatibility.
+                const userUid = nextMsgUid++;
                 if (imageFiles.length > 0) {
                     const parts = [{ type: "text", text: payloadText }];
                     imageFiles.forEach(f => {
                         parts.push({ type: "image_url", image_url: { url: f.dataUrl } });
                     });
-                    messages.push({ "role": "user", "content": parts });
+                    messages.push({ "role": "user", "content": parts, uid: userUid });
                 } else {
-                    messages.push({ "role": "user", "content": payloadText });
+                    messages.push({ "role": "user", "content": payloadText, uid: userUid });
                 }
                 userScrolledUp = false; // Force scroll to bottom for new message
 
@@ -2087,7 +2147,7 @@ Rules:
                             ? { name: f.name, kind: "image", dataUrl: f.dataUrl }
                             : { name: f.name, kind: "text", content: f.content }
                     )) : []
-                });
+                }, userUid);
             }
             
             // UI update
@@ -2102,48 +2162,22 @@ Rules:
                     contextInput.style.height = "auto";
                 }
                 if (typeof attachContextBtn !== "undefined" && attachContextBtn) {
-                    attachContextBtn.style.color = "#6b7280";
+                    attachContextBtn.classList.remove("active");
                 }
                 if (typeof attachedFiles !== "undefined") {
                     attachedFiles = [];
                     if (typeof renderChips === "function") renderChips();
                 }
             }
-            sendBtn.style.display = "none";
-            stopBtn.style.display = "flex";
-            inputField.disabled = true;
-            isWaiting = true;
-            
-            abortController = new AbortController();
-
-            const responseContainerId = appendMessage("AI", "", "ai", "✨");
-            const responseContainer = document.getElementById(responseContainerId);
-            
+            const uid = nextMsgUid++;
+            const responseContainer = document.getElementById(appendMessage("AI", "", "ai", "✨", false, "", uid));
             // Prepare containers for reasoning and text
             responseContainer.innerHTML = `<div class="ai-response-body"></div>`;
-            
-            let ctx = {
-                aiReasoning: "",
-                fullRawText: "",
-                startTime: Date.now(),
-                responseContainer: responseContainer.querySelector('.ai-response-body')
-            };
-            
-            let promptTokens = 0;
-            let completionTokens = 0;
-            
-            // Throttled render function (avoids re-parsing markdown 50x/sec)
-            const throttledRender = createThrottle(CONSTANTS.THROTTLE_MS);
-
-            // Reset stats for new request
-            updateGlobalStats("...", "...", "...", "0.0");
-
-            document.getElementById('chatForm').classList.add('is-generating');
-            responseContainer.classList.add('cursor');
 
             const chatPayload = {
                 model: MODEL_NAME,
-                messages: messages.filter(m => !m.isSummary),
+                // Strip internal bookkeeping (uid/isSummary) — servers only see role/content.
+                messages: messages.filter(m => !m.isSummary).map(({ role, content }) => ({ role, content })),
                 temperature: TEMPERATURE,
                 stream: true,
                 stream_options: { include_usage: true }
@@ -2155,77 +2189,33 @@ Rules:
             if (FREQUENCY_PENALTY !== 0) chatPayload.frequency_penalty = FREQUENCY_PENALTY;
             if (SEED != null) chatPayload.seed = SEED;
 
-            await fetchAndStreamChat(chatPayload, abortController.signal, {
-                onChunk: (reasoningChunk, contentChunk, pt, ct) => {
-                    if (reasoningChunk) ctx.aiReasoning += reasoningChunk;
-                    if (contentChunk) ctx.fullRawText += contentChunk;
-                    promptTokens = pt;
-                    completionTokens = ct;
-                    throttledRender(() => {
-                        updateMessageUI(ctx, false);
-                        let currentDuration = (Date.now() - ctx.startTime) / 1000;
-                        let estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
-                        let currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
-                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
-                    });
-                },
-                onDone: (pt, ct) => {
-                    promptTokens = pt;
-                    completionTokens = ct;
-                    updateMessageUI(ctx, true);
-                    let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
-                    messages.push({"role": "assistant", "content": finalHistoryContent});
-                    finishGeneration();
-                },
-                onError: (error) => {
-                    if (error.name === 'AbortError') {
-                        updateMessageUI(ctx, true);
-                        let finalHistoryContent = buildFinalHistory(ctx.fullRawText, ctx.aiReasoning);
-                        messages.push({"role": "assistant", "content": finalHistoryContent});
-                    } else {
-                        const errMsg = error.message || "Unknown Error";
-                        responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
-                    }
-                    finishGeneration();
-                }
-            });
-
-            function finishGeneration() {
-                throttledRender.cancel();
-                document.getElementById('chatForm').classList.remove('is-generating');
-                responseContainer.classList.remove('cursor');
-                sendBtn.style.display = "flex";
-                stopBtn.style.display = "none";
-                inputField.disabled = false;
-                isWaiting = false;
-                inputField.focus(); 
-                
-                let endTime = Date.now();
-                let durationSec = (endTime - ctx.startTime) / 1000;
-                
-                if (completionTokens === 0 && messages.length > 0 && messages[messages.length-1].role === "assistant") {
-                    completionTokens = Math.ceil(messages[messages.length-1].content.length / 4);
-                }
-                if (promptTokens === 0) {
+            await runStreamingResponse({
+                payload: chatPayload,
+                outerEl: responseContainer,
+                bodyEl: responseContainer.querySelector('.ai-response-body'),
+                estimatePromptTokens: () => {
                     const promptMsgs = messages.length > 0 && messages[messages.length - 1].role === "assistant" ? messages.slice(0, -1) : messages;
                     // content may be a multimodal array; estimate from text parts only.
-                    let promptStr = promptMsgs.map(m => Array.isArray(m.content)
+                    const promptStr = promptMsgs.map(m => Array.isArray(m.content)
                         ? m.content.filter(p => p.type === "text").map(p => p.text).join(" ")
                         : m.content).join(" ");
-                    promptTokens = Math.ceil(promptStr.length / 4);
+                    return Math.ceil(promptStr.length / 4);
+                },
+                // Aborted responses keep their partial text in history, as before.
+                onFinal: (ctx) => {
+                    messages.push({"role": "assistant", "content": buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), uid});
+                },
+                onFailure: (error, ctx) => {
+                    const errMsg = error.message || "Unknown Error";
+                    ctx.responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
                 }
-                
-                let tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
-                updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
-                
-                if (!userScrolledUp) {
-                    chatbox.scrollTop = chatbox.scrollHeight; 
-                }
-            }
+            });
         });
 
         // ========== Append Message ==========
-        function appendMessage(sender, text, cssClass, emoji, isRawHtml = false, rawData = text) {
+        // msgUid ties this wrapper to its entry in `messages` (see nextMsgUid);
+        // Edit/Regenerate use it instead of counting DOM nodes.
+        function appendMessage(sender, text, cssClass, emoji, isRawHtml = false, rawData = text, msgUid = null) {
             const wrapper = document.createElement("div");
             wrapper.className = `msg-wrapper ${cssClass}`;
             
@@ -2275,7 +2265,7 @@ Rules:
                             
                             if (contextPane) {
                                 contextPane.style.display = "flex";
-                                if (attachBtn) attachBtn.style.color = "var(--primary)";
+                                if (attachBtn) attachBtn.classList.add("active");
                                 if (contextInput) contextInput.value = rawData.contextText || "";
                             }
                             if (rawData.files && rawData.files.length > 0) {
@@ -2301,9 +2291,11 @@ Rules:
                         sibling = next;
                     }
                     wrapper.remove();
-                    
-                    const remainingWrappers = document.querySelectorAll(".msg-wrapper:not(.summary)");
-                    messages = messages.slice(0, remainingWrappers.length + 1);
+
+                    // Truncate history at this message. uid-based: DOM node counts
+                    // desync from `messages` around error bubbles and summaries.
+                    const idx = messages.findIndex(m => m.uid === msgUid);
+                    if (idx > 0) messages = messages.slice(0, idx);
                 });
                 actionsDiv.appendChild(editBtn);
             } else if (cssClass === "ai") {
@@ -2315,7 +2307,10 @@ Rules:
                     const aiWrappers = document.querySelectorAll(".msg-wrapper.ai");
                     if (aiWrappers.length > 0 && aiWrappers[aiWrappers.length - 1] === wrapper) {
                         wrapper.remove();
-                        messages.pop(); // Remove the last AI message
+                        // Remove exactly this response's history entry — error bubbles
+                        // have none, and a later summary must never be popped instead.
+                        const idx = messages.findIndex(m => m.uid === msgUid);
+                        if (idx !== -1) messages.splice(idx, 1);
                         chatForm.dispatchEvent(new CustomEvent("submit", { cancelable: true, detail: { regenerate: true } }));
                     } else {
                         showToast("⚠️ Can only regenerate the latest response.");
