@@ -131,11 +131,11 @@
                 <div id="wllamaTemplateHint" style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Auto uses the model's embedded template when present, else infers from its architecture.</div>
 
                 <label for="settingWllamaCtx">Context Window (tokens)</label>
-                <input type="number" id="settingWllamaCtx" value="4096" min="0" step="512" style="margin-bottom: 4px; width: 100%;">
-                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Larger = more history but more memory/slower load. 0 = use the model's built-in default. Applied when the model is loaded.</div>
+                <input type="number" id="settingWllamaCtx" value="32768" min="0" step="512" style="margin-bottom: 4px; width: 100%;">
+                <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Larger = more history but more memory/slower load (the KV cache grows with it — if the model fails to load, lower this). 0 = use the model's built-in default. Applied when the model is loaded.</div>
 
                 <label for="settingWllamaMaxTokens">Max Output Tokens (per reply)</label>
-                <input type="number" id="settingWllamaMaxTokens" value="2048" min="1" step="128" style="margin-bottom: 4px; width: 100%;">
+                <input type="number" id="settingWllamaMaxTokens" value="4096" min="1" step="128" style="margin-bottom: 4px; width: 100%;">
                 <div style="font-size: 0.75rem; color: #999; margin-bottom: 8px;">Upper bound on tokens generated per reply. Applied immediately (no reload needed). Must fit within the context window.</div>
 
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">

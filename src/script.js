@@ -828,56 +828,77 @@ Rules:
                     wllamaInstance = null;
                 }
 
-                statusEl.textContent = "Status: Initializing Wllama...";
-                wllamaLog("log", "Initializing Wllama engine…");
-                wllamaInstance = new WllamaClass(
-                    { "default": engine.wasm },
-                    {
-                        // Route wllama's internal messages into the debug panel.
-                        logger: {
-                            debug: (...a) => wllamaLog("debug", "[core]", ...a),
-                            log:   (...a) => wllamaLog("log",   "[core]", ...a),
-                            warn:  (...a) => wllamaLog("warn",  "[core]", ...a),
-                            error: (...a) => wllamaLog("error", "[core]", ...a),
-                        },
-                        // Native llama.cpp logs (context/KV cache/backend init/timings) are
-                        // the noisiest, so only let them through when Debug verbosity is set at
-                        // load time (change the level and reload the model to toggle them).
-                        suppressNativeLog: wllamaVerbosity() < WLLAMA_LOG_RANK.debug,
-                    }
-                );
                 const useWebGpu = document.getElementById("wllamaWebGpuToggle").checked;
-                const loadOptions = useWebGpu ? {} : { n_gpu_layers: 0 };
                 // 0 (or blank) leaves n_ctx unset so wllama uses the model's trained context.
                 const nCtx = parseInt(document.getElementById("settingWllamaCtx").value, 10);
-                if (Number.isFinite(nCtx) && nCtx > 0) loadOptions.n_ctx = nCtx;
+                const requestedCtx = Number.isFinite(nCtx) && nCtx > 0 ? nCtx : null;
+                let attemptCtx = requestedCtx;
 
-                // Stream download/decode progress into the status line and debug panel.
-                loadOptions.progressCallback = ({ loaded, total }) => {
-                    const pct = total ? Math.round((loaded / total) * 100) : 0;
-                    statusEl.textContent = `Status: Loading Model (${label}) ${pct}%`;
+                // The KV cache grows linearly with n_ctx and easily reaches gigabytes,
+                // so a generous context (default 32768) can exceed the WASM heap /
+                // available memory — the engine then dies with a cryptic "(ABORT)".
+                // Instead of failing, retry with a halved context until it fits (floor 4096).
+                while (true) {
+                    statusEl.textContent = "Status: Initializing Wllama...";
+                    wllamaLog("log", "Initializing Wllama engine…");
+                    wllamaInstance = new WllamaClass(
+                        { "default": engine.wasm },
+                        {
+                            // Route wllama's internal messages into the debug panel.
+                            logger: {
+                                debug: (...a) => wllamaLog("debug", "[core]", ...a),
+                                log:   (...a) => wllamaLog("log",   "[core]", ...a),
+                                warn:  (...a) => wllamaLog("warn",  "[core]", ...a),
+                                error: (...a) => wllamaLog("error", "[core]", ...a),
+                            },
+                            // Native llama.cpp logs (context/KV cache/backend init/timings) are
+                            // the noisiest, so only let them through when Debug verbosity is set at
+                            // load time (change the level and reload the model to toggle them).
+                            suppressNativeLog: wllamaVerbosity() < WLLAMA_LOG_RANK.debug,
+                        }
+                    );
+                    const loadOptions = useWebGpu ? {} : { n_gpu_layers: 0 };
+                    if (attemptCtx) loadOptions.n_ctx = attemptCtx;
+
+                    // Stream download/decode progress into the status line and debug panel.
+                    loadOptions.progressCallback = ({ loaded, total }) => {
+                        const pct = total ? Math.round((loaded / total) * 100) : 0;
+                        statusEl.textContent = `Status: Loading Model (${label}) ${pct}%`;
+                        pbContainer.style.display = "block";
+                        if (pct > 0 && pct < 100) {
+                            pbBar.className = "";
+                            pbBar.style.width = pct + "%";
+                            pbBar.style.backgroundColor = "var(--primary)";
+                            pbBar.style.transition = "width 0.1s linear";
+                        } else if (pct === 100) {
+                            // After loading instantly, we are usually blocking on decoding/initializing.
+                            pbBar.className = "pb-indeterminate";
+                            pbBar.style.width = "50%";
+                        }
+                        wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
+                    };
+                    wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
+
+                    statusEl.textContent = `Status: Loading Model (${label})...`;
                     pbContainer.style.display = "block";
-                    if (pct > 0 && pct < 100) {
-                        pbBar.className = "";
-                        pbBar.style.width = pct + "%";
-                        pbBar.style.backgroundColor = "var(--primary)";
-                        pbBar.style.transition = "width 0.1s linear";
-                    } else if (pct === 100) {
-                        // After loading instantly, we are usually blocking on decoding/initializing.
-                        pbBar.className = "pb-indeterminate";
-                        pbBar.style.width = "50%";
+                    pbBar.className = "pb-indeterminate";
+                    pbBar.style.width = "50%";
+                    const loadStart = performance.now();
+                    try {
+                        await wllamaInstance.loadModel(blobs, loadOptions);
+                        wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
+                        break;
+                    } catch (loadErr) {
+                        try { await wllamaInstance.exit(); }
+                        catch (exitErr) { wllamaLog("debug", "Cleanup after failed load:", exitErr.message || exitErr); }
+                        wllamaInstance = null;
+                        if (!attemptCtx || attemptCtx <= 4096) throw loadErr;
+                        const halved = Math.max(4096, Math.floor(attemptCtx / 2));
+                        wllamaLog("warn", `Load with n_ctx=${attemptCtx} failed (${loadErr.message || loadErr}) — likely out of memory, retrying with n_ctx=${halved}. Lower the Context Window setting to skip these retries.`);
+                        statusEl.textContent = `Status: Not enough memory for a ${attemptCtx}-token context — retrying with ${halved}…`;
+                        attemptCtx = halved;
                     }
-                    wllamaLog("debug", `load progress ${pct}% (${loaded}/${total} bytes)`);
-                };
-                wllamaLog("log", `Load config → WebGPU=${useWebGpu}, n_ctx=${loadOptions.n_ctx ?? "model default"}, n_gpu_layers=${loadOptions.n_gpu_layers ?? "auto (all)"}`);
-
-                statusEl.textContent = `Status: Loading Model (${label})...`;
-                pbContainer.style.display = "block";
-                pbBar.className = "pb-indeterminate";
-                pbBar.style.width = "50%";
-                const loadStart = performance.now();
-                await wllamaInstance.loadModel(blobs, loadOptions);
-                wllamaLog("log", `Model loaded in ${((performance.now() - loadStart) / 1000).toFixed(1)}s`);
+                }
 
                 // Inspect metadata so Auto mode can prefer the embedded template and,
                 // failing that, guess a sane format from the model architecture.
@@ -896,7 +917,8 @@ Rules:
                 const detail = wllamaHasEmbeddedTemplate
                     ? "embedded template"
                     : `auto: ${wllamaDetectedTemplate}`;
-                statusEl.textContent = `Status: Ready 🟢 (${detail})`;
+                const ctxNote = attemptCtx !== requestedCtx ? `, context reduced to ${attemptCtx}` : "";
+                statusEl.textContent = `Status: Ready 🟢 (${detail}${ctxNote})`;
                 pbContainer.style.display = "none";
                 // A loaded model means in-browser mode: commit it and refresh the
                 // header so the overlay shows the GGUF instead of the remote API.
@@ -1859,9 +1881,9 @@ Rules:
                     // detected/manual format for template-less GGUFs.
                     const choice = document.getElementById("settingWllamaTemplate")?.value || "auto";
                     const useEmbedded = choice === "auto" && wllamaHasEmbeddedTemplate;
-                    // Output-length cap read live from settings (0/blank/invalid -> default 2048).
+                    // Output-length cap read live from settings (0/blank/invalid -> default 4096).
                     const parsedMaxTokens = parseInt(document.getElementById("settingWllamaMaxTokens")?.value, 10);
-                    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 2048;
+                    const maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0 ? parsedMaxTokens : 4096;
 
                     if (useEmbedded) {
                         wllamaLog("log", `Generating via embedded chat template (temp=${temperature}, max_tokens=${maxTokens}, messages=${wllamaMessages.length})`);
