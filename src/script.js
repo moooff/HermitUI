@@ -715,6 +715,7 @@ Rules:
             }
 
             updateOverlay();
+            updateMainCloudWarning();
             settingsModal.classList.remove("active");
         });
 
@@ -897,7 +898,20 @@ Rules:
                     : `auto: ${wllamaDetectedTemplate}`;
                 statusEl.textContent = `Status: Ready 🟢 (${detail})`;
                 pbContainer.style.display = "none";
+                // A loaded model means in-browser mode: commit it and refresh the
+                // header so the overlay shows the GGUF instead of the remote API.
+                backendMode = "wllama";
+                wllamaModelLabel = label;
+                updateOverlay();
+                updateMainCloudWarning();
+                if (wllamaHashLoadPending) {
+                    // Banner-initiated load: drop the user straight into the chat.
+                    wllamaHashLoadPending = false;
+                    settingsModal.classList.remove("active");
+                    showToast(`🟢 ${label} loaded — start chatting!`);
+                }
             } catch (err) {
+                wllamaHashLoadPending = false; // keep the modal open so the error is visible
                 wllamaLog("error", "Load failed:", err.message || err);
                 let msg = err.message || String(err);
                 // wllama doesn't check its heap allocations; an oversized model surfaces
@@ -1005,6 +1019,7 @@ Rules:
                 wllamaLog("log", `Downloaded ${fmtMB(blob.size)} in ${((performance.now() - downloadStart) / 1000).toFixed(1)}s`);
                 await loadWllamaModel([blob], label);
             } catch (err) {
+                wllamaHashLoadPending = false; // keep the modal open so the error is visible
                 wllamaLog("error", "Download failed:", err.message || err);
                 const hint = err instanceof TypeError
                     ? " (network/CORS blocked — make sure it's a direct /resolve/ link to a public file)"
@@ -1041,6 +1056,7 @@ Rules:
         document.getElementById("wllamaHashLoadBtn").addEventListener("click", () => {
             document.getElementById("wllamaHashBanner").style.display = "none";
             backendMode = "wllama";
+            wllamaHashLoadPending = true; // auto-close settings once the model is ready
             // Open settings so the existing status line and progress bar are
             // visible, then reuse the normal URL-load path.
             document.getElementById("settingsBtn").click();
@@ -1609,6 +1625,23 @@ Rules:
         let wllamaInstance = null;
         let wllamaHasEmbeddedTemplate = false; // GGUF ships tokenizer.chat_template
         let wllamaDetectedTemplate = "zephyr"; // auto-detected fallback format
+        let wllamaModelLabel = null; // filename of the currently loaded GGUF
+        let wllamaHashLoadPending = false; // load came from the #gguf confirmation banner
+
+        // In wllama mode the header overlay and the cloud-provider warning would
+        // describe the (unused) remote API — misleading when inference is fully
+        // in-browser. Wrap both; the stripped builds keep the originals untouched.
+        const apiUpdateOverlay = updateOverlay;
+        updateOverlay = function () {
+            if (backendMode !== "wllama") { apiUpdateOverlay(); return; }
+            document.getElementById("overlayModel").textContent = wllamaModelLabel || "no model loaded";
+            document.getElementById("overlayUrl").textContent = "in-browser (wllama)";
+        };
+        const apiUpdateMainCloudWarning = updateMainCloudWarning;
+        updateMainCloudWarning = function () {
+            if (backendMode !== "wllama") { apiUpdateMainCloudWarning(); return; }
+            document.getElementById("mainScreenCloudWarning").style.display = "none";
+        };
 
         // The dedicated wllama build embeds the engine (gzip + base64, injected by
         // build.py as window.__WLLAMA_INLINE__) so model loading needs zero network
