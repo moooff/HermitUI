@@ -15,10 +15,12 @@ MANIFEST_PATH = "libs/.urls.json"
 REFRESH = "--refresh" in sys.argv
 
 URLS = {
-    "marked.js": "https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js",
-    "dompurify.js": "https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js",
-    "highlight.css": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css",
-    "highlight.js": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js",
+    # marked ships no pre-minified UMD since v13; the raw lib/marked.umd.js is the
+    # only static (SRI-safe) browser build in the package.
+    "marked.js": "https://cdn.jsdelivr.net/npm/marked@18.0.6/lib/marked.umd.js",
+    "dompurify.js": "https://cdn.jsdelivr.net/npm/dompurify@3.4.12/dist/purify.min.js",
+    "highlight.css": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css",
+    "highlight.js": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js",
     "katex.js": "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js",
     "inter.css": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 }
@@ -164,8 +166,17 @@ def build():
     mermaid_raw = fetch_cached(m.group(1), "libs/mermaid.js")
     mermaid_b64 = base64.b64encode(gzip.compress(mermaid_raw, 9)).decode("utf-8")
 
+    # A literal "</script" inside the app JS would terminate the inline <script>
+    # block early in every single-file output. Escape it the same way as the
+    # third-party libraries below ("<\/script" is identical JS inside string
+    # literals). CSS has no equivalent escape, so a "</style" must fail the build.
+    local_js_inline = re.sub(r'</script', r'<\\/script', local_js, flags=re.IGNORECASE)
+    if re.search(r'</style', local_css, re.IGNORECASE):
+        print("❌ src/style.css contains a literal '</style' — it would break the inlined <style> block.")
+        sys.exit(1)
+
     html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
-    html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js}\n    </script>')
+    html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js_inline}\n    </script>')
 
     # Inline favicon into the template
     try:
@@ -206,29 +217,32 @@ def build():
     # Single source of truth per asset: each CDN tag's regex lives once and drives both
     # the local (link to ../libs/) and standalone (inline content) rewrites. The inline
     # replacements are callables so their text isn't treated as regex backreferences.
+    # The [^>]* after the closing quote tolerates extra attributes on the CDN tags
+    # (integrity/crossorigin SRI hashes); the local/standalone rewrites replace the
+    # whole tag, so SRI attributes never leak into the generated outputs.
     ASSETS = [
         ("marked",
-         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\']\s*></script>',
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/marked@[^"\']+["\'][^>]*></script>',
          '<script src="../libs/marked.js"></script>',
          lambda m: f'<script>{marked_script}</script>'),
         ("dompurify",
-         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\']\s*></script>',
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+["\'][^>]*></script>',
          '<script src="../libs/dompurify.js"></script>',
          lambda m: f'<script>{dompurify_script}</script>'),
         ("highlight.css",
-         r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*>',
+         r'<link\s+rel=["\']stylesheet["\']\s+href=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\'][^>]*>',
          '<link rel="stylesheet" href="../libs/highlight.css">',
          lambda m: f'<style>{hl_css}</style>'),
         ("highlight.js",
-         r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\']\s*></script>',
+         r'<script\s+src=["\']https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+["\'][^>]*></script>',
          '<script src="../libs/highlight.js"></script>',
          lambda m: f'<script>{hl_script}</script>'),
         ("katex",
-         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/katex@[^"\']+["\']\s*></script>',
+         r'<script\s+src=["\']https://cdn\.jsdelivr\.net/npm/katex@[^"\']+["\'][^>]*></script>',
          '<script src="../libs/katex.js"></script>',
          lambda m: f'<script>{katex_script}</script>'),
         ("mermaid",
-         r'<script\s+defer\s+src=["\']https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+["\']\s*></script>',
+         r'<script\s+defer\s+src=["\']https://cdn\.jsdelivr\.net/npm/mermaid@[^"\']+["\'][^>]*></script>',
          '<script defer src="../libs/mermaid.js"></script>',
          lambda m: f'<script>window.__MERMAID_INLINE__ = "{mermaid_b64}";</script>'),
         ("inter",

@@ -126,6 +126,42 @@
             return mermaidLoadPromise;
         }
 
+        // Applied before every render pass so diagrams follow the current theme.
+        // htmlLabels stays off: labels render as plain SVG text, so no
+        // <foreignObject> for DOMPurify to strip below.
+        function mermaidThemeInit(mermaid) {
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: 'strict',
+                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
+                htmlLabels: false,
+                flowchart: { htmlLabels: false }
+            });
+        }
+
+        // Render one diagram source to sanitized SVG markup; null when invalid.
+        async function renderMermaidSvg(mermaid, source) {
+            const renderId = `hermit-mermaid-${++mermaidSeq}`;
+            try {
+                const { svg } = await mermaid.render(renderId, source);
+                // Mermaid (strict mode) sanitizes labels itself; this outer pass
+                // enforces the project rule that all AI-derived HTML goes through
+                // DOMPurify. <style> must be re-allowed — mermaid themes its SVG
+                // with an embedded, self-generated stylesheet.
+                const probe = document.createElement('div');
+                probe.innerHTML = DOMPurify.sanitize(svg, {
+                    USE_PROFILES: { svg: true, svgFilters: true },
+                    ADD_TAGS: ['style']
+                });
+                return probe.querySelector('svg') ? probe.innerHTML : null;
+            } catch (e) {
+                // Mermaid can leave an error placeholder element behind on failure.
+                const stray = document.getElementById('d' + renderId);
+                if (stray) stray.remove();
+                return null;
+            }
+        }
+
         // Replace finished ```mermaid fences with rendered diagrams. Runs only on
         // final message renders (streaming keeps showing the code block). Any invalid
         // diagram source simply stays a code block.
@@ -138,39 +174,37 @@
             } catch (e) {
                 return;
             }
-            // Re-initialized per pass so new diagrams follow the current theme.
-            // htmlLabels stays off: labels render as plain SVG text, so no
-            // <foreignObject> for DOMPurify to strip below.
-            mermaid.initialize({
-                startOnLoad: false,
-                securityLevel: 'strict',
-                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
-                htmlLabels: false,
-                flowchart: { htmlLabels: false }
-            });
+            mermaidThemeInit(mermaid);
             for (const code of blocks) {
                 const pre = code.closest('pre');
                 if (!pre || !pre.parentNode) continue;
-                const renderId = `hermit-mermaid-${++mermaidSeq}`;
-                try {
-                    const { svg } = await mermaid.render(renderId, code.textContent);
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'mermaid-diagram';
-                    // Mermaid (strict mode) sanitizes labels itself; this outer pass
-                    // enforces the project rule that all AI-derived HTML goes through
-                    // DOMPurify. <style> must be re-allowed — mermaid themes its SVG
-                    // with an embedded, self-generated stylesheet.
-                    wrapper.innerHTML = DOMPurify.sanitize(svg, {
-                        USE_PROFILES: { svg: true, svgFilters: true },
-                        ADD_TAGS: ['style']
-                    });
-                    if (!wrapper.querySelector('svg')) continue;
-                    pre.replaceWith(wrapper);
-                } catch (e) {
-                    // Mermaid can leave an error placeholder element behind on failure.
-                    const stray = document.getElementById('d' + renderId);
-                    if (stray) stray.remove();
-                }
+                const source = code.textContent;
+                const clean = await renderMermaidSvg(mermaid, source);
+                if (clean === null) continue;
+                const wrapper = document.createElement('div');
+                wrapper.className = 'mermaid-diagram';
+                wrapper.dataset.mermaidSource = source; // kept so a theme toggle can re-render
+                wrapper.innerHTML = clean;
+                pre.replaceWith(wrapper);
+            }
+        }
+
+        // Re-render already-displayed diagrams after a theme toggle (they are
+        // otherwise stuck with the palette they were first rendered in). The
+        // early length check keeps startup from ever inflating the engine.
+        async function rethemeMermaidDiagrams() {
+            const diagrams = document.querySelectorAll('.mermaid-diagram[data-mermaid-source]');
+            if (diagrams.length === 0) return;
+            let mermaid;
+            try {
+                mermaid = await loadMermaid();
+            } catch (e) {
+                return;
+            }
+            mermaidThemeInit(mermaid);
+            for (const wrapper of diagrams) {
+                const clean = await renderMermaidSvg(mermaid, wrapper.dataset.mermaidSource);
+                if (clean !== null) wrapper.innerHTML = clean; // on failure keep the old SVG
             }
         }
 
@@ -318,7 +352,7 @@ Rules:
         // Domains whose use means chat data leaves the local machine. Matched as
         // hostname suffixes (never substrings, so "box.ai" can't match "x.ai");
         // googleapis.com covers Gemini's OpenAI-compatible endpoint.
-        const CLOUD_PROVIDERS = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "googleapis.com", "cloudflare.com"];
+        const CLOUD_PROVIDERS = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "googleapis.com", "cloudflare.com", "mistral.ai", "perplexity.ai", "fireworks.ai", "cohere.com", "openai.azure.com"];
         function detectCloudProvider(rawUrl) {
             let host;
             try { host = new URL(rawUrl).hostname; }
@@ -368,6 +402,9 @@ Rules:
         const contextInput = document.getElementById("context-input");
         
         let attachedFiles = [];
+        // FileReader/decode work is async; sending while reads are in flight would
+        // silently drop those attachments from the payload, so submit waits on this.
+        let pendingFileReads = 0;
         const fileUpload = document.getElementById("file-upload");
         const addFileBtn = document.getElementById("add-file-btn");
         const fileChips = document.getElementById("file-chips");
@@ -463,10 +500,12 @@ Rules:
                         showToast(`Image ${file.name} is too large (>10MB).`);
                         continue;
                     }
+                    pendingFileReads++;
                     loadImageDownscaled(file).then(dataUrl => {
                         attachedFiles.push({ name: file.name, kind: "image", dataUrl });
                         renderChips();
-                    }).catch(() => showToast(`Could not read image ${file.name}.`));
+                    }).catch(() => showToast(`Could not read image ${file.name}.`))
+                      .finally(() => { pendingFileReads--; });
                     continue;
                 }
                 if (file.type.startsWith("image/")) {
@@ -482,9 +521,15 @@ Rules:
                     continue;
                 }
                 const reader = new FileReader();
+                pendingFileReads++;
                 reader.onload = (e) => {
+                    pendingFileReads--;
                     attachedFiles.push({ name: file.name, kind: "text", content: e.target.result });
                     renderChips();
+                };
+                reader.onerror = () => {
+                    pendingFileReads--;
+                    showToast(`Could not read file ${file.name}.`);
                 };
                 reader.readAsText(file);
             }
@@ -536,7 +581,8 @@ Rules:
             inputField.style.height = Math.min(inputField.scrollHeight, CONSTANTS.MAX_TEXTAREA_HEIGHT_PX) + "px";
         });
         inputField.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            // isComposing: Enter that confirms an IME candidate (CJK input) must not send.
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
                 chatForm.dispatchEvent(new Event("submit", { cancelable: true }));
             }
@@ -569,11 +615,13 @@ Rules:
             if (e.key === "Escape") {
                 const openModal = document.querySelector(".modal-overlay.active");
                 if (openModal) {
-                    openModal.classList.remove("active");
+                    closeModalEl(openModal);
                     return;
                 }
             }
-            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+            // Ctrl+Shift+O for New Chat: Ctrl+Shift+N is reserved by Chromium
+            // (incognito window) and can never reach the page there.
+            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
                 e.preventDefault();
                 document.getElementById("clearBtn").click();
             } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
@@ -605,16 +653,51 @@ Rules:
             document.getElementById("stat-completion-est").style.display = isEst ? "inline" : "none";
         }
 
+        // ========== Modal Open/Close (focus-managed) ==========
+        // Basic dialog behavior for keyboard/screen-reader users: focus moves into
+        // the dialog on open and back to the opener on close; Tab cycles inside
+        // while open. The overlays carry role="dialog" / aria-modal in the HTML.
+        let modalReturnFocusEl = null;
+        function openModalEl(modal) {
+            modalReturnFocusEl = document.activeElement;
+            modal.classList.add("active");
+            const first = modal.querySelector("input, select, textarea, button");
+            if (first) first.focus();
+        }
+        function closeModalEl(modal) {
+            modal.classList.remove("active");
+            if (modalReturnFocusEl && document.contains(modalReturnFocusEl)) modalReturnFocusEl.focus();
+            modalReturnFocusEl = null;
+        }
+        function trapModalFocus(modal) {
+            modal.addEventListener("keydown", (e) => {
+                if (e.key !== "Tab") return;
+                const focusables = Array.from(modal.querySelectorAll("button, input, select, textarea, a[href]"))
+                    .filter(el => !el.disabled && el.offsetParent !== null);
+                if (focusables.length === 0) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            });
+        }
+
         // ========== About Modal ==========
         const aboutModal = document.getElementById("aboutModal");
+        trapModalFocus(aboutModal);
         document.getElementById("aboutBtn").addEventListener("click", () => {
-            aboutModal.classList.add("active");
+            openModalEl(aboutModal);
         });
         document.getElementById("aboutCloseBtn").addEventListener("click", () => {
-            aboutModal.classList.remove("active");
+            closeModalEl(aboutModal);
         });
         aboutModal.addEventListener("click", (e) => {
-            if (e.target === aboutModal) aboutModal.classList.remove("active");
+            if (e.target === aboutModal) closeModalEl(aboutModal);
         });
 
         // ========== Settings Modal ==========
@@ -660,13 +743,14 @@ Rules:
             document.getElementById("settingBackendMode").value = backendMode;
             document.getElementById("settingBackendMode").dispatchEvent(new Event("change"));
             // @wllama:end
-            settingsModal.classList.add("active");
+            openModalEl(settingsModal);
         });
+        trapModalFocus(settingsModal);
         document.getElementById("settingsCancel").addEventListener("click", () => {
-            settingsModal.classList.remove("active");
+            closeModalEl(settingsModal);
         });
         settingsModal.addEventListener("click", (e) => {
-            if (e.target === settingsModal) settingsModal.classList.remove("active");
+            if (e.target === settingsModal) closeModalEl(settingsModal);
         });
         document.getElementById("settingsSave").addEventListener("click", () => {
             // @wllama:start
@@ -726,7 +810,7 @@ Rules:
 
             updateOverlay();
             updateMainCloudWarning();
-            settingsModal.classList.remove("active");
+            closeModalEl(settingsModal);
         });
 
         // @wllama:start
@@ -939,7 +1023,7 @@ Rules:
                 if (wllamaHashLoadPending) {
                     // Banner-initiated load: drop the user straight into the chat.
                     wllamaHashLoadPending = false;
-                    settingsModal.classList.remove("active");
+                    closeModalEl(settingsModal);
                     showToast(`🟢 ${label} loaded — start chatting!`);
                 }
             } catch (err) {
@@ -1323,7 +1407,9 @@ Rules:
                     }
                 },
                 onFailure: (error, ctx) => {
-                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
+                    // escapeHtml (not sanitize): angle-bracketed text in server errors
+                    // must display literally instead of being stripped.
+                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`;
                 }
             });
 
@@ -1815,6 +1901,9 @@ Rules:
             sendBtn.style.display = "none";
             stopBtn.style.display = "flex";
             isWaiting = true;
+            // Streaming rewrites message HTML dozens of times per second; aria-busy
+            // keeps the role="log" chatbox from announcing every partial re-render.
+            chatbox.setAttribute("aria-busy", "true");
             abortController = new AbortController();
 
             const ctx = {
@@ -1840,6 +1929,7 @@ Rules:
                 stopBtn.style.display = "none";
                 inputField.disabled = false;
                 isWaiting = false;
+                chatbox.removeAttribute("aria-busy");
                 inputField.focus();
                 const durationSec = (Date.now() - ctx.startTime) / 1000;
                 if (completionTokens === 0) completionTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
@@ -2070,10 +2160,14 @@ Rules:
         // ========== Main Submit Handler ==========
         chatForm.addEventListener("submit", async function(e) {
             e.preventDefault();
-            if (isWaiting) return; 
-            
+            if (isWaiting) return;
+
             const text = inputField.value.trim();
             const isRegenerate = e.detail && e.detail.regenerate;
+            if (!isRegenerate && pendingFileReads > 0) {
+                showToast("⏳ Attachments are still loading — try again in a moment.");
+                return;
+            }
             
             const contextPane = document.getElementById("context-pane");
             const contextInput = document.getElementById("context-input");
@@ -2203,11 +2297,21 @@ Rules:
                 },
                 // Aborted responses keep their partial text in history, as before.
                 onFinal: (ctx) => {
+                    // Nothing arrived (aborted before the first token, or an empty
+                    // response): pushing an empty assistant turn breaks some backends
+                    // and templates — drop the empty bubble instead.
+                    if (!ctx.fullRawText && !ctx.aiReasoning) {
+                        const wrapper = ctx.responseContainer.closest(".msg-wrapper");
+                        if (wrapper) wrapper.remove();
+                        return;
+                    }
                     messages.push({"role": "assistant", "content": buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), uid});
                 },
                 onFailure: (error, ctx) => {
                     const errMsg = error.message || "Unknown Error";
-                    ctx.responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
+                    // escapeHtml (not sanitize): angle-bracketed text in server errors
+                    // must display literally instead of being stripped.
+                    ctx.responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${escapeHtml(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
                 }
             });
         });
@@ -2343,6 +2447,7 @@ Rules:
                 document.documentElement.removeAttribute("data-theme");
                 themeToggleBtn.textContent = "🌙";
             }
+            rethemeMermaidDiagrams(); // no-op (and no engine load) when no diagrams exist
         }
         
         // Initial application

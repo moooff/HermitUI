@@ -6,12 +6,17 @@
     <title>HermitUI - Local AI Chat</title>
     <meta name="description" content="A modern, local AI chat interface with streaming, syntax highlighting, and thinking model support.">
     <link rel="icon" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0ODAgNDgwIj4KICA8cGF0aCBvcGFjaXR5PSIxLjAwMDAwMCIgZD0iTSAxMTQuMjgyIDMzMy42NzkgQyAxMTkuODQ1IDM0MS42MzMgMTI0Ljc3MyAzNTAuMTM0IDEzMS4wODQgMzU3LjQ0MyBDIDE1My43ODIgMzgzLjcyOSAxODIuMzkzIDQwMC4wMjQgMjE2LjY3IDQwNi4xNDEgQyAyMjAuMDI1IDQwNi43NCAyMjMuNDMyIDQwNy4wNDkgMjI3LjE3OCA0MDcuNTQgQyAyMjcuMTc4IDQxMi41MDIgMjI3LjE3OCA0MTcuMDQ2IDIyNy4xNzggNDIyLjQ3NiBDIDIyMS44NDQgNDIxLjgxOSAyMTYuODQ4IDQyMS40NTMgMjExLjk0OCA0MjAuNTYxIEMgMTczLjE0OSA0MTMuNTAxIDE0MS44MjMgMzkzLjgxMiAxMTYuNjc2IDM2My44MiBDIDk2LjA2OSAzMzkuMjQzIDgzLjkyMiAzMTAuODE0IDc4Ljc1IDI3OS4zMjMgQyA3Ny43MDEgMjcyLjkzNCA3Ny4zMzcgMjY2LjQxOSA3Ni45NDMgMjU5Ljk0NCBDIDc2Ljc4IDI1Ny4yNjYgNzUuOTM1IDI1NS41MjEgNzMuNjkgMjUzLjkyNSBDIDU0LjE3OCAyNDAuMDY0IDQ1LjU5IDIyMC40ODUgNDQuMzg1IDE5Ny4xNDcgQyA0NC4yNTkgMTk0LjcxOCA0NC4zMjcgMTkyLjI2OCA0NC40OCAxODkuODM5IEMgNDQuNjIxIDE4Ny42MTQgNDMuODE1IDE4Ni4wNzcgNDIuMTMgMTg0LjU4NCBDIDMxLjEzNSAxNzQuODQ2IDI2LjEyIDE2Mi4zNDUgMjUuOTQxIDE0Ny44NzIgQyAyNS44OTIgMTQzLjk3MyAyNC43NTMgMTQxLjEzMSAyMi4xODggMTM4LjEyNiBDIDE1LjE2NSAxMjkuODk5IDEwLjczNCAxMjAuNDY4IDExLjAxOCAxMDkuMjg0IEMgMTEuMjQ3IDEwMC4zMDMgMTUuNTM5IDkzLjgyNiAyMy4yNjIgODkuNjY1IEMgMzEuMTEzIDg1LjQzNSAzOS41ODkgODQuOTg4IDQ4LjE0MiA4Ni44MjIgQyA1Mi44NDEgODcuODI5IDU2Ljc2OCA4Ny43MTEgNjEuMjMxIDg0Ljk4MSBDIDc0LjAxNyA3Ny4xNjEgODcuNzE5IDc0Ljk3NCAxMDEuOTM1IDgxLjIxNCBDIDEwNC41NTkgODIuMzY1IDEwNi41MzQgODEuNzk2IDEwOC43MjUgODAuNDE4IEMgMTIwLjc3NSA3Mi44NDEgMTMzLjcyNiA2Ny45MDYgMTQ4LjA4NSA2Ny4xMTIgQyAxNTkuNjMgNjYuNDczIDE3MC44NTcgNjcuOTEyIDE4MS4xNzIgNzMuMjk0IEMgMTg0LjU0NCA3NS4wNTQgMTg3LjAyNCA3NC43NzMgMTkwLjIxMSA3My4zODMgQyAyMTQuMTMgNjIuOTQ5IDIzOS4yMDMgNTcuMTg1IDI2NS4yNjggNTcuMTkzIEMgMzA5LjMwNiA1Ny4yMDggMzQ4LjkxNSA3MS4wNjQgMzg0LjUxIDk2LjkxMSBDIDQxNi40MzIgMTIwLjA4OSA0MzkuNDQ5IDE1MC4wOTMgNDU0LjMwMSAxODYuNTA2IEMgNDU1LjExMSAxODguNDk0IDQ1NS42MzggMTkwLjU5NyA0NTYuNjMzIDE5My42OTYgQyA0NTEuNTY0IDE5My43MTggNDQ3LjM5NSAxOTMuNzcyIDQ0My4yMjggMTkzLjc0MSBDIDQ0MC42MTIgMTkzLjcyMSA0NDAuMTU1IDE5MS40NzMgNDM5LjI3NSAxODkuNjkxIEMgNDM1Ljc3MyAxODIuNjAxIDQzMi42MDYgMTc1LjMyMiA0MjguNzExIDE2OC40NTUgQyA0MTEuMzY2IDEzNy44NzMgMzg3LjAyNCAxMTQuMjYgMzU2LjU5NCA5Ni43OTYgQyAzMzUuNTU1IDg0LjcyMSAzMTMuMDA1IDc3LjAxNSAyODguOTk2IDczLjgxMiBDIDI1OC4zMzcgNjkuNzIxIDIyOC43MDEgNzQuMDY4IDIwMC4xMDQgODUuNjQ1IEMgMTc1LjgwMSA5NS40ODMgMTU0LjgzNiAxMTAuMjYzIDEzNy4yMjkgMTI5LjYwNiBDIDExNC4zOTcgMTU0LjY4OSA5OS42NTYgMTgzLjk2MSA5NC4yMzggMjE3LjUyMiBDIDkxLjE0MSAyMzYuNzA4IDkxLjM4OCAyNTUuOTkzIDk2LjgwOSAyNzQuODY4IEMgMTAzLjM3NCAyOTcuNzI0IDExNi43MDMgMzE2LjAwNSAxMzUuNTM0IDMzMC4yOTMgQyAxNTQuMDk5IDM0NC4zNzkgMTc1LjE2NSAzNTEuODYgMTk4LjQ1NiAzNTEuMzM1IEMgMjMxLjM2OSAzNTAuNTk0IDI1Ni43NTQgMzM2LjQyOCAyNzEuNTU3IDMwNi4zMDcgQyAyODEuOTQ3IDI4NS4xNjUgMjgyLjUzNiAyNjMuMjM2IDI3My4wNDQgMjQxLjQ5MiBDIDI2MS42NTUgMjE1LjQwMSAyMzMuMDg2IDIwMC41MjQgMjA2LjY0NSAyMDcuNzUzIEMgMTg4LjA3IDIxMi44MzEgMTc1LjE2IDIyNC40ODkgMTcwLjM1OCAyNDMuNTY0IEMgMTY2LjcxNSAyNTguMDM0IDE2OC44MDUgMjcxLjgxNSAxNzguMjc4IDI4My44MzkgQyAxOTAuMzE0IDI5OS4xMTggMjExLjkxMiAzMDIuMjQzIDIyNi42NDggMjkxLjAwMyBDIDIzNS4wOTYgMjg0LjU2IDIzOS41MzggMjcxLjY5NyAyMzYuNjg0IDI2MS41OSBDIDIzNi4xMzkgMjU5LjY2IDIzNS4zNDMgMjU3LjcyMSAyMzQuMjcgMjU2LjAzNiBDIDIzMS4yMjggMjUxLjI2IDIyNi45MzIgMjQ4LjU5NiAyMjEuMDY5IDI0OC43OTYgQyAyMTUuMjU4IDI0OC45OTQgMjExLjg0NCAyNTIuNTExIDIwOS4zMjIgMjU3LjE5OCBDIDIwOC4zNzIgMjU4Ljk2NCAyMDcuNzc2IDI2MC45MjEgMjA2LjkyMSAyNjMuMDMxIEMgMjAyLjMyNyAyNjMuMDMxIDE5Ny43OTMgMjYzLjAzMSAxOTMuMjk1IDI2My4wMzEgQyAxOTIuNDExIDI1MS44MjQgMjAwLjQ4MiAyNDAuMjIxIDIxMS4zMTkgMjM1LjYwNiBDIDIyNi4yOTkgMjI5LjIyNSAyNDUuMDk2IDIzOC4wNTUgMjUwLjk0MiAyNTUuODkyIEMgMjU0Ljg3NiAyNjcuODk0IDI1My4xODUgMjc5LjUwMyAyNDYuOTUyIDI5MC40ODggQyAyMzIuNzMzIDMxNS41NSAyMDAuNDAzIDMxNy40NjUgMTgxLjI2MSAzMDUuODY1IEMgMTY1LjUxNSAyOTYuMzIyIDE1Ni4zOTggMjgyLjMgMTUzLjgyOSAyNjQuMTEgQyAxNDkuODU3IDIzNS45ODQgMTU4LjYyOSAyMTEuNDg3IDE3Ni4zMTIgMTkwLjA5IEMgMTkxLjc5OCAxNzEuMzU0IDIxMS43MTcgMTU5LjE2MSAyMzUuNjY4IDE1NC4yNzEgQyAyNjUuNDgxIDE0OC4xODUgMjkyLjk2NCAxNTQuMTcyIDMxNy43NDUgMTcxLjcxNiBDIDMyNC4zMzIgMTc2LjM4IDMzMC4xNTQgMTgyLjEzNyAzMzYuMjE1IDE4Ny41MTkgQyAzMzcuODAzIDE4OC45MjkgMzM4Ljk3IDE5MC44MTMgMzQxLjEwMiAxOTMuNDI1IEMgMzM0LjExMyAxOTQuMjg3IDMyOC4zMDQgMTk0LjAzIDMyMi41NDIgMTkzLjY5NSBDIDMyMS4xNzEgMTkzLjYxNiAzMTkuNzkzIDE5Mi4xMyAzMTguNTgxIDE5MS4wOTkgQyAyOTguMzQgMTczLjg3OCAyNzUuMTc2IDE2NC45MzcgMjQ4LjQzNiAxNjcuNDU0IEMgMjI2LjY4OSAxNjkuNSAyMDcuODMzIDE3OC4yNjQgMTkyLjEwNiAxOTQuNzAxIEMgMTkxLjQ4OCAxOTUuNjYyIDE5MS4zMTYgMTk2LjA5NiAxOTEuMTQ0IDE5Ni41MjkgQyAxOTEuODEzIDE5Ni4zMzggMTkyLjQ4MiAxOTYuMTQ3IDE5My4xNTEgMTk1Ljk1NiBDIDE5OC40MzYgMTk0LjU4IDIwMy42NDcgMTkyLjY2NiAyMDkuMDIgMTkxLjkxNiBDIDIzOC4wMTEgMTg3Ljg2OCAyNjEuNTQ4IDE5OC4wMjQgMjc4LjYxMiAyMjEuMzY0IEMgMjk4LjQ0OCAyNDguNDk1IDI5OS43OCAyNzguMzkxIDI4Ni44MTkgMzA4LjU4MyBDIDI3Mi40MjcgMzQyLjEwNSAyNDYuMTI0IDM2MS42MDYgMjEwLjAzMSAzNjUuNjExIEMgMTc1LjIyNCAzNjkuNDcyIDE0NC4yMzMgMzU5LjEzNCAxMTguMzggMzM0Ljg3MyBDIDExNy42NDQgMzM0LjE4MiAxMTYuODI2IDMzMy41NzkgMTE1LjQxOSAzMzIuNTU4IEMgMTE0LjQ4NyAzMzIuMjE0IDExNC4xODIgMzMyLjI0OCAxMTMuODc3IDMzMi4yODEgQyAxMTQuMDExIDMzMi43NDcgMTE0LjE0NyAzMzMuMjEzIDExNC4yODIgMzMzLjY3OSBNIDE0NS42ODUgMTAxLjUyMyBDIDE1My4wMzQgOTYuMDA1IDE2MC4zODIgOTAuNDg2IDE2Ny44MzcgODQuODg3IEMgMTYwLjkzMyA4MS45MjkgMTQ5Ljc0MyA4MS4wNjYgMTQxLjM5OCA4Mi44NTEgQyAxMjIuMTc1IDg2Ljk2MSAxMDYuNzcyIDk3LjI2NSA5NC4zMDYgMTEyLjE5MyBDIDgzLjU0MyAxMjUuMDgxIDc1LjU1NyAxMzkuNjczIDY5LjM0MSAxNTUuMTYgQyA2My40NCAxNjkuODYxIDU4LjM0MSAxODQuODM3IDU5LjY0OCAyMDEuMTU0IEMgNjAuNjM3IDIxMy41MDYgNjQuOTk3IDIyNC4zNjQgNzMuMTcgMjMzLjY2OCBDIDc0LjAyIDIzNC42MzYgNzUuMTc0IDIzNS4zMzcgNzYuNTcxIDIzNi40NzQgQyA3Ny44MzIgMjIxLjY0NSA4MC4zMzMgMjA3Ljc1NSA4NC4zMTggMTk0LjEyNSBDIDk1LjExNiAxNTcuMjA2IDExNS42NzIgMTI2Ljc0NyAxNDUuNjg1IDEwMS41MjMgTSA3Ni4yNjYgOTQuMDY1IEMgNzIuMTU2IDk2LjIwOSA2Ny40OTkgOTcuNzAyIDY0LjAzMyAxMDAuNjEyIEMgNTAuMDE2IDExMi4zODMgNDIuNDE0IDEyNy44NjEgNDAuNjk4IDE0NS45MDggQyAzOS44ODMgMTU0LjQ4NCA0Mi4xNTEgMTYyLjc0OSA0OC44NTcgMTcwLjI1NSBDIDU3LjA1MSAxNDEuMzEgNzAuNjkyIDExNi4wOTEgOTAuNjIgOTQuMjEyIEMgODUuNzUyIDkxLjE3OCA4MS40NTQgOTIuOTE1IDc2LjI2NiA5NC4wNjUgTSAyOS40NCAxMjMuNDM4IEMgMzEuNjc4IDEyNC43NDIgMzEuNTcgMTIyLjU0NyAzMi4xMTIgMTIxLjU1MyBDIDM1LjIxMiAxMTUuODczIDM4LjI1OCAxMTAuMTYzIDQxLjI3OCAxMDQuNDM5IEMgNDEuNzk1IDEwMy40NTggNDIuMDk0IDEwMi4zNjMgNDIuODc0IDEwMC4zMjkgQyAzOC42NTYgMTAwLjgyIDM1LjI1MiAxMDAuOTQ3IDMxLjk3OCAxMDEuNjY1IEMgMjcuNjU1IDEwMi42MTQgMjUuOTkxIDEwNC45NTUgMjUuNjY0IDEwOS4zNzMgQyAyNS4zMDcgMTE0LjIgMjYuNzQxIDExOC41NjIgMjkuNDQgMTIzLjQzOCBNIDExMy4yMDIgMzMwLjMwOCBDIDExMi45ODggMzMwLjI5NSAxMTIuNzc0IDMzMC4yODMgMTEyLjU1OSAzMzAuMjcxIEMgMTEyLjY1OSAzMzAuMzk2IDExMi43NiAzMzAuNTIyIDExMy4yMDIgMzMwLjMwOCBaIiBzdHlsZT0iZmlsbDogcmdiKDI1NSwgMjU1LCAyNTUpOyBzdHJva2U6IHJnYigwLCAwLCAwKTsgc3Ryb2tlLWRhc2hvZmZzZXQ6IDE4cHg7IHN0cm9rZS1taXRlcmxpbWl0OiAyLjY7IHN0cm9rZS1saW5lY2FwOiBzcXVhcmU7IHN0cm9rZS1saW5lam9pbjogcm91bmQ7IHN0cm9rZS13aWR0aDogMTJweDsiLz4KICA8cGF0aCBvcGFjaXR5PSIxLjAwMDAwMCIgZD0iTSA0MTUuNzk5IDI4My4xNjEgQyA0MjYuOTM0IDI4My4xNjEgNDM3LjQ2IDI4My4xNjEgNDQ4LjgyNyAyODMuMTYxIEMgNDQ4Ljg1NCAyNzAuNzQ1IDQ0OC44OSAyNTguODUxIDQ0OC45MDMgMjQ2Ljk1OCBDIDQ0OC45MTYgMjM1LjAyIDQ0OC45MDUgMjIzLjA4MSA0NDguOTA1IDIxMC43MTkgQyA0NTUuODg0IDIxMC43MTkgNDYyLjIzOCAyMTAuNzE5IDQ2OC45OTUgMjEwLjcxOSBDIDQ2OC45OTUgMjY2LjM2OCA0NjguOTk1IDMyMS43MjEgNDY4Ljk5NSAzNzcuNTI5IEMgNDYyLjUzMyAzNzcuNTI5IDQ1Ni4xNTkgMzc3LjUyOSA0NDguOTQ2IDM3Ny41MjkgQyA0NDguOTQ2IDM1Mi43NjQgNDQ4Ljk0NiAzMjguMTM1IDQ0OC45NDYgMzAzLjE4IEMgNDE4LjM2IDMwMy4xOCAzODguNjA2IDMwMy4xOCAzNTguMjM1IDMwMy4xOCBDIDM1Ny4wNTggMzQyLjA1NSAzNDIuNjc4IDM3NC4zMzkgMzExLjY3NSAzOTguMzUgQyAyOTEuNzU4IDQxMy43NzMgMjY4Ljg5MSA0MjAuODczIDI0My42ODkgNDIyLjgwNyBDIDI0Mi42NDUgNDE3LjE5IDI0Mi45MzIgNDEyLjA0MiAyNDMuMzYgNDA2LjQ3MSBDIDI0Ny41NzMgNDA1Ljg1IDI1MS41OTEgNDA1LjQ0MyAyNTUuNTMgNDA0LjY1IEMgMjk3LjY3NCAzOTYuMTY4IDMyNy4xMjIgMzY2LjYxNiAzMzUuMzI2IDMyNC4yNzQgQyAzMzYuNTkzIDMxNy43MzkgMzM3LjE2NyAzMTAuOTc4IDMzNy4yMTQgMzA0LjMxNSBDIDMzNy40MTUgMjc1LjY3NiAzMzcuMyAyNDcuMDM0IDMzNy4zMDEgMjE4LjM5MyBDIDMzNy4zMDEgMjE2LjAwMSAzMzcuMzAxIDIxMy42MDggMzM3LjMwMSAyMTAuNzU5IEMgMzQ0LjM3IDIxMC43NTkgMzUwLjc0OSAyMTAuNzU5IDM1Ny45NSAyMTAuNzU5IEMgMzU4LjMyOCAyMzQuNjE5IDM1Ny44OTIgMjU4LjQ3OSAzNTguMTkyIDI4My4xNiBDIDM3Ny41NDYgMjgzLjE2IDM5Ni4zNjggMjgzLjE2IDQxNS43OTkgMjgzLjE2MSBaIiBzdHlsZT0iZmlsbDogcmdiKDI1NCwgMjU0LCAyNTQpOyBzdHJva2UtZGFzaG9mZnNldDogLTU5cHg7IHN0cm9rZS1taXRlcmxpbWl0OiAxNy43MTsgc3Ryb2tlOiByZ2IoMCwgMCwgMCk7IHN0cm9rZS13aWR0aDogMTRweDsiLz4KICA8cGF0aCBvcGFjaXR5PSIxLjAwMDAwMCIgc3Ryb2tlPSJub25lIiBkPSJNIDE0NS4zNTMgMTAxLjc5OCBDIDExNS42NzIgMTI2Ljc0NyA5NS4xMTYgMTU3LjIwNiA4NC4zMTggMTk0LjEyNSBDIDgwLjMzMyAyMDcuNzU1IDc3LjgzMiAyMjEuNjQ1IDc2LjU3MSAyMzYuNDc0IEMgNzUuMTc0IDIzNS4zMzcgNzQuMDIgMjM0LjYzNiA3My4xNyAyMzMuNjY4IEMgNjQuOTk3IDIyNC4zNjQgNjAuNjM3IDIxMy41MDYgNTkuNjQ4IDIwMS4xNTQgQyA1OC4zNDEgMTg0LjgzNyA2My40NCAxNjkuODYxIDY5LjM0MSAxNTUuMTYgQyA3NS41NTcgMTM5LjY3MyA4My41NDMgMTI1LjA4MSA5NC4zMDYgMTEyLjE5MyBDIDEwNi43NzIgOTcuMjY1IDEyMi4xNzUgODYuOTYxIDE0MS4zOTggODIuODUxIEMgMTQ5Ljc0MyA4MS4wNjYgMTYwLjkzMyA4MS45MjkgMTY3LjgzNyA4NC44ODcgQyAxNjAuMzgyIDkwLjQ4NiAxNTMuMDM0IDk2LjAwNSAxNDUuMzUzIDEwMS43OTggWiIgc3R5bGU9InN0cm9rZS13aWR0aDogMC42MDk7IGZpbGw6IG5vbmU7Ii8+CiAgPHBhdGggb3BhY2l0eT0iMS4wMDAwMDAiIHN0cm9rZT0ibm9uZSIgZD0iTSA3Ni43MTggOTMuODk5IEMgODEuNDU0IDkyLjkxNSA4NS43NTIgOTEuMTc4IDkwLjYyIDk0LjIxMiBDIDcwLjY5MiAxMTYuMDkxIDU3LjA1MSAxNDEuMzEgNDguODU3IDE3MC4yNTUgQyA0Mi4xNTEgMTYyLjc0OSAzOS44ODMgMTU0LjQ4NCA0MC42OTggMTQ1LjkwOCBDIDQyLjQxNCAxMjcuODYxIDUwLjAxNiAxMTIuMzgzIDY0LjAzMyAxMDAuNjEyIEMgNjcuNDk5IDk3LjcwMiA3Mi4xNTYgOTYuMjA5IDc2LjcxOCA5My44OTkgWiIgc3R5bGU9InN0cm9rZS13aWR0aDogMC42MDk7IGZpbGw6IG5vbmU7Ii8+CiAgPHBhdGggb3BhY2l0eT0iMS4wMDAwMDAiIHN0cm9rZT0ibm9uZSIgZD0iTSAyOS4yMjggMTIzLjA3OSBDIDI2Ljc0MSAxMTguNTYyIDI1LjMwNyAxMTQuMiAyNS42NjQgMTA5LjM3MyBDIDI1Ljk5MSAxMDQuOTU1IDI3LjY1NSAxMDIuNjE0IDMxLjk3OCAxMDEuNjY1IEMgMzUuMjUyIDEwMC45NDcgMzguNjU2IDEwMC44MiA0Mi44NzQgMTAwLjMyOSBDIDQyLjA5NCAxMDIuMzYzIDQxLjc5NSAxMDMuNDU4IDQxLjI3OCAxMDQuNDM5IEMgMzguMjU4IDExMC4xNjMgMzUuMjEyIDExNS44NzMgMzIuMTEyIDEyMS41NTMgQyAzMS41NyAxMjIuNTQ3IDMxLjY3OCAxMjQuNzQyIDI5LjIyOCAxMjMuMDc5IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyBmaWxsOiBub25lOyIvPgogIDxwYXRoIGZpbGw9IiNGRkZFRkUiIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gMTkyLjkyNCAxOTUuNjk4IEMgMTkyLjQ4MiAxOTYuMTQ3IDE5MS44MTMgMTk2LjMzOCAxOTEuMTQ0IDE5Ni41MjkgQyAxOTEuMzE2IDE5Ni4wOTYgMTkxLjQ4OCAxOTUuNjYyIDE5MS45NTIgMTk1LjA3NiBDIDE5Mi4zOTUgMTk1LjA5NSAxOTIuNTQ3IDE5NS4yNjcgMTkyLjkyNCAxOTUuNjk4IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyIvPgogIDxwYXRoIGZpbGw9IiNGRkZFRkUiIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gMTEzLjAzMSAzMzAuNDc3IEMgMTEyLjc2IDMzMC41MjIgMTEyLjY1OSAzMzAuMzk2IDExMi41NTkgMzMwLjI3MSBDIDExMi43NzQgMzMwLjI4MyAxMTIuOTg4IDMzMC4yOTUgMTEzLjAzMSAzMzAuNDc3IFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyIvPgogIDxwYXRoIGZpbGw9IiNGRkZFRkUiIG9wYWNpdHk9IjEuMDAwMDAwIiBzdHJva2U9Im5vbmUiIGQ9Ik0gMTE0LjUzMyAzMzMuNDMzIEMgMTE0LjE0NyAzMzMuMjEzIDExNC4wMTEgMzMyLjc0NyAxMTMuODc3IDMzMi4yODEgQyAxMTQuMTgyIDMzMi4yNDggMTE0LjQ4NyAzMzIuMjE0IDExNS4wMjggMzMyLjQyNyBDIDExNS4xMDMgMzMyLjg0NSAxMTQuOTQzIDMzMy4wMTYgMTE0LjUzMyAzMzMuNDMzIFoiIHN0eWxlPSJzdHJva2Utd2lkdGg6IDAuNjA5OyIvPgo8L3N2Zz4=">
-    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js"></script>
+    <!-- SRI integrity hashes pin the exact file contents (sha384 of each pinned
+         version). marked ships no pre-minified UMD build since v13, and jsDelivr's
+         on-the-fly .min.js is dynamically generated (unsafe for SRI), so the raw
+         lib/marked.umd.js is used. The Inter <link> below has no SRI: Google Fonts
+         serves per-browser CSS. -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@18.0.6/lib/marked.umd.js" integrity="sha384-uGn1eBC40GtuBgao0epc/cz9O4Lo8/flg/10SW+69UjLI5nP31iT4UPc65Xz10Le" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.12/dist/purify.min.js" integrity="sha384-piCcpDdJ7qVeK4Tv8Z6Hpcr3ZBIgP16TxQTPVfsLFdZ5uDgwc3Y8Ho7oUnqf12qu" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" integrity="sha384-eFTL69TLRZTkNfYZOLM+G04821K1qZao/4QLJbet1pP4tcF+fdXq/9CdqAbWRl/L" crossorigin="anonymous">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js" integrity="sha384-CwjPRVHTvLiMBFjEoij+QZViMV5rhTOIp7CJzl24JEqpRDA1sJFHVXXLURktbYYp" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js" integrity="sha384-T/0lMUdJpd2S1ZHtRiofG3htU3xPCrFVeAQ1UUE2TJwlEJSV5NUwn30kP28n238E" crossorigin="anonymous"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
 :root {
@@ -475,6 +480,17 @@
         @keyframes formGlow {
             0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
             50% { box-shadow: 0 0 25px rgba(59, 130, 246, 0.7); }
+        }
+
+        /* The rounded shell around the textarea + send/stop buttons. */
+        .input-shell {
+            position: relative;
+            display: flex;
+            width: 100%;
+            background: #fff;
+            border-radius: 24px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            border: 1px solid var(--border-color);
         }
 
         #userInput {
@@ -1057,9 +1073,9 @@
             border-color: #475569;
             color: #f8fafc;
         }
-        :root[data-theme="dark"] #chatForm > div:last-child {
-            background: #1e293b !important;
-            border-color: #475569 !important;
+        :root[data-theme="dark"] .input-shell {
+            background: #1e293b;
+            border-color: #475569;
         }
 
     </style>
@@ -1074,7 +1090,7 @@
             </div>
         </div>
         <div class="header-center">
-            <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+N)" aria-label="New Chat">➕ New Chat</button>
+            <button class="header-btn" id="clearBtn" title="New Chat (Ctrl+Shift+O)" aria-label="New Chat">➕ New Chat</button>
             <button class="header-btn" id="summarizeBtn" title="Summarize Chat (Ctrl+Shift+S)" aria-label="Summarize Chat">📋 Summarize</button>
         </div>
         <div class="header-actions">
@@ -1086,9 +1102,9 @@
     </header>
 
     <!-- About Modal -->
-    <div class="modal-overlay" id="aboutModal">
+    <div class="modal-overlay" id="aboutModal" role="dialog" aria-modal="true" aria-labelledby="aboutModalTitle">
         <div class="modal">
-            <h3>ℹ️ About HermitUI</h3>
+            <h3 id="aboutModalTitle">ℹ️ About HermitUI</h3>
             <p style="margin-bottom: 16px; line-height: 1.6; color: var(--text-main);">
                 HermitUI is a lightweight, modern, and highly responsive single-page web interface for interacting with local AI models. Built entirely in a single file, it requires no build steps, backend, or installation.
             </p>
@@ -1110,9 +1126,9 @@
     </div>
 
     <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
+    <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
         <div class="modal">
-            <h3>⚙️ Settings</h3>
+            <h3 id="settingsModalTitle">⚙️ Settings</h3>
             <label for="settingUrl">API Base URL</label>
             <input type="text" id="settingUrl" value="http://localhost:1234/v1">
             <div id="cloudWarning" style="display: none; background: rgba(254, 243, 199, 0.8); color: #92400e; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px; font-size: 0.85rem; border: 1px solid #fcd34d; align-items: flex-start; gap: 8px;">
@@ -1164,7 +1180,9 @@
                 <span style="font-size: 1.1rem;">⚠️</span>
                 <span><b>Privacy Warning:</b> You are using a cloud provider (<span id="mainCloudProviderName"></span>). Your chat data leaves your local machine.</span>
             </div>
-            <div id="chatbox"></div>
+            <!-- role="log": screen readers announce appended messages politely;
+                 aria-busy is toggled during streaming so partial re-renders aren't read aloud. -->
+            <div id="chatbox" role="log" aria-label="Conversation"></div>
            
             <div class="input-container">
                 <button id="jumpBottomBtn" class="jump-bottom-btn">⬇️ Jump to Bottom</button>
@@ -1185,7 +1203,7 @@
                             <div id="file-chips" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
                             <textarea id="context-input" placeholder="Paste text here or drop files into this area..." rows="3"></textarea>
                         </div>
-                        <div style="position: relative; display: flex; width: 100%; background: #fff; border-radius: 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); border: 1px solid var(--border-color);">
+                        <div class="input-shell">
                             <textarea id="userInput" placeholder="Ask me anything... (Shift+Enter for new line)" rows="1" autocomplete="off" autofocus></textarea>
                             <div class="send-btn-container" style="display: flex; align-items: center; gap: 8px;">
                                 <button type="button" id="attach-context-btn" title="Attach context/data">📎</button>
@@ -1340,6 +1358,42 @@
             return mermaidLoadPromise;
         }
 
+        // Applied before every render pass so diagrams follow the current theme.
+        // htmlLabels stays off: labels render as plain SVG text, so no
+        // <foreignObject> for DOMPurify to strip below.
+        function mermaidThemeInit(mermaid) {
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: 'strict',
+                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
+                htmlLabels: false,
+                flowchart: { htmlLabels: false }
+            });
+        }
+
+        // Render one diagram source to sanitized SVG markup; null when invalid.
+        async function renderMermaidSvg(mermaid, source) {
+            const renderId = `hermit-mermaid-${++mermaidSeq}`;
+            try {
+                const { svg } = await mermaid.render(renderId, source);
+                // Mermaid (strict mode) sanitizes labels itself; this outer pass
+                // enforces the project rule that all AI-derived HTML goes through
+                // DOMPurify. <style> must be re-allowed — mermaid themes its SVG
+                // with an embedded, self-generated stylesheet.
+                const probe = document.createElement('div');
+                probe.innerHTML = DOMPurify.sanitize(svg, {
+                    USE_PROFILES: { svg: true, svgFilters: true },
+                    ADD_TAGS: ['style']
+                });
+                return probe.querySelector('svg') ? probe.innerHTML : null;
+            } catch (e) {
+                // Mermaid can leave an error placeholder element behind on failure.
+                const stray = document.getElementById('d' + renderId);
+                if (stray) stray.remove();
+                return null;
+            }
+        }
+
         // Replace finished ```mermaid fences with rendered diagrams. Runs only on
         // final message renders (streaming keeps showing the code block). Any invalid
         // diagram source simply stays a code block.
@@ -1352,39 +1406,37 @@
             } catch (e) {
                 return;
             }
-            // Re-initialized per pass so new diagrams follow the current theme.
-            // htmlLabels stays off: labels render as plain SVG text, so no
-            // <foreignObject> for DOMPurify to strip below.
-            mermaid.initialize({
-                startOnLoad: false,
-                securityLevel: 'strict',
-                theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default',
-                htmlLabels: false,
-                flowchart: { htmlLabels: false }
-            });
+            mermaidThemeInit(mermaid);
             for (const code of blocks) {
                 const pre = code.closest('pre');
                 if (!pre || !pre.parentNode) continue;
-                const renderId = `hermit-mermaid-${++mermaidSeq}`;
-                try {
-                    const { svg } = await mermaid.render(renderId, code.textContent);
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'mermaid-diagram';
-                    // Mermaid (strict mode) sanitizes labels itself; this outer pass
-                    // enforces the project rule that all AI-derived HTML goes through
-                    // DOMPurify. <style> must be re-allowed — mermaid themes its SVG
-                    // with an embedded, self-generated stylesheet.
-                    wrapper.innerHTML = DOMPurify.sanitize(svg, {
-                        USE_PROFILES: { svg: true, svgFilters: true },
-                        ADD_TAGS: ['style']
-                    });
-                    if (!wrapper.querySelector('svg')) continue;
-                    pre.replaceWith(wrapper);
-                } catch (e) {
-                    // Mermaid can leave an error placeholder element behind on failure.
-                    const stray = document.getElementById('d' + renderId);
-                    if (stray) stray.remove();
-                }
+                const source = code.textContent;
+                const clean = await renderMermaidSvg(mermaid, source);
+                if (clean === null) continue;
+                const wrapper = document.createElement('div');
+                wrapper.className = 'mermaid-diagram';
+                wrapper.dataset.mermaidSource = source; // kept so a theme toggle can re-render
+                wrapper.innerHTML = clean;
+                pre.replaceWith(wrapper);
+            }
+        }
+
+        // Re-render already-displayed diagrams after a theme toggle (they are
+        // otherwise stuck with the palette they were first rendered in). The
+        // early length check keeps startup from ever inflating the engine.
+        async function rethemeMermaidDiagrams() {
+            const diagrams = document.querySelectorAll('.mermaid-diagram[data-mermaid-source]');
+            if (diagrams.length === 0) return;
+            let mermaid;
+            try {
+                mermaid = await loadMermaid();
+            } catch (e) {
+                return;
+            }
+            mermaidThemeInit(mermaid);
+            for (const wrapper of diagrams) {
+                const clean = await renderMermaidSvg(mermaid, wrapper.dataset.mermaidSource);
+                if (clean !== null) wrapper.innerHTML = clean; // on failure keep the old SVG
             }
         }
 
@@ -1532,7 +1584,7 @@ Rules:
         // Domains whose use means chat data leaves the local machine. Matched as
         // hostname suffixes (never substrings, so "box.ai" can't match "x.ai");
         // googleapis.com covers Gemini's OpenAI-compatible endpoint.
-        const CLOUD_PROVIDERS = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "googleapis.com", "cloudflare.com"];
+        const CLOUD_PROVIDERS = ["openai.com", "openrouter.ai", "groq.com", "anthropic.com", "together.xyz", "x.ai", "deepseek.com", "googleapis.com", "cloudflare.com", "mistral.ai", "perplexity.ai", "fireworks.ai", "cohere.com", "openai.azure.com"];
         function detectCloudProvider(rawUrl) {
             let host;
             try { host = new URL(rawUrl).hostname; }
@@ -1582,6 +1634,9 @@ Rules:
         const contextInput = document.getElementById("context-input");
         
         let attachedFiles = [];
+        // FileReader/decode work is async; sending while reads are in flight would
+        // silently drop those attachments from the payload, so submit waits on this.
+        let pendingFileReads = 0;
         const fileUpload = document.getElementById("file-upload");
         const addFileBtn = document.getElementById("add-file-btn");
         const fileChips = document.getElementById("file-chips");
@@ -1677,10 +1732,12 @@ Rules:
                         showToast(`Image ${file.name} is too large (>10MB).`);
                         continue;
                     }
+                    pendingFileReads++;
                     loadImageDownscaled(file).then(dataUrl => {
                         attachedFiles.push({ name: file.name, kind: "image", dataUrl });
                         renderChips();
-                    }).catch(() => showToast(`Could not read image ${file.name}.`));
+                    }).catch(() => showToast(`Could not read image ${file.name}.`))
+                      .finally(() => { pendingFileReads--; });
                     continue;
                 }
                 if (file.type.startsWith("image/")) {
@@ -1696,9 +1753,15 @@ Rules:
                     continue;
                 }
                 const reader = new FileReader();
+                pendingFileReads++;
                 reader.onload = (e) => {
+                    pendingFileReads--;
                     attachedFiles.push({ name: file.name, kind: "text", content: e.target.result });
                     renderChips();
+                };
+                reader.onerror = () => {
+                    pendingFileReads--;
+                    showToast(`Could not read file ${file.name}.`);
                 };
                 reader.readAsText(file);
             }
@@ -1750,7 +1813,8 @@ Rules:
             inputField.style.height = Math.min(inputField.scrollHeight, CONSTANTS.MAX_TEXTAREA_HEIGHT_PX) + "px";
         });
         inputField.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            // isComposing: Enter that confirms an IME candidate (CJK input) must not send.
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
                 chatForm.dispatchEvent(new Event("submit", { cancelable: true }));
             }
@@ -1783,11 +1847,13 @@ Rules:
             if (e.key === "Escape") {
                 const openModal = document.querySelector(".modal-overlay.active");
                 if (openModal) {
-                    openModal.classList.remove("active");
+                    closeModalEl(openModal);
                     return;
                 }
             }
-            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+            // Ctrl+Shift+O for New Chat: Ctrl+Shift+N is reserved by Chromium
+            // (incognito window) and can never reach the page there.
+            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
                 e.preventDefault();
                 document.getElementById("clearBtn").click();
             } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
@@ -1819,16 +1885,51 @@ Rules:
             document.getElementById("stat-completion-est").style.display = isEst ? "inline" : "none";
         }
 
+        // ========== Modal Open/Close (focus-managed) ==========
+        // Basic dialog behavior for keyboard/screen-reader users: focus moves into
+        // the dialog on open and back to the opener on close; Tab cycles inside
+        // while open. The overlays carry role="dialog" / aria-modal in the HTML.
+        let modalReturnFocusEl = null;
+        function openModalEl(modal) {
+            modalReturnFocusEl = document.activeElement;
+            modal.classList.add("active");
+            const first = modal.querySelector("input, select, textarea, button");
+            if (first) first.focus();
+        }
+        function closeModalEl(modal) {
+            modal.classList.remove("active");
+            if (modalReturnFocusEl && document.contains(modalReturnFocusEl)) modalReturnFocusEl.focus();
+            modalReturnFocusEl = null;
+        }
+        function trapModalFocus(modal) {
+            modal.addEventListener("keydown", (e) => {
+                if (e.key !== "Tab") return;
+                const focusables = Array.from(modal.querySelectorAll("button, input, select, textarea, a[href]"))
+                    .filter(el => !el.disabled && el.offsetParent !== null);
+                if (focusables.length === 0) return;
+                const first = focusables[0];
+                const last = focusables[focusables.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            });
+        }
+
         // ========== About Modal ==========
         const aboutModal = document.getElementById("aboutModal");
+        trapModalFocus(aboutModal);
         document.getElementById("aboutBtn").addEventListener("click", () => {
-            aboutModal.classList.add("active");
+            openModalEl(aboutModal);
         });
         document.getElementById("aboutCloseBtn").addEventListener("click", () => {
-            aboutModal.classList.remove("active");
+            closeModalEl(aboutModal);
         });
         aboutModal.addEventListener("click", (e) => {
-            if (e.target === aboutModal) aboutModal.classList.remove("active");
+            if (e.target === aboutModal) closeModalEl(aboutModal);
         });
 
         // ========== Settings Modal ==========
@@ -1870,13 +1971,14 @@ Rules:
             document.getElementById("settingSeed").value = SEED == null ? "" : SEED;
             document.getElementById("settingSystem").value = SYSTEM_PROMPT;
             updateVisionBadge();
-            settingsModal.classList.add("active");
+            openModalEl(settingsModal);
         });
+        trapModalFocus(settingsModal);
         document.getElementById("settingsCancel").addEventListener("click", () => {
-            settingsModal.classList.remove("active");
+            closeModalEl(settingsModal);
         });
         settingsModal.addEventListener("click", (e) => {
-            if (e.target === settingsModal) settingsModal.classList.remove("active");
+            if (e.target === settingsModal) closeModalEl(settingsModal);
         });
         document.getElementById("settingsSave").addEventListener("click", () => {
             API_URL = document.getElementById("settingUrl").value.trim();
@@ -1933,7 +2035,7 @@ Rules:
 
             updateOverlay();
             updateMainCloudWarning();
-            settingsModal.classList.remove("active");
+            closeModalEl(settingsModal);
         });
 
         // ========== New Chat ==========
@@ -2161,7 +2263,9 @@ Rules:
                     }
                 },
                 onFailure: (error, ctx) => {
-                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${DOMPurify.sanitize(error.message)}</span>`;
+                    // escapeHtml (not sanitize): angle-bracketed text in server errors
+                    // must display literally instead of being stripped.
+                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`;
                 }
             });
 
@@ -2463,6 +2567,9 @@ Rules:
             sendBtn.style.display = "none";
             stopBtn.style.display = "flex";
             isWaiting = true;
+            // Streaming rewrites message HTML dozens of times per second; aria-busy
+            // keeps the role="log" chatbox from announcing every partial re-render.
+            chatbox.setAttribute("aria-busy", "true");
             abortController = new AbortController();
 
             const ctx = {
@@ -2488,6 +2595,7 @@ Rules:
                 stopBtn.style.display = "none";
                 inputField.disabled = false;
                 isWaiting = false;
+                chatbox.removeAttribute("aria-busy");
                 inputField.focus();
                 const durationSec = (Date.now() - ctx.startTime) / 1000;
                 if (completionTokens === 0) completionTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
@@ -2615,10 +2723,14 @@ Rules:
         // ========== Main Submit Handler ==========
         chatForm.addEventListener("submit", async function(e) {
             e.preventDefault();
-            if (isWaiting) return; 
-            
+            if (isWaiting) return;
+
             const text = inputField.value.trim();
             const isRegenerate = e.detail && e.detail.regenerate;
+            if (!isRegenerate && pendingFileReads > 0) {
+                showToast("⏳ Attachments are still loading — try again in a moment.");
+                return;
+            }
             
             const contextPane = document.getElementById("context-pane");
             const contextInput = document.getElementById("context-input");
@@ -2748,11 +2860,21 @@ Rules:
                 },
                 // Aborted responses keep their partial text in history, as before.
                 onFinal: (ctx) => {
+                    // Nothing arrived (aborted before the first token, or an empty
+                    // response): pushing an empty assistant turn breaks some backends
+                    // and templates — drop the empty bubble instead.
+                    if (!ctx.fullRawText && !ctx.aiReasoning) {
+                        const wrapper = ctx.responseContainer.closest(".msg-wrapper");
+                        if (wrapper) wrapper.remove();
+                        return;
+                    }
                     messages.push({"role": "assistant", "content": buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), uid});
                 },
                 onFailure: (error, ctx) => {
                     const errMsg = error.message || "Unknown Error";
-                    ctx.responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${DOMPurify.sanitize(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
+                    // escapeHtml (not sanitize): angle-bracketed text in server errors
+                    // must display literally instead of being stripped.
+                    ctx.responseContainer.insertAdjacentHTML('beforeend', `<br><br><span style='color:#ef4444; font-weight:500;'>❌ ${escapeHtml(errMsg)}</span><br><span style='color:#9ca3af; font-size:0.9rem;'>Make sure your local server is running and CORS is enabled.</span>`);
                 }
             });
         });
@@ -2888,6 +3010,7 @@ Rules:
                 document.documentElement.removeAttribute("data-theme");
                 themeToggleBtn.textContent = "🌙";
             }
+            rethemeMermaidDiagrams(); // no-op (and no engine load) when no diagrams exist
         }
         
         // Initial application
