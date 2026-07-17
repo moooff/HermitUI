@@ -4,6 +4,7 @@ import sys
 import urllib.request
 import base64
 import gzip
+import hashlib
 import json
 import shutil
 import re
@@ -36,6 +37,26 @@ def fetch(url, headers=None):
         sys.exit(1)
 
 
+def replace_required(text, old, new, what):
+    """str.replace that fails the build when the needle is absent.
+
+    Same rationale as sub_required: a drifted literal (e.g. the style.css <link>
+    tag) must not silently produce a 'standalone' output that still references
+    external files.
+    """
+    if old not in text:
+        print(f"❌ {what}: literal not found — src/index.html out of sync with build.py.")
+        sys.exit(1)
+    return text.replace(old, new)
+
+
+def escape_script_close(js):
+    """Escape any '</script' (case-insensitive, with or without '>') so inlined
+    JS can't prematurely terminate the surrounding <script> block. '<\\/script'
+    is identical JS inside string literals."""
+    return re.sub(r'</script', r'<\\/script', js, flags=re.IGNORECASE)
+
+
 def sub_required(pattern, repl, text, what):
     """re.sub that fails the build when the pattern matches nothing.
 
@@ -56,6 +77,14 @@ def strip_wllama(text):
     only kept for the dedicated dist/hermit-ui-wllama.html output; every other output is
     built from the stripped source so it stays as lean as before the feature existed.
     """
+    # An unpaired marker would make a .*? span swallow code between two unrelated
+    # blocks (or strip nothing), yielding broken-but-written output. Fail instead.
+    for start, end in [("<!-- @wllama:start -->", "<!-- @wllama:end -->"),
+                       ("/* @wllama:start */", "/* @wllama:end */"),
+                       ("// @wllama:start", "// @wllama:end")]:
+        if text.count(start) != text.count(end):
+            print(f"❌ Unbalanced wllama markers: {text.count(start)}x '{start}' vs {text.count(end)}x '{end}'.")
+            sys.exit(1)
     text = re.sub(r'[ \t]*<!-- @wllama:start -->.*?<!-- @wllama:end -->\n?', '', text, flags=re.DOTALL)
     text = re.sub(r'[ \t]*/\* @wllama:start \*/.*?/\* @wllama:end \*/\n?', '', text, flags=re.DOTALL)
     text = re.sub(r'[ \t]*// @wllama:start\n.*?// @wllama:end[^\n]*\n?', '', text, flags=re.DOTALL)
@@ -75,17 +104,60 @@ def build():
         except Exception:
             manifest = {}
 
+    def save_manifest():
+        with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=1)
+
+    # Read the source files up front: the SRI hashes pinned in src/index.html are
+    # used to verify every CDN download below before it is cached or inlined.
+    with open("src/index.html", "r", encoding="utf-8") as f:
+        html = f.read()
+
+    with open("src/style.css", "r", encoding="utf-8") as f:
+        local_css = f.read()
+
+    with open("src/script.js", "r", encoding="utf-8") as f:
+        local_js = f.read()
+
+    # url -> "sha384-..." for every CDN tag that carries an integrity attribute.
+    integrity_map = dict(re.findall(
+        r'(?:src|href)=["\'](https://[^"\']+)["\'][^>]*?integrity=["\'](sha384-[^"\']+)["\']',
+        html
+    ))
+
+    def verify_content(url, content, cache_path):
+        """Reject empty/implausible bodies and enforce the SRI pin when one exists.
+
+        Runs on cached files too, so a corrupted or tampered libs/ entry can't
+        reach the outputs either. Assets without a pin (Google Fonts CSS/woff2,
+        wllama engine) only get the size sanity check."""
+        if len(content) < 256:
+            print(f"❌ {cache_path}: implausibly small response ({len(content)} bytes) from {url}.")
+            sys.exit(1)
+        integrity = integrity_map.get(url)
+        if integrity:
+            digest = base64.b64encode(hashlib.sha384(content).digest()).decode("ascii")
+            if f"sha384-{digest}" != integrity:
+                print(f"❌ {cache_path}: sha384 mismatch against the SRI pin in src/index.html ({url}).")
+                print("   Re-run with --refresh if the pinned version changed; otherwise treat the content as untrusted.")
+                sys.exit(1)
+
     def fetch_cached(url, cache_path, headers=None):
         if not REFRESH and manifest.get(cache_path) == url and os.path.exists(cache_path):
             print(f"  -> {os.path.basename(cache_path)} (cached)")
             with open(cache_path, "rb") as f:
-                return f.read()
+                content = f.read()
+            verify_content(url, content, cache_path)
+            return content
         print(f"  -> Fetching {os.path.basename(cache_path)}...")
         content = fetch(url, headers)
+        verify_content(url, content, cache_path)
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, "wb") as f:
             f.write(content)
+        # Persist per download, so a later failure doesn't discard cache bookkeeping.
         manifest[cache_path] = url
+        save_manifest()
         return content
 
     print("📥 Downloading libraries from CDNs...")
@@ -93,9 +165,11 @@ def build():
 
     for name, url in URLS.items():
         headers = {}
-        # Emulate modern browser to get woff2 font format for Inter
+        # Emulate a modern browser so Google serves woff2 (its UA sniffing needs
+        # the full AppleWebKit/Safari tokens; a bare Chrome token gets TTF).
         if "fonts.googleapis.com" in url:
-            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
+            headers["User-Agent"] = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         # libs/inter.css holds the *processed* (font-path-rewritten) CSS, so the
         # raw Google response is cached under its own name.
@@ -106,10 +180,23 @@ def build():
     inter_css = cache["inter.css"].decode("utf-8")
     # Support optional quotes around URL
     font_urls = re.findall(r'url\((?:["\']?)(https://[^)]+?)(?:["\']?)\)', inter_css)
-    
+
+    # An empty match means Google changed its CSS format — the "offline" builds
+    # would silently keep live fonts.gstatic.com URLs. Fail loudly instead.
+    if not font_urls:
+        print("❌ No font URLs found in the Google Fonts CSS — response format changed?")
+        sys.exit(1)
+    # Anything but woff2 means the UA spoof stopped working (e.g. a TTF fallback),
+    # which would bloat the standalone outputs with uncompressed fonts.
+    non_woff2 = [u for u in set(font_urls) if not u.endswith(".woff2")]
+    if non_woff2:
+        print(f"❌ Google Fonts returned non-woff2 files: {non_woff2}")
+        print("   A stale cache from an older build can cause this — re-run with --refresh.")
+        sys.exit(1)
+
     inter_local_css = inter_css
     inter_inline_css = inter_css
-    
+
     # Download and process each woff2 font file
     for font_url in set(font_urls):
         font_filename = font_url.split("/")[-1]
@@ -117,7 +204,7 @@ def build():
 
         # Update path for local CSS
         inter_local_css = inter_local_css.replace(font_url, f"fonts/{font_filename}")
-        
+
         # Base64 encode for inline standalone CSS
         b64_font = base64.b64encode(font_content).decode("utf-8")
         inter_inline_css = inter_inline_css.replace(font_url, f"data:font/woff2;base64,{b64_font}")
@@ -128,16 +215,6 @@ def build():
         
     cache["inter.css"] = inter_local_css.encode("utf-8")
     cache["inter_inline.css"] = inter_inline_css.encode("utf-8")
-
-    # Read base template and assemble local components
-    with open("src/index.html", "r", encoding="utf-8") as f:
-        html = f.read()
-    
-    with open("src/style.css", "r", encoding="utf-8") as f:
-        local_css = f.read()
-        
-    with open("src/script.js", "r", encoding="utf-8") as f:
-        local_js = f.read()
 
     # Wllama engine assets for the fully-offline wllama output. The version pin lives
     # only in src/script.js (WLLAMA_CDN_BASE); the assets are gzipped + base64-encoded
@@ -170,13 +247,15 @@ def build():
     # block early in every single-file output. Escape it the same way as the
     # third-party libraries below ("<\/script" is identical JS inside string
     # literals). CSS has no equivalent escape, so a "</style" must fail the build.
-    local_js_inline = re.sub(r'</script', r'<\\/script', local_js, flags=re.IGNORECASE)
+    local_js_inline = escape_script_close(local_js)
     if re.search(r'</style', local_css, re.IGNORECASE):
         print("❌ src/style.css contains a literal '</style' — it would break the inlined <style> block.")
         sys.exit(1)
 
-    html = html.replace('<link rel="stylesheet" href="style.css">', f'<style>\n{local_css}\n    </style>')
-    html = html.replace('<script src="script.js"></script>', f'<script>\n{local_js_inline}\n    </script>')
+    html = replace_required(html, '<link rel="stylesheet" href="style.css">',
+                            f'<style>\n{local_css}\n    </style>', "inlining of style.css")
+    html = replace_required(html, '<script src="script.js"></script>',
+                            f'<script>\n{local_js_inline}\n    </script>', "inlining of script.js")
 
     # Inline favicon into the template
     try:
@@ -207,11 +286,11 @@ def build():
 
     # Decode cached library contents for inlining. Scripts escape </script> so the
     # inlined code can't prematurely close the surrounding <script> tag.
-    marked_script = cache["marked.js"].decode("utf-8").replace("</script>", r"<\/script>")
-    dompurify_script = cache["dompurify.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    marked_script = escape_script_close(cache["marked.js"].decode("utf-8"))
+    dompurify_script = escape_script_close(cache["dompurify.js"].decode("utf-8"))
     hl_css = cache["highlight.css"].decode("utf-8")
-    hl_script = cache["highlight.js"].decode("utf-8").replace("</script>", r"<\/script>")
-    katex_script = cache["katex.js"].decode("utf-8").replace("</script>", r"<\/script>")
+    hl_script = escape_script_close(cache["highlight.js"].decode("utf-8"))
+    katex_script = escape_script_close(cache["katex.js"].decode("utf-8"))
     inter_inline = cache["inter_inline.css"].decode("utf-8")
 
     # Single source of truth per asset: each CDN tag's regex lives once and drives both
@@ -292,9 +371,6 @@ def build():
     # Final step: copy the standalone build out to root index.html for GitHub Pages.
     shutil.copyfile("dist/hermit-ui-standalone.html", "index.html")
     print("  ✅ index.html (Copy of the standalone build, served as the GitHub Pages landing page)")
-
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=1)
 
     print("\n🎉 Build complete!")
 
