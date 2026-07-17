@@ -53,8 +53,9 @@ def replace_required(text, old, new, what):
 def escape_script_close(js):
     """Escape any '</script' (case-insensitive, with or without '>') so inlined
     JS can't prematurely terminate the surrounding <script> block. '<\\/script'
-    is identical JS inside string literals."""
-    return re.sub(r'</script', r'<\\/script', js, flags=re.IGNORECASE)
+    is identical JS inside string literals; the backreference keeps the original
+    casing so escaped string data keeps its exact value."""
+    return re.sub(r'</(script)', r'<\\/\1', js, flags=re.IGNORECASE)
 
 
 def sub_required(pattern, repl, text, what):
