@@ -112,13 +112,17 @@
                     if (!window.__MERMAID_INLINE__) throw new Error('Mermaid engine not available');
                     const bytes = await gunzipToBytes(window.__MERMAID_INLINE__);
                     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
-                    await new Promise((resolve, reject) => {
-                        const s = document.createElement('script');
-                        s.src = blobUrl;
-                        s.onload = resolve;
-                        s.onerror = () => reject(new Error('Failed to load embedded mermaid engine'));
-                        document.head.appendChild(s);
-                    });
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const s = document.createElement('script');
+                            s.src = blobUrl;
+                            s.onload = resolve;
+                            s.onerror = () => reject(new Error('Failed to load embedded mermaid engine'));
+                            document.head.appendChild(s);
+                        });
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
                 }
                 return window.mermaid;
             })();
@@ -1077,8 +1081,9 @@ Rules:
         // Stream the GGUF into memory (never into browser storage — ephemerality is a
         // hard project rule, and wllama's own URL loader would persist it to OPFS).
         // The blob then goes through the exact same loadModel path as a local file.
-        async function downloadGgufToBlob(url, onProgress) {
-            const res = await fetch(url);
+        async function downloadGgufToBlob(url, onProgress, signal) {
+            // Aborting the signal makes reader.read() below reject with AbortError.
+            const res = await fetch(url, { signal });
             if (!res.ok) throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`);
             const total = parseInt(res.headers.get("content-length") || "0", 10);
             // Fail before pulling gigabytes the engine can't load anyway.
@@ -1095,15 +1100,34 @@ Rules:
                 if (done) break;
                 chunks.push(value);
                 loaded += value.byteLength;
+                // Without a content-length header the preflight above saw 0 bytes;
+                // re-check as bytes accumulate so the buffer can't grow past what
+                // the engine could load anyway.
+                if (total === 0) {
+                    const runningErr = wllamaPreflightSize(loaded);
+                    if (runningErr) {
+                        try { await reader.cancel(); } catch { /* already closed */ }
+                        throw new Error(runningErr);
+                    }
+                }
                 onProgress({ loaded, total });
             }
             return new Blob(chunks);
         }
 
+        // Non-null while a model download is in flight; the Load button becomes a
+        // Cancel button that aborts it (multi-GB pulls must be interruptible).
+        let wllamaDownloadAbort = null;
+
         async function loadWllamaModelFromUrl() {
             const statusEl = document.getElementById("wllamaStatus");
             const pbContainer = document.getElementById("wllamaProgressBarContainer");
             const pbBar = document.getElementById("wllamaProgressBar");
+            const loadBtn = document.getElementById("wllamaUrlLoadBtn");
+            if (wllamaDownloadAbort) {
+                wllamaDownloadAbort.abort();
+                return;
+            }
             let url;
             try {
                 url = normalizeGgufUrl(document.getElementById("settingWllamaUrl").value);
@@ -1113,6 +1137,9 @@ Rules:
             }
             const label = decodeURIComponent(url.split("?")[0].split("/").pop());
             setWllamaLoadBusy(true);
+            wllamaDownloadAbort = new AbortController();
+            loadBtn.disabled = false;
+            loadBtn.textContent = "✕ Cancel";
             try {
                 wllamaLog("log", `Downloading model from ${url}`);
                 pbContainer.style.display = "block";
@@ -1131,24 +1158,37 @@ Rules:
                     } else {
                         statusEl.textContent = `Status: Downloading ${label} (${fmtMB(loaded)})`;
                     }
-                });
+                }, wllamaDownloadAbort.signal);
+                // Download finished — the engine load below is not cancelable, so
+                // restore the button to its busy (disabled) state now.
+                wllamaDownloadAbort = null;
+                loadBtn.textContent = "⬇️ Load";
+                loadBtn.disabled = true;
                 wllamaLog("log", `Downloaded ${fmtMB(blob.size)} in ${((performance.now() - downloadStart) / 1000).toFixed(1)}s`);
                 await loadWllamaModel([blob], label);
             } catch (err) {
                 wllamaHashLoadPending = false; // keep the modal open so the error is visible
-                wllamaLog("error", "Download failed:", err.message || err);
-                const hint = err instanceof TypeError
-                    ? " (network/CORS blocked — make sure it's a direct /resolve/ link to a public file)"
-                    : "";
-                statusEl.textContent = "Status: Error - " + (err.message || err) + hint;
+                if (err.name === "AbortError") {
+                    wllamaLog("warn", "Download cancelled by user.");
+                    statusEl.textContent = "Status: Download cancelled.";
+                } else {
+                    wllamaLog("error", "Download failed:", err.message || err);
+                    const hint = err instanceof TypeError
+                        ? " (network/CORS blocked — make sure it's a direct /resolve/ link to a public file)"
+                        : "";
+                    statusEl.textContent = "Status: Error - " + (err.message || err) + hint;
+                }
                 pbContainer.style.display = "none";
             } finally {
+                wllamaDownloadAbort = null;
+                loadBtn.textContent = "⬇️ Load";
                 setWllamaLoadBusy(false);
             }
         }
         document.getElementById("wllamaUrlLoadBtn").addEventListener("click", loadWllamaModelFromUrl);
         document.getElementById("settingWllamaUrl").addEventListener("keydown", (e) => {
-            if (e.key === "Enter") { e.preventDefault(); loadWllamaModelFromUrl(); }
+            // Enter starts a load but must not double as the download's Cancel.
+            if (e.key === "Enter") { e.preventDefault(); if (!wllamaDownloadAbort) loadWllamaModelFromUrl(); }
         });
 
         // Hash-config hook, called by applyHashConfig() when a #gguf=… param is
@@ -1409,20 +1449,30 @@ Rules:
                 onFailure: (error, ctx) => {
                     // escapeHtml (not sanitize): angle-bracketed text in server errors
                     // must display literally instead of being stripped.
-                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`;
+                    ctx.responseContainer.insertAdjacentHTML("beforeend", `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`);
                 }
             });
 
             const copyBtn = responseContainer.querySelector(".copy-summary-btn");
             if (copyBtn) {
                 copyBtn.addEventListener("click", () => {
-                    navigator.clipboard.writeText(ctx.fullRawText).then(() => {
+                    copyToClipboard(ctx.fullRawText).then(() => {
                         copyBtn.textContent = "✅ Copied!";
                         setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
-                    });
+                    }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
                 });
             }
         });
+
+        // The async clipboard API is missing on insecure origins (e.g. plain
+        // http:// on a LAN address); return a rejection so callers can show a
+        // toast instead of leaking an unhandled promise rejection.
+        function copyToClipboard(text) {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                return Promise.reject(new Error("Clipboard API unavailable"));
+            }
+            return navigator.clipboard.writeText(text);
+        }
 
         function injectCopyButtons(container) {
             container.querySelectorAll("pre").forEach((pre) => {
@@ -1444,11 +1494,11 @@ Rules:
                 btn.textContent = "Copy";
                 btn.addEventListener("click", () => {
                     const code = pre.querySelector("code");
-                    navigator.clipboard.writeText(code ? code.textContent : pre.textContent).then(() => {
+                    copyToClipboard(code ? code.textContent : pre.textContent).then(() => {
                         btn.textContent = "Copied!";
                         btn.classList.add("copied");
                         setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
-                    });
+                    }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
                 });
                 pre.appendChild(btn);
             });
@@ -1477,6 +1527,7 @@ Rules:
             // Cancel a scheduled trailing call so it can't fire after the final render.
             throttled.cancel = function() {
                 if (pending) { clearTimeout(pending); pending = null; }
+                lastFn = null;
             };
             return throttled;
         }
@@ -1497,7 +1548,10 @@ Rules:
                 
                 if (!openMatch) {
                     let textContent = rawText.substring(currentIdx);
-                    const partials = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
+                    // Closing variants included: a partially-streamed '</think'
+                    // must not flash as literal text before its '>' arrives.
+                    const partials = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end',
+                                      '</think', '</thought', '</reasoning'];
                     const lowerContent = textContent.toLowerCase();
                     for (let p of partials) {
                         let found = false;
@@ -1549,39 +1603,23 @@ Rules:
                 });
             }
             
-            let preText = [];
-            let thinkContents = [];
-            let postText = [];
-            let hasThink = false;
-            let anyThinkUnclosed = false;
-
-            for (const seg of parsedSegments) {
-                if (seg.type === 'think') {
-                    hasThink = true;
-                    if (seg.content) thinkContents.push(seg.content);
-                    if (!seg.isClosed) anyThinkUnclosed = true;
-                } else if (seg.type === 'text') {
-                    if (!hasThink) {
-                        preText.push(seg.content);
-                    } else {
-                        postText.push(seg.content);
-                    }
-                }
-            }
-            
+            // Render segments in their original order (a response may interleave
+            // several <think> blocks with text). Only *adjacent* same-type runs are
+            // merged — e.g. API-provided reasoning followed by an inline <think>
+            // at the start of the text — so ordering is never rearranged.
             let segments = [];
-            if (preText.length > 0) {
-                segments.push({ type: 'text', content: preText.join('') });
-            }
-            if (hasThink) {
-                segments.push({
-                    type: 'think',
-                    content: thinkContents.join('\n\n'),
-                    isClosed: !anyThinkUnclosed
-                });
-            }
-            if (postText.length > 0) {
-                segments.push({ type: 'text', content: postText.join('') });
+            for (const seg of parsedSegments) {
+                const prev = segments[segments.length - 1];
+                if (prev && prev.type === seg.type) {
+                    if (seg.type === 'think') {
+                        if (seg.content) prev.content += (prev.content ? '\n\n' : '') + seg.content;
+                        prev.isClosed = prev.isClosed && seg.isClosed;
+                    } else {
+                        prev.content += seg.content;
+                    }
+                } else {
+                    segments.push({ type: seg.type, content: seg.content, isClosed: seg.isClosed });
+                }
             }
             
             if (!ctx.domSegments) ctx.domSegments = [];
@@ -1633,10 +1671,20 @@ Rules:
                 }
                 
                 if (seg.type === 'text') {
-                    domSeg.el.innerHTML = DOMPurify.sanitize(marked.parse(seg.content));
+                    // Re-parse/highlight/sanitize only when this segment's content
+                    // actually changed: during streaming only the newest segment
+                    // grows, so settled segments cost nothing per throttle tick.
+                    if (domSeg.renderedContent !== seg.content) {
+                        domSeg.el.innerHTML = DOMPurify.sanitize(marked.parse(seg.content));
+                        domSeg.renderedContent = seg.content;
+                        injectCopyButtons(domSeg.el);
+                    }
                 } else if (seg.type === 'think') {
-                    domSeg.contentEl.textContent = seg.content.replace(/^\s+/, "");
-                    
+                    if (domSeg.renderedContent !== seg.content) {
+                        domSeg.contentEl.textContent = seg.content.replace(/^\s+/, "");
+                        domSeg.renderedContent = seg.content;
+                    }
+
                     let isThinkingActive = !seg.isClosed && !isFinal;
                     
                     if (seg.isClosed && !domSeg.hasAutoClosed) {
@@ -1674,8 +1722,6 @@ Rules:
                 ctx.responseContainer.appendChild(ctx.typingIndicator);
             }
             
-            injectCopyButtons(ctx.responseContainer);
-
             // Diagrams only render once the message is complete; while streaming the
             // fence stays visible as a plain code block.
             if (isFinal) renderMermaidBlocks(ctx.responseContainer);
@@ -1741,6 +1787,8 @@ Rules:
                 // loader decodes it in-place, whereas a blob: URL from a file:// page
                 // (origin "null") is not XHR-loadable inside wllama's worker.
                 wllamaEngineUrls = {
+                    // Never revoked: the URL is cached for the page's lifetime and
+                    // re-imported/passed to worker creation on later model loads.
                     js: URL.createObjectURL(new Blob([jsBytes], { type: "text/javascript" })),
                     wasm: "data:application/octet-stream;base64," + bytesToBase64(await gunzipToBytes(inline.wasm)),
                     source: "inline (offline)",
@@ -1792,6 +1840,8 @@ Rules:
                 stop: ["<|im_end|>"]
             },
             llama3: {
+                // Explicit BOS, matching how the mistral template carries its own <s>.
+                prefix: "<|begin_of_text|>",
                 msg: m => `<|start_header_id|>${m.role}<|end_header_id|>\n\n${m.content}<|eot_id|>`,
                 tail: `<|start_header_id|>assistant<|end_header_id|>\n\n`,
                 stop: ["<|eot_id|>", "<|end_of_text|>"]
@@ -1879,7 +1929,7 @@ Rules:
         function buildWllamaPrompt(key, msgs) {
             const t = CHAT_TEMPLATES[key] || CHAT_TEMPLATES.zephyr;
             if (t.render) return { prompt: t.render(msgs), stop: t.stop || [] };
-            let prompt = msgs.map(t.msg).join("");
+            let prompt = (t.prefix || "") + msgs.map(t.msg).join("");
             prompt += t.tail || "";
             return { prompt, stop: t.stop || [] };
         }
@@ -2072,7 +2122,9 @@ Rules:
                         const abortSecs = (performance.now() - genStart) / 1000;
                         if (liveStatEl) liveStatEl.textContent = `${genTokens} tok · ${abortSecs > 0 ? (genTokens / abortSecs).toFixed(1) : "0.0"} tok/s (stopped)`;
                         wllamaLog("warn", `Generation aborted after ${genTokens} tokens`);
-                        onDone(0, genTokens);
+                        // Surface the abort the same way the API path does (a real
+                        // AbortError), so callers treat it as stopped, not completed.
+                        onError(new DOMException("Generation aborted", "AbortError"));
                     } else {
                         wllamaLog("error", "Generation failed:", err.message || err);
                         onError(err);
@@ -2341,7 +2393,9 @@ Rules:
                 } else {
                     contentDiv.textContent = text; // Safe: plain text for user messages
                 }
-            } else {
+            } else if (text) {
+                // Empty AI bubbles (streaming placeholders) are overwritten by the
+                // caller immediately — skip the pointless sanitize/mermaid pass.
                 contentDiv.innerHTML = DOMPurify.sanitize(text); // AI messages may contain HTML
                 renderMermaidBlocks(contentDiv);
             }
@@ -2388,6 +2442,16 @@ Rules:
                     inputField.focus();
                     inputField.dispatchEvent(new Event('input'));
                     
+                    // Truncate history at this message. uid-based: DOM node counts
+                    // desync from `messages` around error bubbles and summaries.
+                    // Resolve the index *before* touching the DOM — removing the
+                    // bubbles while leaving `messages` intact would desync state.
+                    const idx = messages.findIndex(m => m.uid === msgUid);
+                    if (idx <= 0) {
+                        console.warn("Edit: message uid not found in history; leaving conversation unchanged.");
+                        return;
+                    }
+
                     let sibling = wrapper.nextElementSibling;
                     while (sibling) {
                         let next = sibling.nextElementSibling;
@@ -2396,10 +2460,7 @@ Rules:
                     }
                     wrapper.remove();
 
-                    // Truncate history at this message. uid-based: DOM node counts
-                    // desync from `messages` around error bubbles and summaries.
-                    const idx = messages.findIndex(m => m.uid === msgUid);
-                    if (idx > 0) messages = messages.slice(0, idx);
+                    messages = messages.slice(0, idx);
                 });
                 actionsDiv.appendChild(editBtn);
             } else if (cssClass === "ai") {

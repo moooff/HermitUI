@@ -2930,13 +2930,17 @@ return Pe}()
                     if (!window.__MERMAID_INLINE__) throw new Error('Mermaid engine not available');
                     const bytes = await gunzipToBytes(window.__MERMAID_INLINE__);
                     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
-                    await new Promise((resolve, reject) => {
-                        const s = document.createElement('script');
-                        s.src = blobUrl;
-                        s.onload = resolve;
-                        s.onerror = () => reject(new Error('Failed to load embedded mermaid engine'));
-                        document.head.appendChild(s);
-                    });
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const s = document.createElement('script');
+                            s.src = blobUrl;
+                            s.onload = resolve;
+                            s.onerror = () => reject(new Error('Failed to load embedded mermaid engine'));
+                            document.head.appendChild(s);
+                        });
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
                 }
                 return window.mermaid;
             })();
@@ -3851,20 +3855,30 @@ Rules:
                 onFailure: (error, ctx) => {
                     // escapeHtml (not sanitize): angle-bracketed text in server errors
                     // must display literally instead of being stripped.
-                    ctx.responseContainer.innerHTML += `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`;
+                    ctx.responseContainer.insertAdjacentHTML("beforeend", `<br><span style='color:#ef4444;'>❌ ${escapeHtml(error.message)}</span>`);
                 }
             });
 
             const copyBtn = responseContainer.querySelector(".copy-summary-btn");
             if (copyBtn) {
                 copyBtn.addEventListener("click", () => {
-                    navigator.clipboard.writeText(ctx.fullRawText).then(() => {
+                    copyToClipboard(ctx.fullRawText).then(() => {
                         copyBtn.textContent = "✅ Copied!";
                         setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
-                    });
+                    }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
                 });
             }
         });
+
+        // The async clipboard API is missing on insecure origins (e.g. plain
+        // http:// on a LAN address); return a rejection so callers can show a
+        // toast instead of leaking an unhandled promise rejection.
+        function copyToClipboard(text) {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                return Promise.reject(new Error("Clipboard API unavailable"));
+            }
+            return navigator.clipboard.writeText(text);
+        }
 
         function injectCopyButtons(container) {
             container.querySelectorAll("pre").forEach((pre) => {
@@ -3886,11 +3900,11 @@ Rules:
                 btn.textContent = "Copy";
                 btn.addEventListener("click", () => {
                     const code = pre.querySelector("code");
-                    navigator.clipboard.writeText(code ? code.textContent : pre.textContent).then(() => {
+                    copyToClipboard(code ? code.textContent : pre.textContent).then(() => {
                         btn.textContent = "Copied!";
                         btn.classList.add("copied");
                         setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
-                    });
+                    }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
                 });
                 pre.appendChild(btn);
             });
@@ -3919,6 +3933,7 @@ Rules:
             // Cancel a scheduled trailing call so it can't fire after the final render.
             throttled.cancel = function() {
                 if (pending) { clearTimeout(pending); pending = null; }
+                lastFn = null;
             };
             return throttled;
         }
@@ -3939,7 +3954,10 @@ Rules:
                 
                 if (!openMatch) {
                     let textContent = rawText.substring(currentIdx);
-                    const partials = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end'];
+                    // Closing variants included: a partially-streamed '</think'
+                    // must not flash as literal text before its '>' arrives.
+                    const partials = ['<think', '<thought', '<reasoning', '<|thought_start', '<|thought_end',
+                                      '</think', '</thought', '</reasoning'];
                     const lowerContent = textContent.toLowerCase();
                     for (let p of partials) {
                         let found = false;
@@ -3991,39 +4009,23 @@ Rules:
                 });
             }
             
-            let preText = [];
-            let thinkContents = [];
-            let postText = [];
-            let hasThink = false;
-            let anyThinkUnclosed = false;
-
-            for (const seg of parsedSegments) {
-                if (seg.type === 'think') {
-                    hasThink = true;
-                    if (seg.content) thinkContents.push(seg.content);
-                    if (!seg.isClosed) anyThinkUnclosed = true;
-                } else if (seg.type === 'text') {
-                    if (!hasThink) {
-                        preText.push(seg.content);
-                    } else {
-                        postText.push(seg.content);
-                    }
-                }
-            }
-            
+            // Render segments in their original order (a response may interleave
+            // several <think> blocks with text). Only *adjacent* same-type runs are
+            // merged — e.g. API-provided reasoning followed by an inline <think>
+            // at the start of the text — so ordering is never rearranged.
             let segments = [];
-            if (preText.length > 0) {
-                segments.push({ type: 'text', content: preText.join('') });
-            }
-            if (hasThink) {
-                segments.push({
-                    type: 'think',
-                    content: thinkContents.join('\n\n'),
-                    isClosed: !anyThinkUnclosed
-                });
-            }
-            if (postText.length > 0) {
-                segments.push({ type: 'text', content: postText.join('') });
+            for (const seg of parsedSegments) {
+                const prev = segments[segments.length - 1];
+                if (prev && prev.type === seg.type) {
+                    if (seg.type === 'think') {
+                        if (seg.content) prev.content += (prev.content ? '\n\n' : '') + seg.content;
+                        prev.isClosed = prev.isClosed && seg.isClosed;
+                    } else {
+                        prev.content += seg.content;
+                    }
+                } else {
+                    segments.push({ type: seg.type, content: seg.content, isClosed: seg.isClosed });
+                }
             }
             
             if (!ctx.domSegments) ctx.domSegments = [];
@@ -4075,10 +4077,20 @@ Rules:
                 }
                 
                 if (seg.type === 'text') {
-                    domSeg.el.innerHTML = DOMPurify.sanitize(marked.parse(seg.content));
+                    // Re-parse/highlight/sanitize only when this segment's content
+                    // actually changed: during streaming only the newest segment
+                    // grows, so settled segments cost nothing per throttle tick.
+                    if (domSeg.renderedContent !== seg.content) {
+                        domSeg.el.innerHTML = DOMPurify.sanitize(marked.parse(seg.content));
+                        domSeg.renderedContent = seg.content;
+                        injectCopyButtons(domSeg.el);
+                    }
                 } else if (seg.type === 'think') {
-                    domSeg.contentEl.textContent = seg.content.replace(/^\s+/, "");
-                    
+                    if (domSeg.renderedContent !== seg.content) {
+                        domSeg.contentEl.textContent = seg.content.replace(/^\s+/, "");
+                        domSeg.renderedContent = seg.content;
+                    }
+
                     let isThinkingActive = !seg.isClosed && !isFinal;
                     
                     if (seg.isClosed && !domSeg.hasAutoClosed) {
@@ -4116,8 +4128,6 @@ Rules:
                 ctx.responseContainer.appendChild(ctx.typingIndicator);
             }
             
-            injectCopyButtons(ctx.responseContainer);
-
             // Diagrams only render once the message is complete; while streaming the
             // fence stays visible as a plain code block.
             if (isFinal) renderMermaidBlocks(ctx.responseContainer);
@@ -4490,7 +4500,9 @@ Rules:
                 } else {
                     contentDiv.textContent = text; // Safe: plain text for user messages
                 }
-            } else {
+            } else if (text) {
+                // Empty AI bubbles (streaming placeholders) are overwritten by the
+                // caller immediately — skip the pointless sanitize/mermaid pass.
                 contentDiv.innerHTML = DOMPurify.sanitize(text); // AI messages may contain HTML
                 renderMermaidBlocks(contentDiv);
             }
@@ -4537,6 +4549,16 @@ Rules:
                     inputField.focus();
                     inputField.dispatchEvent(new Event('input'));
                     
+                    // Truncate history at this message. uid-based: DOM node counts
+                    // desync from `messages` around error bubbles and summaries.
+                    // Resolve the index *before* touching the DOM — removing the
+                    // bubbles while leaving `messages` intact would desync state.
+                    const idx = messages.findIndex(m => m.uid === msgUid);
+                    if (idx <= 0) {
+                        console.warn("Edit: message uid not found in history; leaving conversation unchanged.");
+                        return;
+                    }
+
                     let sibling = wrapper.nextElementSibling;
                     while (sibling) {
                         let next = sibling.nextElementSibling;
@@ -4545,10 +4567,7 @@ Rules:
                     }
                     wrapper.remove();
 
-                    // Truncate history at this message. uid-based: DOM node counts
-                    // desync from `messages` around error bubbles and summaries.
-                    const idx = messages.findIndex(m => m.uid === msgUid);
-                    if (idx > 0) messages = messages.slice(0, idx);
+                    messages = messages.slice(0, idx);
                 });
                 actionsDiv.appendChild(editBtn);
             } else if (cssClass === "ai") {
