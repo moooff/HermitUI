@@ -922,8 +922,14 @@
             --primary: #60a5fa;
             --primary-hover: #3b82f6;
             --user-bg: rgba(51, 65, 85, 0.5);
-            --ai-bg: transparent;
             --code-bg: #0f172a;
+            /* Shared dark surface/text shades so the overrides below stay literal-free */
+            --surface: #1e293b;
+            --surface-deep: #0f172a;
+            --surface-raised: #334155;
+            --border-strong: #475569;
+            --text-soft: #cbd5e1;
+            --text-muted: #94a3b8;
         }
 
         :root[data-theme="dark"] body {
@@ -936,12 +942,12 @@
         :root[data-theme="dark"] .header-btn, 
         :root[data-theme="dark"] .persona-select {
             background-color: rgba(30, 41, 59, 0.8);
-            border-color: #475569;
-            color: #cbd5e1;
+            border-color: var(--border-strong);
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .header-btn:hover,
         :root[data-theme="dark"] .persona-select:hover {
-            background-color: #1e293b;
+            background-color: var(--surface);
             color: var(--primary);
             border-color: var(--primary);
         }
@@ -951,7 +957,7 @@
             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
         }
         :root[data-theme="dark"] .msg-wrapper.user {
-            border-color: #334155;
+            border-color: var(--border-color);
         }
         :root[data-theme="dark"] .msg-content {
             color: #e2e8f0;
@@ -960,101 +966,101 @@
             border-color: rgba(255,255,255,0.15);
         }
         :root[data-theme="dark"] .msg-wrapper.user .msg-content {
-            color: #f8fafc;
+            color: var(--text-main);
         }
         :root[data-theme="dark"] pre {
-            background: #1e293b;
-            border-color: #334155;
+            background: var(--surface);
+            border-color: var(--border-color);
         }
         :root[data-theme="dark"] code {
             color: #f472b6;
         }
         :root[data-theme="dark"] .code-copy-btn {
             background: rgba(30, 41, 59, 0.85);
-            border-color: #475569;
-            color: #cbd5e1;
+            border-color: var(--border-strong);
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .code-lang-label {
-            background: #334155;
-            color: #94a3b8;
+            background: var(--surface-raised);
+            color: var(--text-muted);
         }
         :root[data-theme="dark"] .think-block {
             background: rgba(15, 23, 42, 0.5);
-            border-left-color: #475569;
+            border-left-color: var(--border-strong);
         }
         :root[data-theme="dark"] .think-block summary,
         :root[data-theme="dark"] .think-content {
-            color: #94a3b8;
+            color: var(--text-muted);
         }
         :root[data-theme="dark"] .thinking-active {
             background: rgba(15, 23, 42, 0.8);
         }
         :root[data-theme="dark"] #chatForm {
-            background: #1e293b;
-            border-color: #475569;
+            background: var(--surface);
+            border-color: var(--border-strong);
         }
         :root[data-theme="dark"] #userInput {
-            color: #f8fafc;
+            color: var(--text-main);
         }
         :root[data-theme="dark"] #userInput::placeholder {
             color: #64748b;
         }
         :root[data-theme="dark"] .jump-bottom-btn {
             background: rgba(30, 41, 59, 0.95);
-            border-color: #475569;
-            color: #cbd5e1;
+            border-color: var(--border-strong);
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .inline-stats {
             background: rgba(30, 41, 59, 0.7);
-            border-color: #475569;
-            color: #cbd5e1;
+            border-color: var(--border-strong);
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .modal {
-            background: #1e293b;
-            border-color: #334155;
+            background: var(--surface);
+            border-color: var(--border-color);
         }
         :root[data-theme="dark"] .modal h3 {
-            color: #f8fafc;
+            color: var(--text-main);
         }
         :root[data-theme="dark"] .modal input, 
         :root[data-theme="dark"] .modal textarea, 
         :root[data-theme="dark"] .modal select {
-            background: #0f172a !important;
-            border-color: #475569;
-            color: #f8fafc;
+            background: var(--surface-deep) !important;
+            border-color: var(--border-strong);
+            color: var(--text-main);
         }
         :root[data-theme="dark"] .modal-actions .cancel-btn {
-            background: #334155;
-            color: #cbd5e1;
-            border-color: #475569;
+            background: var(--surface-raised);
+            color: var(--text-soft);
+            border-color: var(--border-strong);
         }
         :root[data-theme="dark"] .model-badge {
-            background: #1e293b;
-            border-color: #334155;
-            color: #cbd5e1;
+            background: var(--surface);
+            border-color: var(--border-color);
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .empty-state h1 {
-            color: #f8fafc;
+            color: var(--text-main);
         }
         :root[data-theme="dark"] .empty-state p {
-            color: #94a3b8;
+            color: var(--text-muted);
         }
         :root[data-theme="dark"] #context-pane {
             background: rgba(30, 41, 59, 0.9);
-            border-color: #475569;
+            border-color: var(--border-strong);
         }
         :root[data-theme="dark"] #context-pane.drag-over {
             border-color: var(--primary);
             background: rgba(96, 165, 250, 0.08);
         }
         :root[data-theme="dark"] #context-input {
-            background: #0f172a;
-            border-color: #475569;
-            color: #f8fafc;
+            background: var(--surface-deep);
+            border-color: var(--border-strong);
+            color: var(--text-main);
         }
         :root[data-theme="dark"] .input-shell {
-            background: #1e293b;
-            border-color: #475569;
+            background: var(--surface);
+            border-color: var(--border-strong);
         }
         /* @wllama:start */
         /* ===== Quake-style debug console (slides down from the top) ===== */

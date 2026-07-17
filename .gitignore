@@ -2,3 +2,8 @@ dist/hermit-ui-local.html
 libs/
 .claude/settings.local.json
 CLAUDE.md
+# Local working docs (recurring agent-workflow artifacts, never committed)
+implementation_plan.md
+walkthrough.md
+launch_post.md
+__pycache__/

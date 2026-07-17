@@ -42,7 +42,7 @@ No backend and no installation required—just open the file in your browser and
 
 ## ✨ Features
 
-*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js) and the Inter font bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `dist/hermit-ui-cdn.html`).
+*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js, KaTeX, Mermaid) and the Inter font bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `dist/hermit-ui-cdn.html`).
 *   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
 *   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
 *   **🖼️ Image & Vision Support:** Upload, drag-and-drop, or paste (Ctrl+V) images straight into the input for vision-capable models. Attachments are sent as `image_url` content per the OpenAI schema, with automatic vision-model detection.
@@ -180,7 +180,7 @@ HermitUI can run **true offline inference entirely in the browser** — no local
 
 This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time. Feature highlights:
 
-*   **🔌 Truly zero-network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~5 MB file needs **no network access at all** — perfect for USB-stick distribution to air-gapped machines. The model file never leaves your machine.
+*   **🔌 Truly zero-network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~6 MB file needs **no network access at all** — perfect for USB-stick distribution to air-gapped machines. The model file never leaves your machine.
 *   **📂 Local GGUF loading:** Pick a `.gguf` file and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration.
 *   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage, so it re-downloads each session. A model can also be baked into a shareable link: `hermit-ui-wllama.html#gguf=hf:user/repo/file.gguf` (see [Configuration via URL](#-configuration-via-url)).
 *   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`, default 32k — automatically halved until it fits in memory, with the effective size shown in the status line) and **max output tokens** per reply (default 4096); temperature, top-p, and seed from the regular settings apply too.
