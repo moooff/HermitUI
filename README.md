@@ -18,7 +18,10 @@
   </p>
 </div>
 
-![HermitUI Screenshot](docs/screenshot.png)
+<div align="center">
+  <img src="promo/demo_gpu.gif" alt="HermitUI demo: a GGUF model is downloaded from Hugging Face and answers in real time — WebGPU-accelerated, fully in-browser" width="800" />
+  <p><i>In-browser inference with WebGPU acceleration: the model downloads straight into memory (timelapsed) and the answer streams in real time.</i></p>
+</div>
 
 <div align="center">
   <a href="https://moooff.github.io/HermitUI">
