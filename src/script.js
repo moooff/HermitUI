@@ -1040,6 +1040,12 @@ Rules:
                     msg = "the model doesn't fit in browser memory."
                         + (WLLAMA_HAS_JSPI ? "" : " Without WebAssembly JSPI this browser caps models at ~3 GB — use Chrome/Edge or Firefox 153+.")
                         + " Try a smaller quantization.";
+                } else if (err.name === "NotReadableError" || /NotReadableError/.test(msg)) {
+                    // Blob/File readback died mid-load: for picked files this
+                    // usually means the file changed on disk; large blobs can
+                    // also outgrow what a private window can keep in memory.
+                    msg = "the browser lost access to the model data mid-load. "
+                        + "Re-select the file, and if this is a private/incognito window try a normal one.";
                 }
                 statusEl.textContent = "Status: Error - " + msg;
                 pbContainer.style.display = "none";
@@ -1078,6 +1084,57 @@ Rules:
             return url;
         }
 
+        // A Blob whose bytes live in JS memory (a list of Uint8Array parts) instead
+        // of Chromium's blob storage. Real Blobs of this size break in ephemeral
+        // contexts (incognito/guest windows): blob data can't be paged to disk
+        // there, and partway through wllama's model load reads start failing with
+        // NotReadableError. wllama only ever touches the model blob through
+        // size/slice/arrayBuffer/stream (audited against its source — it is never
+        // postMessage'd or instanceof-checked), so overriding those four members
+        // keeps the data out of blob storage entirely. The superclass Blob is
+        // deliberately constructed empty: anything that bypassed the overrides
+        // would see 0 bytes instead of silently reading wrong data.
+        class MemBlob extends Blob {
+            constructor(parts, size, offset = 0) {
+                super([]);
+                this.memParts = parts;   // Uint8Array[], shared across slices
+                this.memOffset = offset; // window start within the parts
+                this.memSize = size;     // window length
+            }
+            get size() { return this.memSize; }
+            slice(start = 0, end = this.memSize) {
+                const clamp = (v) => Math.min(Math.max(v < 0 ? this.memSize + v : v, 0), this.memSize);
+                start = clamp(start);
+                end = clamp(end);
+                return new MemBlob(this.memParts, Math.max(end - start, 0), this.memOffset + start);
+            }
+            async arrayBuffer() {
+                const out = new Uint8Array(this.memSize);
+                let skip = this.memOffset, outPos = 0;
+                for (const part of this.memParts) {
+                    if (outPos >= this.memSize) break;
+                    if (skip >= part.byteLength) { skip -= part.byteLength; continue; }
+                    const take = Math.min(part.byteLength - skip, this.memSize - outPos);
+                    out.set(part.subarray(skip, skip + take), outPos);
+                    outPos += take;
+                    skip = 0;
+                }
+                return out.buffer;
+            }
+            stream() {
+                const CHUNK = 4 * 1024 * 1024;
+                let pos = 0;
+                return new ReadableStream({
+                    pull: (controller) => {
+                        if (pos >= this.memSize) { controller.close(); return; }
+                        const view = this.slice(pos, pos + CHUNK);
+                        pos += view.size;
+                        return view.arrayBuffer().then((ab) => controller.enqueue(new Uint8Array(ab)));
+                    },
+                });
+            }
+        }
+
         // Stream the GGUF into memory (never into browser storage — ephemerality is a
         // hard project rule, and wllama's own URL loader would persist it to OPFS).
         // The blob then goes through the exact same loadModel path as a local file.
@@ -1093,12 +1150,28 @@ Rules:
                 throw new Error(sizeErr);
             }
             const reader = res.body.getReader();
-            const chunks = [];
+            // Network chunks are compacted into large parts as they arrive:
+            // MemBlob reads scan the part list linearly, and keeping tens of
+            // thousands of tiny fragments alive would fragment the JS heap.
+            const PART_BYTES = 64 * 1024 * 1024;
+            const parts = [];
+            let pending = [], pendingBytes = 0;
+            const flushPending = () => {
+                if (!pendingBytes) return;
+                const part = new Uint8Array(pendingBytes);
+                let o = 0;
+                for (const c of pending) { part.set(c, o); o += c.byteLength; }
+                parts.push(part);
+                pending = [];
+                pendingBytes = 0;
+            };
             let loaded = 0;
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                chunks.push(value);
+                pending.push(value);
+                pendingBytes += value.byteLength;
+                if (pendingBytes >= PART_BYTES) flushPending();
                 loaded += value.byteLength;
                 // Without a content-length header the preflight above saw 0 bytes;
                 // re-check as bytes accumulate so the buffer can't grow past what
@@ -1112,7 +1185,8 @@ Rules:
                 }
                 onProgress({ loaded, total });
             }
-            return new Blob(chunks);
+            flushPending();
+            return new MemBlob(parts, loaded);
         }
 
         // Non-null while a model download is in flight; the Load button becomes a
