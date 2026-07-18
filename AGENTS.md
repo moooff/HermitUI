@@ -49,6 +49,16 @@ The code is split into `index.html`, `style.css` (which contains both the light 
 - **API Compatibility:** All network requests must strictly adhere to the OpenAI chat completions API schema. 
 - **Thinking Tags:** Ensure any UI changes preserve the ability to parse and elegantly render `<think>`, `<thought>`, and `<reasoning>` tags.
 
+## 🏎️ Model Benchmark Harness (`benchmark/`)
+A self-contained Playwright harness that races Qwen3 GGUFs (0.6B → 1.7B → 4B, Q4_K_M) through the **unmodified** `dist/hermit-ui-wllama.html` — via the `#gguf=` hash param and the app's own buttons — measures TTFT / tok/s, has every model answer the 10 demo questions in `benchmark/questions.json`, and writes `results/<timestamp>-<backend>/review.md` + `run.json` with a recommendation. See `benchmark/README.md` for setup; `models/`, `results/`, `.venv/` are gitignored (models are cached on disk by the harness — the app itself stays fully ephemeral). The ladder tops out at 4B because wllama is wasm32 (~4 GB address space); 8B+ cannot load in-browser.
+
+Operational rules learned the hard way — keep future runs working:
+- **Line-buffer stdout in every harness script** (`sys.stdout.reconfigure(line_buffering=True)` at the top, already in place). Python block-buffers stdout when redirected to a log file, so without this a 20-minute run looks completely silent to `tail -f`/monitors until exit. Any new print-based progress must flush per line.
+- **Emit a progress line *before* long silent phases** (model load, each question), not only after — a 4B question can take minutes.
+- **Long runs must be launched detached** (`nohup … > run.log 2>&1 &`) — a full ladder run exceeds typical agent tool timeouts; watch the log instead of blocking.
+- **GPU mode (WSL2):** headless Chromium inside WSL only gets SwiftShader WebGPU. `run_benchmark.py --gpu` launches Windows Edge (`--headless=new --enable-unsafe-webgpu`, CDP port 9223) via interop and connects with `connect_over_cdp`; mirrored networking makes 127.0.0.1 work in both directions. Edge must be terminated via the CDP `Browser.close` command — Playwright's `close()` only disconnects.
+- Reference results on the dev machine (16 threads / RTX 5070 Ti, July 2026): CPU → 0.6B ≈ 15 t/s, 1.7B ≈ 10 t/s, 4B ≈ 3 t/s (recommendation 1.7B); GPU → 0.6B ≈ 68 t/s, 1.7B ≈ 63 t/s, 4B ≈ 47 t/s (recommendation 4B).
+
 ## 🔄 Git & Versioning Workflow
 - **Check Origin:** ALWAYS check origin for change or new Stuff before start of edit or task
 - **Pre-Commit Review:** ALWAYS conduct a careful review of your changes before executing a `git commit` to ensure everything is correct, strictly adheres to the rules, and does not introduce any bugs or inconsistencies.

@@ -7,3 +7,6 @@ implementation_plan.md
 walkthrough.md
 launch_post.md
 __pycache__/
+benchmark/models/
+benchmark/results/
+benchmark/.venv/

@@ -1,0 +1,65 @@
+{
+  "comment": "10 demo questions every ladder model answers, each in a fresh chat. 'thinking: false' appends the Qwen3 /no_think soft switch; the one thinking question showcases HermitUI's <think> rendering and the model's reasoning quality.",
+  "questions": [
+    {
+      "id": "local-ai-1",
+      "category": "local AI",
+      "thinking": false,
+      "text": "Why is running an AI model locally in your own browser a nice thing to have? Answer with 3 short bullet points."
+    },
+    {
+      "id": "local-ai-2",
+      "category": "local AI",
+      "thinking": false,
+      "text": "Explain to a non-technical friend, in one short paragraph, how a chat AI that runs entirely inside the browser protects your privacy compared to a cloud chatbot."
+    },
+    {
+      "id": "knowledge-1",
+      "category": "world knowledge",
+      "thinking": false,
+      "text": "What is the capital of Australia, and why is it not Sydney or Melbourne? Answer in 2-3 sentences."
+    },
+    {
+      "id": "knowledge-2",
+      "category": "world knowledge",
+      "thinking": false,
+      "text": "List the eight planets of our solar system in order from the Sun, then name the largest one."
+    },
+    {
+      "id": "writing-1",
+      "category": "text creation",
+      "thinking": false,
+      "text": "Write a four-line rhyming poem about a hermit crab that finds a perfect new shell."
+    },
+    {
+      "id": "writing-2",
+      "category": "text creation",
+      "thinking": false,
+      "text": "Write a friendly product announcement of at most 80 words for HermitUI, a privacy-first chat app that runs AI models entirely in your browser."
+    },
+    {
+      "id": "reasoning-1",
+      "category": "reasoning (thinking on)",
+      "thinking": true,
+      "text": "Anna is taller than Ben. Chris is shorter than Ben. Dana is taller than Anna. Who is the shortest and who is the tallest? Answer briefly."
+    },
+    {
+      "id": "reasoning-2",
+      "category": "reasoning",
+      "thinking": false,
+      "text": "Compute 17 × 23 step by step, then state the final answer."
+    },
+    {
+      "id": "code-1",
+      "category": "code",
+      "thinking": false,
+      "text": "Write a JavaScript function that reverses a string, in a code block, then explain it in one sentence."
+    },
+    {
+      "id": "german-1",
+      "category": "multilingual (German)",
+      "thinking": false,
+      "text": "Antworte auf Deutsch: Erkläre in zwei Sätzen, warum ein Einsiedlerkrebs ein passendes Maskottchen für eine private Chat-App ist."
+    }
+  ]
+}
