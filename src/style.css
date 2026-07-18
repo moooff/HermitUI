@@ -913,6 +913,30 @@
             vertical-align: top;
         }
 
+        /* Collapsible "Attached Context" block inside a sent user message */
+        .attached-context {
+            margin-bottom: 12px;
+            background: rgba(0,0,0,0.03);
+            border-radius: 8px;
+            padding: 10px;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .attached-context summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #6b7280;
+            font-size: 0.85rem;
+            user-select: none;
+        }
+        .attached-context pre {
+            white-space: pre-wrap;
+            font-size: 0.85em;
+            margin-top: 8px;
+            color: #4b5563;
+            font-family: inherit;
+            overflow-x: auto;
+        }
+
 /* Dark Mode Overrides */
         :root[data-theme="dark"] {
             --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -958,6 +982,20 @@
         }
         :root[data-theme="dark"] .msg-wrapper.user {
             border-color: var(--border-color);
+        }
+        :root[data-theme="dark"] .msg-wrapper.summary {
+            background-color: rgba(88, 28, 135, 0.25);
+            border-bottom-color: #6b21a8;
+        }
+        :root[data-theme="dark"] .attached-context {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.08);
+        }
+        :root[data-theme="dark"] .attached-context summary {
+            color: var(--text-muted);
+        }
+        :root[data-theme="dark"] .attached-context pre {
+            color: var(--text-soft);
         }
         :root[data-theme="dark"] .msg-content {
             color: #e2e8f0;

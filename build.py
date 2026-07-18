@@ -15,15 +15,21 @@ import re
 MANIFEST_PATH = "libs/.urls.json"
 REFRESH = "--refresh" in sys.argv
 
-URLS = {
-    # marked ships no pre-minified UMD since v13; the raw lib/marked.umd.js is the
-    # only static (SRI-safe) browser build in the package.
-    "marked.js": "https://cdn.jsdelivr.net/npm/marked@18.0.6/lib/marked.umd.js",
-    "dompurify.js": "https://cdn.jsdelivr.net/npm/dompurify@3.4.12/dist/purify.min.js",
-    "highlight.css": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css",
-    "highlight.js": "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js",
-    "katex.js": "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js",
-    "inter.css": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+# Download URLs are extracted from the CDN tags in src/index.html, so each version
+# pin (and its SRI hash, via integrity_map below) lives in exactly one place. A tag
+# that stops matching fails the build instead of silently downloading a stale URL —
+# and because the extracted URL always equals the tag's URL, the SRI check can
+# never be skipped by a version mismatch. (Mermaid and the wllama engine already
+# resolve their URLs from the source the same way, further down in build().)
+# Note: marked ships no pre-minified UMD since v13; the raw lib/marked.umd.js is
+# the only static (SRI-safe) browser build in the package.
+CDN_TAG_PATTERNS = {
+    "marked.js": r'<script\s+src=["\'](https://cdn\.jsdelivr\.net/npm/marked@[^"\']+)["\']',
+    "dompurify.js": r'<script\s+src=["\'](https://cdn\.jsdelivr\.net/npm/dompurify@[^"\']+)["\']',
+    "highlight.css": r'<link\s+rel=["\']stylesheet["\']\s+href=["\'](https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+)["\']',
+    "highlight.js": r'<script\s+src=["\'](https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"\']+)["\']',
+    "katex.js": r'<script\s+src=["\'](https://cdn\.jsdelivr\.net/npm/katex@[^"\']+)["\']',
+    "inter.css": r'<link\s+href=["\'](https://fonts\.googleapis\.com/css2[^"\']+)["\']\s+rel=["\']stylesheet["\']',
 }
 
 def fetch(url, headers=None):
@@ -162,9 +168,16 @@ def build():
         return content
 
     print("📥 Downloading libraries from CDNs...")
-    cache = {}
+    urls = {}
+    for name, pattern in CDN_TAG_PATTERNS.items():
+        m = re.search(pattern, html)
+        if not m:
+            print(f"❌ {name}: CDN tag not found in src/index.html — cannot resolve its pinned URL.")
+            sys.exit(1)
+        urls[name] = m.group(1)
 
-    for name, url in URLS.items():
+    cache = {}
+    for name, url in urls.items():
         headers = {}
         # Emulate a modern browser so Google serves woff2 (its UA sniffing needs
         # the full AppleWebKit/Safari tokens; a bare Chrome token gets TTF).

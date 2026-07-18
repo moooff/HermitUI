@@ -648,13 +648,13 @@ Rules:
         });
 
         // ========== Stats Dashboard ==========
-        function updateGlobalStats(prompt, completion, tps, time, isEst = false) {
+        function updateGlobalStats(prompt, completion, tps, time, promptEst = false, completionEst = false) {
             document.getElementById("stat-prompt").textContent = prompt;
             document.getElementById("stat-completion").textContent = completion;
             document.getElementById("stat-tps").textContent = tps + " t/s";
             document.getElementById("stat-time").textContent = time + "s";
-            document.getElementById("stat-prompt-est").style.display = isEst ? "inline" : "none";
-            document.getElementById("stat-completion-est").style.display = isEst ? "inline" : "none";
+            document.getElementById("stat-prompt-est").style.display = promptEst ? "inline" : "none";
+            document.getElementById("stat-completion-est").style.display = completionEst ? "inline" : "none";
         }
 
         // ========== Modal Open/Close (focus-managed) ==========
@@ -1982,10 +1982,19 @@ Rules:
                 chatbox.removeAttribute("aria-busy");
                 inputField.focus();
                 const durationSec = (Date.now() - ctx.startTime) / 1000;
-                if (completionTokens === 0) completionTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
-                if (promptTokens === 0 && estimatePromptTokens) promptTokens = estimatePromptTokens();
+                // Fall back to char-count estimates when the server sent no usage —
+                // and keep the "(est.)" badge visible for exactly those values.
+                let promptEst = false, completionEst = false;
+                if (completionTokens === 0) {
+                    completionTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
+                    completionEst = true;
+                }
+                if (promptTokens === 0 && estimatePromptTokens) {
+                    promptTokens = estimatePromptTokens();
+                    promptEst = true;
+                }
                 const tps = completionTokens > 0 ? (completionTokens / durationSec).toFixed(1) : "0.0";
-                updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1));
+                updateGlobalStats(promptTokens, completionTokens, tps, durationSec.toFixed(1), promptEst, completionEst);
                 if (!userScrolledUp) {
                     chatbox.scrollTop = chatbox.scrollHeight;
                 }
@@ -2002,7 +2011,7 @@ Rules:
                         const currentDuration = (Date.now() - ctx.startTime) / 1000;
                         const estTokens = Math.ceil((ctx.aiReasoning.length + ctx.fullRawText.length) / 4);
                         const currentTps = currentDuration > 0.2 ? (estTokens / currentDuration).toFixed(1) : "0.0";
-                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), true);
+                        updateGlobalStats(promptTokens || "...", estTokens, currentTps, currentDuration.toFixed(1), !promptTokens, true);
                     });
                 },
                 onDone: (pt, ct) => {
@@ -2274,7 +2283,8 @@ Rules:
                     textFiles.forEach(f => {
                         combinedSafeContext += `--- ${escapeHtml(f.name)} ---\n` + escapeHtml(f.content) + "\n\n";
                     });
-                    uiText = `<details class="attached-context" style="margin-bottom: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; padding: 10px; border: 1px solid rgba(0,0,0,0.05);"><summary style="cursor: pointer; font-weight: 600; color: #6b7280; font-size: 0.85rem; user-select: none;">📎 Attached Context</summary><pre style="white-space: pre-wrap; font-size: 0.85em; margin-top: 8px; color: #4b5563; font-family: inherit; overflow-x: auto;">${combinedSafeContext.trim()}</pre></details>` + uiText;
+                    // Styled via the .attached-context rules in style.css (theme-aware).
+                    uiText = `<details class="attached-context"><summary>📎 Attached Context</summary><pre>${combinedSafeContext.trim()}</pre></details>` + uiText;
                 }
                 if (imageFiles.length > 0) {
                     // src is a locally-read/re-encoded data URL; alt is escaped filename.
