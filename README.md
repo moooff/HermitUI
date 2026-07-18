@@ -30,6 +30,11 @@
   <p><i>Left: connect it to your local AI server. Right: one click downloads a small but capable model (Qwen3-0.6B, ~380 MB) and chats <b>fully inside your browser</b> — no server at all.</i></p>
 </div>
 
+<div align="center">
+  <img src="promo/demo.gif" alt="HermitUI True Offline demo: a GGUF model is downloaded from Hugging Face and answers fully in-browser" width="800" />
+  <p><i>True Offline mode in action: paste a Hugging Face GGUF link, the model downloads straight into memory (download timelapsed), and the answer streams token-by-token — 100% in your browser, no server involved.</i></p>
+</div>
+
 HermitUI is a highly responsive web interface tailored for interacting with local AI models. It ships as **a single, self-contained `.html` file** built with nothing but vanilla HTML, CSS, and JavaScript. During development the source is split into `src/index.html`, `src/style.css`, and `src/script.js` for maintainability, and `build.py` assembles them into the standalone single-file deliverable.
 
 No backend and no installation required—just open the file in your browser and start chatting!
