@@ -12,8 +12,9 @@ sys.stdout.reconfigure(line_buffering=True)
 
 MODELS_DIR = Path(__file__).parent / "models"
 
-# The ladder, smallest first. wllama runs in wasm32 (~4 GB address space for
-# model + KV cache + runtime), so 8B+ cannot load in-browser — 4B is the ceiling.
+# The ladder, smallest first. The 8B rung (~5 GB) needs a browser with WASM
+# Memory64 (current Chrome/Edge have it); on older wasm32-only browsers it
+# fails to load and the harness records that as the device's ceiling.
 LADDER = [
     {
         "name": "Qwen3-0.6B",
@@ -29,6 +30,11 @@ LADDER = [
         "name": "Qwen3-4B",
         "file": "Qwen3-4B-Q4_K_M.gguf",
         "repo": "unsloth/Qwen3-4B-GGUF",
+    },
+    {
+        "name": "Qwen3-8B",
+        "file": "Qwen3-8B-Q4_K_M.gguf",
+        "repo": "unsloth/Qwen3-8B-GGUF",
     },
 ]
 

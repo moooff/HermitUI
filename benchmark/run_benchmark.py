@@ -114,7 +114,8 @@ def launch_edge():
 def benchmark_model(page, base: str, model: dict, questions, cfg) -> dict:
     """Load one model in a fresh page and run all questions. Returns rung record."""
     model_url = f"{base}/benchmark/models/{model['file']}"
-    page_url = f"{base}/{APP_PATH}#gguf=" + urllib.parse.quote(model_url, safe="")
+    page_url = (f"{base}/{APP_PATH}#gguf=" + urllib.parse.quote(model_url, safe="")
+                + "&persona=" + urllib.parse.quote(cfg["persona"], safe=""))
     rec = {
         "model": model["name"], "file": model["file"],
         "size_bytes": (MODELS_DIR / model["file"]).stat().st_size,
@@ -192,7 +193,22 @@ def benchmark_model(page, base: str, model: dict, questions, cfg) -> dict:
                 """() => document.getElementById("chatbox").getAttribute("aria-busy") !== "true" """,
                 timeout=30_000,
             )
+        # aria-busy clears before the app's throttled final flush — reading now
+        # loses the answer's tail. Wait for the app's own isWaiting flag, then
+        # for the message content to stop growing.
+        page.wait_for_function("() => !isWaiting", timeout=30_000)
         gen_s = time.monotonic() - t_send
+        prev_len, stable, deadline = -1, 0, time.monotonic() + 10
+        while stable < 2 and time.monotonic() < deadline:
+            cur = page.evaluate(
+                """() => { const m = messages[messages.length - 1];
+                           return m && m.role === "assistant" ? m.content.length : -1; }"""
+            )
+            if cur == prev_len and cur >= 0:
+                stable += 1
+            else:
+                prev_len, stable = cur, 0
+            time.sleep(0.25)
 
         stats = page.evaluate(
             """() => ({
@@ -323,6 +339,9 @@ THINK_RE = re.compile(r"<(think|thought|reasoning)>(.*?)</\1>", re.DOTALL)
 def split_think(answer: str):
     thinks = [m.group(2).strip() for m in THINK_RE.finditer(answer or "")]
     visible = THINK_RE.sub("", answer or "").strip()
+    # An unmatched tag (e.g. truncated thinking) would make markdown renderers
+    # swallow everything after it — escape whatever survived.
+    visible = re.sub(r"</?(think|thought|reasoning)>", lambda m: m.group().replace("<", "&lt;"), visible)
     return visible, "\n\n".join(thinks).strip()
 
 
@@ -393,6 +412,8 @@ def main():
     ap.add_argument("--question-timeout", type=int, default=DEFAULT_QUESTION_TIMEOUT_S,
                     help="seconds per question before Stop is clicked (default 300)")
     ap.add_argument("--models", help="comma-separated subset, e.g. 0.6B,1.7B")
+    ap.add_argument("--persona", default="general",
+                    help="app persona for the answers (default: general)")
     args = ap.parse_args()
 
     ladder = LADDER
@@ -408,7 +429,7 @@ def main():
 
     questions = json.loads((BENCH_DIR / "questions.json").read_text(encoding="utf-8"))["questions"]
     cfg = {"ladder": ladder, "threshold": args.threshold, "ctx": args.ctx,
-           "question_timeout": args.question_timeout}
+           "question_timeout": args.question_timeout, "persona": args.persona}
 
     backends = ["cpu", "gpu"] if args.both else (["gpu"] if args.gpu else ["cpu"])
     server = ensure_server(args.port)
