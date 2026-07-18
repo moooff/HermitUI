@@ -14,6 +14,7 @@
     <a href="#-troubleshooting-cors">Troubleshooting</a> •
     <a href="#-built-with">Built With</a> •
     <a href="#-architecture--philosophy">Architecture</a> •
+    <a href="#-in-browser-inference-wllama-build">In-Browser AI</a> •
     <a href="#-roadmap">Roadmap</a>
   </p>
 </div>
@@ -173,11 +174,7 @@ This generates the standalone build at `dist/hermit-ui-standalone.html`, copies 
 *   [Mermaid](https://mermaid.js.org/) - For diagram rendering from ```` ```mermaid ```` fences
 *   [Google Fonts (Inter)](https://fonts.google.com/specimen/Inter) - For clean, modern typography
 
-## 🗺️ Roadmap
-
-HermitUI is under active development. Here's what's in progress and on the horizon.
-
-### 🧪 In-Browser Inference (wllama build)
+## 🧪 In-Browser Inference (wllama build)
 
 HermitUI can run **true offline inference entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
 
@@ -191,7 +188,7 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 *   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.
 *   **⏱️ Live tokens/s:** A real-time generation-speed readout while the model streams.
 
-#### Try it in 60 seconds
+### Try it in 60 seconds
 
 **One click:** open the [🧠 In-Browser AI Demo](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) — it pre-fills Qwen3-0.6B (~380 MB) via the `#gguf=` URL parameter; confirm the banner and chat.
 
@@ -201,7 +198,7 @@ Or manually:
 2. Settings → Backend Mode → **True Offline (Wllama GGUF)**, then paste into the URL field: `hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf`
 3. Hit **⬇️ Load** (~400 MB download) and chat — no server, no install, and nothing persisted.
 
-#### Browser support & model size limits
+### Browser support & model size limits
 
 How large a model you can load — and how fast it runs — depends on two WebAssembly/GPU features of your browser, which wllama detects at load time:
 
@@ -216,9 +213,12 @@ In practice:
 *   **Firefox before 153:** Without JSPI, wllama falls back to copying the **entire model file into the 4 GiB WASM heap**. Models larger than roughly ~3 GB fail with the cryptic error `source array is too long` (an unchecked allocation failure inside wllama). **Fix: update to Firefox 153+**, which enables JSPI by default. You can verify support by typing `!!WebAssembly.Suspending` into the DevTools console — it must print `true`.
 *   **Firefox speed:** Even with JSPI, Firefox's WebGPU support is much newer than Chrome's and may not initialize inside the wllama worker, dropping inference to single-threaded CPU WASM — noticeably slower than Chrome on the same machine. Check the debug console (verbosity **Debug**, then reload the model) to see whether a WebGPU device or the CPU backend was picked. If WebGPU misbehaves, try unchecking the WebGPU toggle — a clean CPU run can beat a broken GPU path.
 
-### 🔭 Under Consideration
+## 🗺️ Roadmap
 
-*   Split-GGUF (`-00001-of-000NN.gguf`) support for the URL loader.
+*   **Split-GGUF support:** load sharded models (`-00001-of-000NN.gguf`) through the in-browser URL loader.
+*   **Companion text-analysis app:** a separate ultra-light single-file build (Transformers.js + WebGPU, sub-200 MB models) dedicated to summarization and text analysis.
+
+The full list of ideas and tasks lives in [`docs/backlog.md`](docs/backlog.md).
 
 ## 📄 License
 
