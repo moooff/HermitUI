@@ -157,7 +157,7 @@ def benchmark_model(page, base: str, model: dict, questions, cfg) -> dict:
     for i, q in enumerate(questions):
         print(f"   ▷ {q['id']} ({i + 1}/{len(questions)})…")
         page.click("#clearBtn")
-        prompt = q["text"] + ("" if q["thinking"] else " /no_think")
+        prompt = q["text"] + (" /no_think" if not q["thinking"] and model.get("nothink") else "")
         prev = page.evaluate("document.querySelectorAll('.msg-wrapper.ai .msg-content').length")
         page.fill("#userInput", prompt)
         t_send = time.monotonic()
@@ -297,13 +297,14 @@ def run_backend(pw, backend: str, base: str, questions, cfg) -> dict:
               f"crossOriginIsolated={run['device']['crossOriginIsolated']}, "
               f"gpu={run['device']['gpuAdapter']}")
 
-        stop_ladder = None
+        stopped = {}  # family -> reason; a bad rung only skips the rest of its own family
         for model in cfg["ladder"]:
             print(f"\n▶ {model['name']} ({model['file']})")
-            if stop_ladder:
+            family = model.get("family", model["name"])
+            if family in stopped:
                 run["models"].append({"model": model["name"], "file": model["file"],
-                                      "status": f"skipped ({stop_ladder})", "questions": []})
-                print(f"   ⏭️ skipped ({stop_ladder})")
+                                      "status": f"skipped ({stopped[family]})", "questions": []})
+                print(f"   ⏭️ skipped ({stopped[family]})")
                 continue
             context = browser.new_context()
             page = context.new_page()
@@ -312,7 +313,7 @@ def run_backend(pw, backend: str, base: str, questions, cfg) -> dict:
             context.close()  # unload model, free memory before next rung
             run["models"].append(rec)
             if rec["status"] in ("too_slow", "load_failed", "load_timeout"):
-                stop_ladder = "previous rung " + ("too slow" if rec["status"] == "too_slow" else "failed to load")
+                stopped[family] = "previous rung " + ("too slow" if rec["status"] == "too_slow" else "failed to load")
     finally:
         if backend == "gpu":
             # plain close() only disconnects CDP; actually terminate Edge

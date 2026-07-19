@@ -12,29 +12,52 @@ sys.stdout.reconfigure(line_buffering=True)
 
 MODELS_DIR = Path(__file__).parent / "models"
 
-# The ladder, smallest first. The 8B rung (~5 GB) needs a browser with WASM
-# Memory64 (current Chrome/Edge have it); on older wasm32-only browsers it
-# fails to load and the harness records that as the device's ceiling.
+# The ladder, smallest first within each family. The ~5 GB rungs (Qwen3-8B,
+# Gemma-4-E4B) need a browser with WASM Memory64 (current Chrome/Edge have it);
+# on older wasm32-only browsers they fail to load and the harness records that
+# as the device's ceiling.
+# "family" groups rungs so a too-slow/failed rung only skips the rest of its
+# own family; "nothink" marks models with a /no_think soft switch (Qwen3).
 LADDER = [
     {
         "name": "Qwen3-0.6B",
         "file": "Qwen3-0.6B-Q4_K_M.gguf",
         "repo": "unsloth/Qwen3-0.6B-GGUF",
+        "family": "qwen3",
+        "nothink": True,
     },
     {
         "name": "Qwen3-1.7B",
         "file": "Qwen3-1.7B-Q4_K_M.gguf",
         "repo": "unsloth/Qwen3-1.7B-GGUF",
+        "family": "qwen3",
+        "nothink": True,
     },
     {
         "name": "Qwen3-4B",
         "file": "Qwen3-4B-Q4_K_M.gguf",
         "repo": "unsloth/Qwen3-4B-GGUF",
+        "family": "qwen3",
+        "nothink": True,
     },
     {
         "name": "Qwen3-8B",
         "file": "Qwen3-8B-Q4_K_M.gguf",
         "repo": "unsloth/Qwen3-8B-GGUF",
+        "family": "qwen3",
+        "nothink": True,
+    },
+    {
+        "name": "Gemma-4-E2B",
+        "file": "gemma-4-E2B-it-Q4_K_M.gguf",
+        "repo": "unsloth/gemma-4-E2B-it-GGUF",
+        "family": "gemma4",
+    },
+    {
+        "name": "Gemma-4-E4B",
+        "file": "gemma-4-E4B-it-Q4_K_M.gguf",
+        "repo": "unsloth/gemma-4-E4B-it-GGUF",
+        "family": "gemma4",
     },
 ]
 

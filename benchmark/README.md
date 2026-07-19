@@ -1,6 +1,6 @@
 # HermitUI Model Benchmark
 
-Races progressively larger Qwen3 GGUFs through the **unmodified**
+Races progressively larger GGUFs (Qwen3 and Gemma 4 families) through the **unmodified**
 `dist/hermit-ui-wllama.html` and recommends the largest model your machine
 runs at a usable speed. The harness drives the real app with Playwright
 exactly like a user would — via the `#gguf=` link parameter and the app's own
@@ -19,9 +19,15 @@ never stores anything.
 | Qwen3-0.6B | `Qwen3-0.6B-Q4_K_M.gguf` | 0.4 GB |
 | Qwen3-1.7B | `Qwen3-1.7B-Q4_K_M.gguf` | 1.1 GB |
 | Qwen3-4B | `Qwen3-4B-Q4_K_M.gguf` | 2.5 GB |
+| Qwen3-8B | `Qwen3-8B-Q4_K_M.gguf` | 4.8 GB |
+| Gemma-4-E2B | `gemma-4-E2B-it-Q4_K_M.gguf` | 3.0 GB |
+| Gemma-4-E4B | `gemma-4-E4B-it-Q4_K_M.gguf` | 4.7 GB |
 
-It ends at 4B on purpose: wllama runs in wasm32, so model + KV cache +
-runtime must fit a ~4 GB address space — 8B+ cannot load in-browser.
+The ~5 GB rungs (Qwen3-8B, Gemma-4-E4B) exceed the classic wasm32 ~4 GB
+address space and need a browser with WASM Memory64 (current Chrome/Edge);
+where it's missing they fail to load and that failure is the device's
+recorded ceiling. A too-slow or failed rung only skips the *rest of its own
+family* — the other family still gets its turn.
 
 ## Setup
 
@@ -29,7 +35,7 @@ runtime must fit a ~4 GB address space — 8B+ cannot load in-browser.
 cd benchmark
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/playwright install chromium
-python3 download_models.py     # one-time ~4 GB, resumable, skips existing
+python3 download_models.py     # one-time ~16 GB, resumable, skips existing
 ```
 
 ## Run
@@ -50,8 +56,10 @@ Notes:
   5 tok/s) after two questions; larger rungs are then skipped.
 - Answers use the app's default sampling settings (temperature 0.7), i.e.
   exactly what a user gets — expect some run-to-run variation.
-- All questions carry Qwen3's `/no_think` switch except `reasoning-1`, which
-  runs with thinking enabled to exercise HermitUI's `<think>` rendering.
+- For models with a `/no_think` soft switch (`"nothink"` in the ladder, i.e.
+  Qwen3) all questions carry it except `reasoning-1`, which runs with thinking
+  enabled to exercise HermitUI's `<think>` rendering. Gemma has no such
+  switch, so its prompts are sent verbatim.
 
 ## Results
 
