@@ -22,11 +22,12 @@ never stores anything.
 | Qwen3-8B | `Qwen3-8B-Q4_K_M.gguf` | 4.8 GB |
 | Gemma-4-E2B | `gemma-4-E2B-it-Q4_K_M.gguf` | 3.0 GB |
 | Gemma-4-E4B | `gemma-4-E4B-it-Q4_K_M.gguf` | 4.7 GB |
+| Gemma-4-12B | `gemma-4-12b-it-Q4_K_M.gguf` | 7.1 GB |
 
-The ~5 GB rungs (Qwen3-8B, Gemma-4-E4B) exceed the classic wasm32 ~4 GB
-address space and need a browser with WASM Memory64 (current Chrome/Edge);
-where it's missing they fail to load and that failure is the device's
-recorded ceiling. A too-slow or failed rung only skips the *rest of its own
+The rungs above ~4 GB (Qwen3-8B, Gemma-4-E4B, Gemma-4-12B) exceed the classic
+wasm32 address space and need a browser with WASM Memory64 (current
+Chrome/Edge); where it's missing they fail to load and that failure is the
+device's recorded ceiling. A too-slow or failed rung only skips the *rest of its own
 family* — the other family still gets its turn.
 
 ## Setup
@@ -35,7 +36,7 @@ family* — the other family still gets its turn.
 cd benchmark
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/playwright install chromium
-python3 download_models.py     # one-time ~16 GB, resumable, skips existing
+python3 download_models.py     # one-time ~23 GB, resumable, skips existing
 ```
 
 ## Run

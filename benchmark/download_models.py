@@ -59,6 +59,12 @@ LADDER = [
         "repo": "unsloth/gemma-4-E4B-it-GGUF",
         "family": "gemma4",
     },
+    {
+        "name": "Gemma-4-12B",
+        "file": "gemma-4-12b-it-Q4_K_M.gguf",
+        "repo": "unsloth/gemma-4-12b-it-GGUF",
+        "family": "gemma4",
+    },
 ]
 
 CHUNK = 1 << 20  # 1 MiB
