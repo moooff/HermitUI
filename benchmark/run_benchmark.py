@@ -420,7 +420,13 @@ def main():
     ladder = LADDER
     if args.models:
         wanted = {w.strip().lower() for w in args.models.split(",")}
-        ladder = [m for m in LADDER if any(w in m["name"].lower() for w in wanted)]
+        # Match each token against whole hyphen-delimited name parts (or the full
+        # name), not substrings — otherwise "4B" also catches "Gemma-4-E4B".
+        def _matches(name):
+            low = name.lower()
+            parts = set(low.split("-"))
+            return any(w == low or w in parts for w in wanted)
+        ladder = [m for m in LADDER if _matches(m["name"])]
         if not ladder:
             sys.exit(f"❌ no ladder model matches {args.models}")
     ensure_models(ladder)
