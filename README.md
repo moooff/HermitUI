@@ -221,9 +221,7 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 
 ### 📊 Benchmark results
 
-A [Playwright harness](benchmark/) races the whole ladder through the **unmodified** `dist/hermit-ui-wllama.html` — driving the real app via `#gguf=` and its own buttons, exactly as a user would — and has every model answer the same [10 questions](benchmark/questions.json), scored for correctness by hand.
-
-**Method:** Ryzen-class 16 threads, RTX 5070 Ti, Edge (WebGPU), 3 runs per model with the browser profile wiped between each. The harness [refuses to start](benchmark/run_benchmark.py) if another process is holding more than 1.5 GB of VRAM, and records GPU memory at both ends of every run — a contended GPU still loads models normally while understating tok/s by 20× or more, so it is checked rather than assumed. All figures below come from runs that passed that check.
+A [Playwright harness](benchmark/) drives the **unmodified** `dist/hermit-ui-wllama.html` — via `#gguf=` and the app's own buttons, exactly as a user would — and has every model answer the same [10 questions](benchmark/questions.json), scored for correctness by hand. 16 threads, RTX 5070 Ti, Edge (WebGPU), 3+ runs per model on a verified-idle GPU (the harness [refuses to start](benchmark/run_benchmark.py) otherwise).
 
 | Model | Size | Load | avg TTFT | decode t/s | end-to-end t/s |
 |---|---:|---:|---:|---:|---:|
@@ -234,30 +232,22 @@ A [Playwright harness](benchmark/) races the whole ladder through the **unmodifi
 | Gemma-4-E2B | 3.1 GB | 26.5s | 9.3s | 40 | 6.1 |
 | Gemma-4-E4B | 5.0 GB | 36.6s | 11.7s | 32 | 5.6 |
 | Gemma-4-12B | 7.1 GB | 58.6s | 15.2s | 36 | 4.0 |
-| gpt-oss-20b † | 12.1 GB | 84s | 3.4s | **43** | 15 |
+| gpt-oss-20b † | 12.1 GB | ~80s | 3.4s | **43** | 15 |
 
 *Load = engine init + model transfer from a local HTTP server (not your Hugging Face download time). Decode = pure generation speed with TTFT excluded; end-to-end = what the app's own stats readout shows, prompt processing included.*
 
-† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it is a reasoning model** — three caveats on its row. First, it loaded three times out of three, and two of the three runs answered all 10 questions correctly at ~43 t/s; the averages above come from those two complete runs. Second, its end-to-end column is not comparable to the others: gpt-oss emits a hidden reasoning trace before answering, and the app's stats divide *visible* answer tokens by *total* wall-clock, so thinking time inflates the denominator (one terse-but-correct logic answer read 2.9 t/s end-to-end while decoding at 40.5 t/s). Third, **one run in three stalled**: a writing question produced no first token within 120 s, where the same question took ~4.5 s in the other two runs. Decode speed is excellent and the answers are genuinely good, but that intermittent stall is unresolved — treat the 12 GB rung as promising rather than dependable.
+† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it is a reasoning model.** Its hidden thinking trace inflates the end-to-end denominator — one terse-but-correct logic answer read 2.9 t/s end-to-end while decoding at 40.5 t/s — so that column is not comparable to the rest. It also **stalled once in four runs**: no first token within 120 s on a question that took ~4.5 s otherwise. Decode speed is excellent and the answers are genuinely good; treat the 12 GB rung as promising rather than dependable.
 
-CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/s, Qwen3-4B ≈ 3 t/s (unusable), Gemma-4-E2B ≈ 1.6 t/s (unusable).
+CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/s. Everything larger is unusable — Qwen3-4B ≈ 3 t/s, Gemma-4-E2B ≈ 1.6 t/s.
 
 **What the numbers say:**
 
 *   **Qwen3 is the sweet spot in a browser.** Even 8B stays interactive on WebGPU, and TTFT is ~1 s across the whole family.
-*   **Gemma-4 decodes fine but its prompt processing is much slower under wllama** — 9–15 s before the first token, which drags the end-to-end figure into single digits even though tokens then arrive at 30–40 t/s. All its answers were correct; it's an engine-side prompt-eval gap, not a model-quality one.
-*   **12.1 GB runs, and runs well.** gpt-oss-20b loads in ~84 s and decodes at ~43 t/s — faster than the 7.1 GB Gemma-4-12B, on a 16 GB card. The practical ceiling is much higher than we first assumed. WASM Memory64 (Chrome/Edge) is still required: without it, everything above ~4 GB fails outright.
-*   **Free VRAM is the single biggest variable — check it before you benchmark anything.** The first gpt-oss-20b measurements here were taken with a game holding ~11 GB of the same 16 GB card, and produced 1.9 t/s decode and 39 s TTFT. Identical build, identical model, closed the game: 43 t/s and 3.4 s. That is a **23× swing** from GPU memory pressure alone, and it dwarfs every other factor in this table. If your numbers look nothing like these, check what else is on your GPU first.
-*   **A sparse MoE beats a dense model of similar footprint.** gpt-oss-20b activates only ~3.6B parameters per token and out-decodes dense Gemma-4-12B despite being 70% larger on disk — architecture, not file size, predicts throughput.
-*   Model **size barely dents decode speed** compared to the WebGPU-vs-CPU gap: 0.6B → 8B costs ~30 % of decode throughput, while dropping to CPU costs ~80 %.
+*   **Gemma-4 decodes fine but prompt-processes slowly under wllama** — 9–15 s before the first token drags the end-to-end figure into single digits even though tokens then arrive at 30–40 t/s. All its answers were correct: an engine-side prompt-eval gap, not a model-quality one.
+*   **12.1 GB runs, and runs well.** gpt-oss-20b out-decodes the 7.1 GB Gemma-4-12B on a 16 GB card — a sparse MoE activating only ~3.6B params per token beats a dense model despite being 70 % larger on disk. Architecture predicts throughput, not file size. WASM Memory64 (Chrome/Edge) is required: without it, anything above ~4 GB fails outright.
+*   **The GPU matters more than the model.** 0.6B → 8B costs ~30 % of decode throughput; dropping to CPU costs ~80 %. Free VRAM matters most of all — a contended GPU understated these same runs by 23×, so if your numbers look nothing like these, check what else is on your card first.
 
-**Reproduce it yourself:** [`benchmark/README.md`](benchmark/README.md) has the setup (one `pip install`, no Node). Each run writes `review.md` — the timings *plus every answer in full*, so quality is reviewable and not just asserted — and a machine-readable `run.json` into `benchmark/results/`, which stays local and out of the repo along with the downloaded models.
-
-```bash
-python3 benchmark/download_models.py                 # fetch the ladder (~37 GB total)
-python3 benchmark/run_benchmark.py --gpu             # or --both for CPU + GPU
-python3 benchmark/run_benchmark.py --models 4B,8B    # just a subset
-```
+**[Reproduce it yourself](benchmark/README.md)** — one `pip install`, no Node. Each run writes `review.md` with the timings *and every answer in full*, so quality is reviewable and not just asserted, plus a machine-readable `run.json`.
 
 ### Browser support & model size limits
 
