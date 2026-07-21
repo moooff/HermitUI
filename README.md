@@ -15,6 +15,8 @@
     <a href="#-built-with">Built With</a> •
     <a href="#-architecture--philosophy">Architecture</a> •
     <a href="#-in-browser-inference-wllama-build">In-Browser AI</a> •
+    <a href="#-one-click-model-links">Try a Model</a> •
+    <a href="#-benchmark-results">Benchmarks</a> •
     <a href="#-roadmap">Roadmap</a>
   </p>
 </div>
@@ -197,6 +199,51 @@ Or manually:
 1. Open [`dist/hermit-ui-wllama.html`](dist/hermit-ui-wllama.html) in your browser (download the raw file first).
 2. Settings → Backend Mode → **True Offline (Wllama GGUF)**, then paste into the URL field: `hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf`
 3. Hit **⬇️ Load** (~400 MB download) and chat — no server, no install, and nothing persisted.
+
+### 🚀 One-click model links
+
+Every link below opens the wllama build with that model pre-filled via `#gguf=` — confirm the banner and it streams straight into memory. **Nothing is written to disk or browser storage**, so each session re-downloads. Start small; the bigger rungs need a modern Chrome/Edge (see [Browser support](#browser-support--model-size-limits)).
+
+| Model | Download | Try it |
+|---|---|---|
+| **Qwen3-0.6B** | 0.4 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) |
+| **Qwen3-1.7B** | 1.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf) |
+| **Qwen3-4B** ⭐ | 2.5 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf) |
+| **Qwen3-8B** | 5.0 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf) |
+| **Gemma-4-E2B** | 3.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf) |
+| **Gemma-4-E4B** | 5.0 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf) |
+| **Gemma-4-12B** | 7.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf) |
+
+⭐ = best speed/quality trade-off on a WebGPU machine. All quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
+
+### 📊 Benchmark results
+
+A [Playwright harness](benchmark/) races the whole ladder through the **unmodified** `dist/hermit-ui-wllama.html` — driving the real app via `#gguf=` and its own buttons — and has every model answer the same 10 questions.
+
+**Reference machine:** Ryzen-class 16 threads, RTX 5070 Ti, Edge (WebGPU), 3 clean runs per model, freshly purged browser profile each time.
+
+| Model | Size | Load | avg TTFT | decode t/s | end-to-end t/s |
+|---|---:|---:|---:|---:|---:|
+| Qwen3-0.6B | 0.4 GB | 5.7s | 0.66s | **79** | 56 |
+| Qwen3-1.7B | 1.1 GB | 11.3s | 0.91s | **73** | 54 |
+| Qwen3-4B | 2.5 GB | 21.4s | 1.03s | **64** | 43 |
+| Qwen3-8B | 5.0 GB | 41.5s | 1.17s | **55** | 35 |
+| Gemma-4-E2B | 3.1 GB | 26.5s | 9.3s | 40 | 6.1 |
+| Gemma-4-E4B | 5.0 GB | 36.6s | 11.7s | 32 | 5.6 |
+| Gemma-4-12B | 7.1 GB | 58.6s | 15.2s | 36 | 4.0 |
+
+*Load = engine init + model transfer from a local HTTP server (not your Hugging Face download time). Decode = pure generation speed with TTFT excluded; end-to-end = what the app's own stats readout shows, prompt processing included.*
+
+CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/s, Qwen3-4B ≈ 3 t/s (unusable), Gemma-4-E2B ≈ 1.6 t/s (unusable).
+
+**What the numbers say:**
+
+*   **Qwen3 is the sweet spot in a browser.** Even 8B stays interactive on WebGPU, and TTFT is ~1 s across the whole family.
+*   **Gemma-4 decodes fine but its prompt processing is much slower under wllama** — 9–15 s before the first token, which drags the end-to-end figure into single digits even though tokens then arrive at 30–40 t/s. All its answers were correct; it's an engine-side prompt-eval gap, not a model-quality one.
+*   **7.1 GB is the current in-browser ceiling.** Gemma-4-12B loads only because Chrome/Edge ship WASM Memory64; without it, everything above ~4 GB fails outright.
+*   Model **size barely dents decode speed** compared to the WebGPU-vs-CPU gap: 0.6B → 8B costs ~30 % of decode throughput, while dropping to CPU costs ~80 %.
+
+Raw reports (`review.md` with every answer + `run.json`) live in `benchmark/results/`; see [`benchmark/README.md`](benchmark/README.md) to reproduce on your own hardware.
 
 ### Browser support & model size limits
 
