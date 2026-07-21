@@ -65,6 +65,15 @@ LADDER = [
         "repo": "unsloth/gemma-4-12b-it-GGUF",
         "family": "gemma4",
     },
+    # MXFP4 (the format gpt-oss ships in natively), not Q4_K_M like the rest of
+    # the ladder — and at 12.1 GB well above the 7.1 GB rung that was the known
+    # in-browser ceiling, so a failed load is itself a result worth recording.
+    {
+        "name": "gpt-oss-20b",
+        "file": "gpt-oss-20b-MXFP4.gguf",
+        "repo": "ggml-org/gpt-oss-20b-GGUF",
+        "family": "gptoss",
+    },
 ]
 
 CHUNK = 1 << 20  # 1 MiB
