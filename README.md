@@ -60,7 +60,7 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 
 *   **🔌 The app needs no network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~6 MB file is complete on its own — perfect for USB-stick distribution to air-gapped machines. Pair it with a `.gguf` from disk and the whole stack is offline; only the *optional* download-by-URL path touches the network.
 *   **📂 Local GGUF loading:** Pick a `.gguf` file from disk and run it fully client-side, with an optional **WebGPU** toggle for hardware acceleration. **Download a model once, keep it, and re-pick it every session** — no network involved, so this is also the fastest way to use HermitUI repeatedly (and the only way on an air-gapped machine).
-*   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage. That means a URL-loaded model re-downloads each session; to avoid that, save the `.gguf` once and load it from disk with the file picker instead. A model can also be baked into a shareable link: `hermit-ui-wllama.html#gguf=hf:user/repo/file.gguf` (see [Configuration via URL](#-configuration-via-url)).
+*   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage. A URL-loaded model is therefore fetched again next session; keep the `.gguf` on disk and load it with the file picker to [download it only once](#download-once-reuse-offline). A model can also be baked into a shareable link: `hermit-ui-wllama.html#gguf=hf:user/repo/file.gguf` (see [Configuration via URL](#-configuration-via-url)).
 *   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`, default 32k — automatically halved until it fits in memory, with the effective size shown in the status line) and **max output tokens** per reply (default 4096); temperature, top-p, and seed from the regular settings apply too.
 *   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
 *   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.
@@ -68,7 +68,7 @@ This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the
 
 ### 🚀 One-click model links
 
-Every link below opens the wllama build with that model pre-filled via `#gguf=` — confirm the banner and it streams straight into memory. **Nothing is written to disk or browser storage**, so each session re-downloads. Start small; the bigger rungs need a modern Chrome/Edge (see [Browser support](#browser-support--model-size-limits)).
+Every link below opens the wllama build with that model pre-filled via `#gguf=` — confirm the banner and it streams straight into memory. **Nothing is written to browser storage**, so a link-loaded model is fetched again next session unless you [keep a copy of the `.gguf`](#download-once-reuse-offline). Start small; the bigger rungs need a modern Chrome/Edge (see [Browser support](#browser-support--model-size-limits)).
 
 | Model | Download | Try it |
 |---|---|---|
@@ -83,7 +83,11 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 
 ⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs Chrome/Edge and a mostly-free GPU — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
 
-**Downloading once instead of every session:** these links re-fetch the model each time, which is fine for a first try but wasteful afterwards. Save the `.gguf` locally (the links point at the same Hugging Face files, or grab them from the repos directly), then use **Settings → Backend Mode → True Offline → the file picker** to load it from disk — no download, and it works with no network at all. Browsers don't allow a file path to be pre-filled from a link, so it's a manual pick each session; you still pay the model's load time (≈6 s for 0.6B up to ≈59 s for 12B, see the table below), just not the transfer.
+### Download once, reuse offline
+
+**You only pay for the download once.** The links above re-fetch the model each time, which is fine for a first try but wasteful afterwards. Keep the `.gguf` on disk instead — the links point at the same Hugging Face files, or grab them from the repos directly — then use **Settings → Backend Mode → True Offline → the file picker** to load it. No download, no network at all, and it's the only way to work on an air-gapped machine.
+
+Browsers don't allow a file path to be pre-filled from a link, so it stays a manual pick each session, and you still pay the model's load time (≈6 s for 0.6B up to ≈59 s for 12B, see the table below) — just not the transfer.
 
 ## 📊 Benchmarks
 
