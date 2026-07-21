@@ -43,6 +43,10 @@ LOAD_TIMEOUT_S = 900          # engine init + copy model into memory + load
 DEFAULT_QUESTION_TIMEOUT_S = 300
 DEFAULT_THRESHOLD_TPS = 5.0
 DEFAULT_CTX = 8192            # conservative KV size so the 4B rung fits wasm32
+# Anything resident above this on a supposedly idle GPU means someone else is
+# holding VRAM and the numbers will be junk. A desktop compositor plus a couple
+# of browser windows sits well under 1.5 GB; a game or a second LLM does not.
+VRAM_IDLE_LIMIT_MB = 1500
 
 
 # ---------------------------------------------------------------- utilities
@@ -51,6 +55,75 @@ def port_open(port: int) -> bool:
     with socket.socket() as s:
         s.settimeout(0.3)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def nvidia_smi(*query_args) -> str | None:
+    """Run nvidia-smi (Windows .exe first — GPU runs drive Edge on the host)."""
+    for exe in ("nvidia-smi.exe", "nvidia-smi"):
+        try:
+            out = subprocess.run([exe, *query_args], capture_output=True, text=True,
+                                 timeout=15)
+        except (FileNotFoundError, subprocess.SubprocessError):
+            continue
+        if out.returncode == 0:
+            return out.stdout.strip()
+    return None
+
+
+def vram_state() -> dict | None:
+    """{'used_mb','total_mb','free_mb'} for GPU 0, or None if nvidia-smi is absent."""
+    out = nvidia_smi("--query-gpu=memory.used,memory.total",
+                     "--format=csv,noheader,nounits", "--id=0")
+    if not out:
+        return None
+    try:
+        used, total = (int(x.strip()) for x in out.splitlines()[0].split(","))
+    except ValueError:
+        return None
+    return {"used_mb": used, "total_mb": total, "free_mb": total - used}
+
+
+def vram_hogs() -> list[str]:
+    """Process names currently holding GPU memory (per-process MB is unavailable
+    under Windows WDDM, so only names are reported)."""
+    out = nvidia_smi("--query-compute-apps=process_name", "--format=csv,noheader")
+    if not out:
+        return []
+    skip = ("ShellHost", "explorer.exe", "StartMenu", "SearchHost", "TextInputHost",
+            "ApplicationFrameHost", "ShellExperienceHost", "Insufficient Permissions")
+    names = [Path(p.strip().replace("\\", "/")).name for p in out.splitlines() if p.strip()]
+    return sorted({n for n in names if not any(s in n for s in skip)})
+
+
+def check_gpu_idle(allow_busy: bool) -> dict | None:
+    """Refuse to benchmark on a GPU someone else is using.
+
+    VRAM pressure does not stop a model from *loading* — Memory64 keeps the
+    weights in the WASM heap — so a contended run looks perfectly healthy right
+    up until you read the tok/s. Measured cost of ignoring this: 43 t/s -> 1.9
+    t/s with a game resident on the same 16 GB card (2026-07-21).
+    """
+    st = vram_state()
+    if st is None:
+        print("   ⚠️ nvidia-smi unavailable — cannot verify the GPU is idle; "
+              "treat the results as unvalidated")
+        return None
+    print(f"   VRAM: {st['used_mb']} / {st['total_mb']} MiB used "
+          f"({st['free_mb']} MiB free)")
+    if st["used_mb"] <= VRAM_IDLE_LIMIT_MB:
+        return st
+    hogs = vram_hogs()
+    msg = (f"❌ GPU is busy: {st['used_mb']} MiB already in use "
+           f"(limit {VRAM_IDLE_LIMIT_MB} MiB).")
+    if hogs:
+        msg += "\n   holding VRAM: " + ", ".join(hogs)
+    if allow_busy:
+        print(msg.replace("❌", "⚠️") + "\n   --allow-busy-gpu set: continuing anyway, "
+              "results will be recorded as contended")
+        return st
+    sys.exit(msg + "\n   Close it and re-run, or pass --allow-busy-gpu to override."
+                   "\n   (Contended runs still load fine and still report tok/s — "
+                   "they are just wrong.)")
 
 
 def ensure_server(port: int):
@@ -265,14 +338,17 @@ def benchmark_model(page, base: str, model: dict, questions, cfg) -> dict:
 def run_backend(pw, backend: str, base: str, questions, cfg) -> dict:
     print(f"\n===== backend: {backend.upper()} =====")
     edge_proc = None
+    vram_before = None
     if backend == "gpu":
+        vram_before = check_gpu_idle(cfg["allow_busy_gpu"])
         edge_proc = launch_edge()
         browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{EDGE_CDP_PORT}")
     else:
         browser = pw.chromium.launch(headless=True)
 
     run = {"backend": backend, "started": datetime.now().isoformat(timespec="seconds"),
-           "threshold_tps": cfg["threshold"], "ctx": cfg["ctx"], "models": []}
+           "threshold_tps": cfg["threshold"], "ctx": cfg["ctx"],
+           "vram_before": vram_before, "models": []}
     try:
         probe_ctx = browser.new_context()
         probe = probe_ctx.new_page()
@@ -326,6 +402,15 @@ def run_backend(pw, backend: str, base: str, questions, cfg) -> dict:
         else:
             browser.close()
 
+    if backend == "gpu":
+        # Edge has exited by now, so this is the same idle baseline as vram_before.
+        # A materially higher figure means something else grabbed the GPU mid-run.
+        run["vram_after"] = vram_state()
+        run["gpu_contended"] = bool(
+            (run["vram_before"] and run["vram_before"]["used_mb"] > VRAM_IDLE_LIMIT_MB)
+            or (run["vram_after"] and run["vram_after"]["used_mb"] > VRAM_IDLE_LIMIT_MB)
+        )
+
     usable = [m for m in run["models"] if m.get("avg_tps") and m["avg_tps"] >= cfg["threshold"]
               and m["status"] == "ok"]
     run["recommendation"] = usable[-1]["model"] if usable else None
@@ -358,6 +443,22 @@ def write_review(run: dict, questions, out_dir: Path, cfg):
     lines += [
         f"Device: {dev['threads']} threads, crossOriginIsolated={dev['crossOriginIsolated']}, "
         + (f"GPU: {gpu['vendor']} {gpu['architecture']}" if gpu else "no WebGPU adapter"),
+    ]
+    vb, va = run.get("vram_before"), run.get("vram_after")
+    if vb:
+        lines.append(
+            f"VRAM at start: {vb['used_mb']} / {vb['total_mb']} MiB used"
+            + (f" · at end: {va['used_mb']} MiB" if va else "")
+        )
+    if run.get("gpu_contended"):
+        lines += ["", "> ⚠️ **Another process was holding GPU memory during this run — "
+                      "the speed figures below are not valid.** VRAM pressure does not "
+                      "block model loading, so the run completes normally while reporting "
+                      "badly understated tok/s. Re-run on an idle GPU."]
+    elif run["backend"] == "gpu" and not vb:
+        lines += ["", "> ⚠️ nvidia-smi was unavailable, so GPU idleness could not be "
+                      "verified for this run."]
+    lines += [
         "", "## Speed summary", "",
         "| Model | Size | Load | avg TTFT | avg gen speed | Status |",
         "|---|---|---|---|---|---|",
@@ -415,6 +516,9 @@ def main():
     ap.add_argument("--models", help="comma-separated subset, e.g. 0.6B,1.7B")
     ap.add_argument("--persona", default="general",
                     help="app persona for the answers (default: general)")
+    ap.add_argument("--allow-busy-gpu", action="store_true",
+                    help=f"run --gpu even when more than {VRAM_IDLE_LIMIT_MB} MiB of VRAM "
+                         "is already in use (results get flagged as contended)")
     args = ap.parse_args()
 
     ladder = LADDER
@@ -436,7 +540,8 @@ def main():
 
     questions = json.loads((BENCH_DIR / "questions.json").read_text(encoding="utf-8"))["questions"]
     cfg = {"ladder": ladder, "threshold": args.threshold, "ctx": args.ctx,
-           "question_timeout": args.question_timeout, "persona": args.persona}
+           "question_timeout": args.question_timeout, "persona": args.persona,
+           "allow_busy_gpu": args.allow_busy_gpu}
 
     backends = ["cpu", "gpu"] if args.both else (["gpu"] if args.gpu else ["cpu"])
     server = ensure_server(args.port)

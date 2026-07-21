@@ -53,6 +53,14 @@ Notes:
   SwiftShader (software) WebGPU, so `--gpu` launches Windows Edge
   (`--headless=new --enable-unsafe-webgpu`) via interop and connects over CDP.
   Mirrored networking makes localhost work in both directions.
+- **`--gpu` refuses to start on a busy GPU.** `nvidia-smi` is checked first and
+  the run aborts if more than 1500 MiB of VRAM is already resident, listing the
+  processes responsible. Pass `--allow-busy-gpu` to override; the run is then
+  flagged as contended in `run.json` and carries a warning banner in
+  `review.md`. This exists because VRAM pressure does **not** prevent a model
+  from loading — Memory64 keeps the weights in the WASM heap — so a contended
+  run finishes normally and quietly reports tok/s that can be off by 20× or
+  more. Close games and other LLM runtimes before benchmarking.
 - A model is stopped early when it averages below the threshold (default
   5 tok/s) after two questions; larger rungs are then skipped.
 - Answers use the app's default sampling settings (temperature 0.7), i.e.
