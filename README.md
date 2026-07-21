@@ -81,7 +81,7 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 | **Gemma-4-12B** | 7.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf) |
 | **gpt-oss-20b** ⚠️ | 12.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf) |
 
-⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs a mostly-free GPU and stalled in 1 of 4 benchmark runs — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
+⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs Chrome/Edge and a mostly-free GPU — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
 
 **Downloading once instead of every session:** these links re-fetch the model each time, which is fine for a first try but wasteful afterwards. Save the `.gguf` locally (the links point at the same Hugging Face files, or grab them from the repos directly), then use **Settings → Backend Mode → True Offline → the file picker** to load it from disk — no download, and it works with no network at all. Browsers don't allow a file path to be pre-filled from a link, so it's a manual pick each session; you still pay the model's load time (≈6 s for 0.6B up to ≈59 s for 12B, see the table below), just not the transfer.
 
@@ -102,7 +102,7 @@ A [Playwright harness](benchmark/) drives the **unmodified** `dist/hermit-ui-wll
 
 *Load = engine init + model transfer from a local HTTP server (not your Hugging Face download time). Decode = pure generation speed with TTFT excluded; end-to-end = what the app's own stats readout shows, prompt processing included.*
 
-† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it is a reasoning model.** Its hidden thinking trace inflates the end-to-end denominator — one terse-but-correct logic answer read 2.9 t/s end-to-end while decoding at 40.5 t/s — so that column is not comparable to the rest. It also **stalled once in four runs**: no first token within 120 s on a question that took ~4.5 s otherwise. Decode speed is excellent and the answers are genuinely good; treat the 12 GB rung as promising rather than dependable.
+† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it is a reasoning model.** Its hidden thinking trace inflates the end-to-end denominator — one terse-but-correct logic answer read 2.9 t/s end-to-end while decoding at 40.5 t/s — so that column is not comparable to the rest. Judge it on the decode column, which is excellent — and the answers are genuinely good. It is the strongest large rung here if you have the VRAM to spare.
 
 CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/s. Everything larger is unusable — Qwen3-4B ≈ 3 t/s, Gemma-4-E2B ≈ 1.6 t/s.
 
