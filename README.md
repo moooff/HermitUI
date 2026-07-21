@@ -221,9 +221,9 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 
 ### 📊 Benchmark results
 
-A [Playwright harness](benchmark/) races the whole ladder through the **unmodified** `dist/hermit-ui-wllama.html` — driving the real app via `#gguf=` and its own buttons — and has every model answer the same 10 questions.
+A [Playwright harness](benchmark/) races the whole ladder through the **unmodified** `dist/hermit-ui-wllama.html` — driving the real app via `#gguf=` and its own buttons, exactly as a user would — and has every model answer the same [10 questions](benchmark/questions.json), scored for correctness by hand.
 
-**Reference machine:** Ryzen-class 16 threads, RTX 5070 Ti, Edge (WebGPU), 3 clean runs per model, freshly purged browser profile each time.
+**Method:** Ryzen-class 16 threads, RTX 5070 Ti, Edge (WebGPU), 3 runs per model with the browser profile wiped between each. The harness [refuses to start](benchmark/run_benchmark.py) if another process is holding more than 1.5 GB of VRAM, and records GPU memory at both ends of every run — a contended GPU still loads models normally while understating tok/s by 20× or more, so it is checked rather than assumed. All figures below come from runs that passed that check.
 
 | Model | Size | Load | avg TTFT | decode t/s | end-to-end t/s |
 |---|---:|---:|---:|---:|---:|
@@ -251,7 +251,13 @@ CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/
 *   **A sparse MoE beats a dense model of similar footprint.** gpt-oss-20b activates only ~3.6B parameters per token and out-decodes dense Gemma-4-12B despite being 70% larger on disk — architecture, not file size, predicts throughput.
 *   Model **size barely dents decode speed** compared to the WebGPU-vs-CPU gap: 0.6B → 8B costs ~30 % of decode throughput, while dropping to CPU costs ~80 %.
 
-Raw reports (`review.md` with every answer + `run.json`) live in `benchmark/results/`; see [`benchmark/README.md`](benchmark/README.md) to reproduce on your own hardware.
+**Reproduce it yourself:** [`benchmark/README.md`](benchmark/README.md) has the setup (one `pip install`, no Node). Each run writes `review.md` — the timings *plus every answer in full*, so quality is reviewable and not just asserted — and a machine-readable `run.json` into `benchmark/results/`, which stays local and out of the repo along with the downloaded models.
+
+```bash
+python3 benchmark/download_models.py                 # fetch the ladder (~37 GB total)
+python3 benchmark/run_benchmark.py --gpu             # or --both for CPU + GPU
+python3 benchmark/run_benchmark.py --models 4B,8B    # just a subset
+```
 
 ### Browser support & model size limits
 
