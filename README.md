@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="500" alt="hermitui-logo" src="https://github.com/user-attachments/assets/f501dda0-d187-4318-aaf8-b10ac085788b" />
+  <img width="500" alt="hermitui-logo" src="promo/logo.svg" />
   <p><i>A lightweight, modern, and ephemeral single-page web interface for local AI models.</i></p>
   <p>
     <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
@@ -36,7 +36,7 @@ HermitUI is a chat interface that is **one `.html` file**. No install, no server
 Two things set it apart, and the combination is the point:
 
 *   **🧠 It runs models itself.** GGUF models execute entirely in your browser via llama.cpp compiled to WebAssembly, with WebGPU acceleration. A 12.1 GB model loads in a tab and decodes at 43 tok/s — [and we measured it properly](#-benchmarks).
-*   **🔒 It stores absolutely nothing.** No `localStorage`, no `IndexedDB`, no cookies, no model cache, no telemetry. Close the tab and the conversation *and* the model are gone.
+*   **🔒 It stores absolutely nothing.** No `localStorage`, no `IndexedDB`, no cookies, no model cache, no telemetry. Close the tab and the conversation *and* the model are gone — [and you can check that in a minute](#verify-the-privacy-claim).
 
 Or ignore all of that and point it at LM Studio, Ollama, llama.cpp, or vLLM as a [normal client](#-connect-to-your-own-endpoint).
 
@@ -128,16 +128,19 @@ CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/
 
 How large a model you can load — and how fast it runs — depends on two WebAssembly/GPU features of your browser, which wllama detects at load time:
 
-| Capability | What it enables | Chrome / Edge | Firefox |
-|---|---|---|---|
-| **JSPI** (`WebAssembly.Suspending`) | Streams the GGUF straight into the engine instead of copying it whole into the WASM heap → model size limited only by your RAM/VRAM | ✅ Chrome 137+ | ⚠️ **153+** only |
-| **WebGPU** (in workers) | Hardware-accelerated inference | ✅ mature | ⚠️ new / may fail to initialize → CPU fallback |
+| Capability | What it enables | Chrome / Edge | Firefox | Safari |
+|---|---|---|---|---|
+| **JSPI** (`WebAssembly.Suspending`) | Streams the GGUF straight into the engine instead of copying it whole into the WASM heap → model size limited only by your RAM/VRAM | ✅ Chrome 137+ | ⚠️ **153+** only | ❌ none → ~3 GB cap |
+| **WebGPU** (in workers) | Hardware-accelerated inference | ✅ mature | ⚠️ new / may fail to initialize → CPU fallback | ⚠️ present in recent versions, untested here |
+
+HermitUI probes both at load time (by capability, not user-agent) and warns you in the panel before you start a download that can't succeed.
 
 In practice:
 
 *   **Chrome / Edge:** Multi-GB models (7B+ quants) load and run fine, with WebGPU acceleration. The limit is your actual RAM/VRAM.
 *   **Firefox before 153:** Without JSPI, wllama falls back to copying the **entire model file into the 4 GiB WASM heap**. Models larger than roughly 3 GB fail with the cryptic error `source array is too long` (an unchecked allocation failure inside wllama). **Fix: update to Firefox 153+**, which enables JSPI by default. You can verify support by typing `!!WebAssembly.Suspending` into the DevTools console — it must print `true`.
 *   **Firefox speed:** Even with JSPI, Firefox's WebGPU support is much newer than Chrome's and may not initialize inside the wllama worker, dropping inference to single-threaded CPU WASM — noticeably slower than Chrome on the same machine. Check the debug console (verbosity **Debug**, then reload the model) to see whether a WebGPU device or the CPU backend was picked. If WebGPU misbehaves, try unchecking the WebGPU toggle — a clean CPU run can beat a broken GPU path.
+*   **Safari:** no JSPI at all, so the same ~3 GB ceiling applies with no version to upgrade to — Qwen3-0.6B and 1.7B are fine, Qwen3-4B is the realistic top rung, and anything larger fails. The benchmarks above were not run on Safari. The rest of HermitUI (the [normal client](#-connect-to-your-own-endpoint) mode) works everywhere.
 
 ## 🔌 Connect to your own endpoint
 
@@ -254,6 +257,20 @@ HermitUI enforces strict architectural constraints to remain lightweight and acc
 
 The live build runs on GitHub Pages at [moooff.github.io/HermitUI](https://moooff.github.io/HermitUI).
 
+### Verify the privacy claim
+
+"Stores nothing" is the whole pitch, so don't take it on trust — checking takes about a minute.
+
+*   **At runtime:** open DevTools → **Application** → **Storage** and use the app normally. Local Storage, Session Storage, IndexedDB, Cookies and Cache Storage stay empty for the entire session, including after a model has loaded. This is the authoritative check: it covers the bundled libraries and the embedded wllama engine, not just HermitUI's own code.
+*   **In the source:** grep the file you downloaded.
+    ```bash
+    grep -o "localStorage\|sessionStorage\|indexedDB\|document\.cookie" dist/hermit-ui-standalone.html | wc -l
+    ```
+    The answer is **2**, and both are false positives — Highlight.js's list of JavaScript keywords contains the strings `localStorage` and `sessionStorage`. There is not one call site. (In the wllama build the engine ships gzipped, so grep sees the app but not the engine; use the runtime check above to cover it.)
+*   **On the network:** the Network tab shows requests only to endpoints you configured yourself — your API server, or the model URL if you chose to load a GGUF that way. No analytics, no phone-home, and no CDN at runtime in the standalone builds.
+
+Model weights get the same treatment. A downloaded GGUF is streamed into an in-memory `Blob` instead of going through wllama's own URL loader, specifically because that one would persist the model to [OPFS](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) — see `downloadGgufToBlob` in [`src/script.js`](src/script.js).
+
 ## 📦 Building & development
 
 The root `index.html` (a copy of `dist/hermit-ui-standalone.html`) is a completely offline, standalone build: web fonts and images are base64-encoded and external JS/CSS libraries are injected directly into the file, which is what makes it work in air-gapped environments.
@@ -261,10 +278,25 @@ The root `index.html` (a copy of `dist/hermit-ui-standalone.html`) is a complete
 To modify it, edit the modular sources in `src/` — `index.html`, `style.css`, and `script.js`, which reference libraries via CDN for convenient local development — then run:
 
 ```bash
-python build.py
+python build.py        # or python3 build.py
 ```
 
+**Prerequisites: Python 3 and, on the first run, an internet connection.** That is the whole list — `build.py` uses only the standard library, so there is no `pip install`, no `package.json`, and no Node.
+
+The network requirement is worth spelling out, since it cuts against the rest of the project: the *output* runs offline, but *producing* it does not. On the first build, `build.py` downloads the pinned library versions (Marked.js, DOMPurify, Highlight.js, KaTeX, Mermaid, the Inter font, and the wllama engine — ~14 MB total) into `libs/`, verifying each one against the SRI hash pinned in `src/index.html`. Everything after that is cached and offline; pass `--refresh` to force a re-download. So if you need to build on an air-gapped machine, copy a populated `libs/` directory across with the repo.
+
 This generates the standalone build at `dist/hermit-ui-standalone.html`, copies it to the root `index.html` for GitHub Pages, and creates the alternative builds in `dist/`. The standalone, CDN, and wllama variants (`dist/hermit-ui-standalone.html`, `dist/hermit-ui-cdn.html`, `dist/hermit-ui-wllama.html`) are committed so they are browsable and downloadable straight from GitHub; the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
+
+## 🤝 Contributing
+
+Bug reports, questions and ideas are welcome in [Issues](https://github.com/moooff/HermitUI/issues); pull requests are welcome too. A bug report travels much further with your browser and version, whether WebGPU was on, and — for in-browser inference — the model and the output of the debug console at verbosity **Debug**.
+
+Before opening a PR, two things will save you a rewrite:
+
+*   **Read [`AGENTS.md`](AGENTS.md).** It is the single source of truth for this project's rules, and they are unusually strict on purpose: single-file output, vanilla JS only, no build tools or frameworks or CSS libraries, no `localStorage`/`IndexedDB`/cookies **for any reason**, and every AI-rendered string sanitized through `DOMPurify`. A change that breaks one of these can't be merged no matter how good it is — the constraints *are* the product.
+*   **Edit `src/`, never the generated files.** `dist/*.html` and the root `index.html` are build artifacts and get overwritten; run `python build.py` and commit the regenerated outputs along with your source change.
+
+There is no test suite or linter. Verify a change by opening the rebuilt `dist/hermit-ui-standalone.html` (or `dist/hermit-ui-wllama.html`) in a browser and exercising the affected path by hand. If your change touches inference performance, the [benchmark harness](benchmark/README.md) produces numbers that can go straight into a PR description.
 
 ## 🛠️ Built with
 
