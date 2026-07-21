@@ -8,16 +8,11 @@
   </p>
   <p>
     <a href="https://moooff.github.io/HermitUI"><b>🌐 Online Demo</b></a> •
-    <a href="#-ideal-use-cases">Use Cases</a> •
-    <a href="#-features">Features</a> •
-    <a href="#-quick-start">Quick Start</a> •
-    <a href="#-troubleshooting-cors">Troubleshooting</a> •
-    <a href="#-built-with">Built With</a> •
-    <a href="#-architecture--philosophy">Architecture</a> •
-    <a href="#-in-browser-inference-wllama-build">In-Browser AI</a> •
-    <a href="#-one-click-model-links">Try a Model</a> •
-    <a href="#-benchmark-results">Benchmarks</a> •
-    <a href="#-roadmap">Roadmap</a>
+    <a href="#-try-it-in-60-seconds">Try It</a> •
+    <a href="#-in-browser-inference">In-Browser AI</a> •
+    <a href="#-benchmarks">Benchmarks</a> •
+    <a href="#-connect-to-your-own-endpoint">Connect a Server</a> •
+    <a href="#-features">Features</a>
   </p>
 </div>
 
@@ -36,169 +31,40 @@
   <p><i>Left: connect it to your local AI server. Right: one click downloads a small but capable model (Qwen3-0.6B, ~380 MB) and chats <b>fully inside your browser</b> — no server at all.</i></p>
 </div>
 
-HermitUI is a highly responsive web interface tailored for interacting with local AI models. It ships as **a single, self-contained `.html` file** built with nothing but vanilla HTML, CSS, and JavaScript. During development the source is split into `src/index.html`, `src/style.css`, and `src/script.js` for maintainability, and `build.py` assembles them into the standalone single-file deliverable.
+HermitUI is a chat interface that is **one `.html` file**. No install, no server, no build step, no npm — double-click it and it opens.
 
-No backend and no installation required—just open the file in your browser and start chatting!
+Two things set it apart, and they only work together:
 
-## 🎯 Ideal Use Cases
+*   **🧠 It runs models itself.** GGUF models execute entirely in your browser via llama.cpp compiled to WebAssembly, with WebGPU acceleration. A 12.1 GB model loads in a tab and decodes at 43 tok/s — [and we measured it properly](#-benchmarks).
+*   **🔒 It stores absolutely nothing.** No `localStorage`, no `IndexedDB`, no cookies, no model cache, no telemetry. Close the tab and the conversation *and* the model are gone.
 
-*   **Heavily Regulated Environments:** Perfect for enterprise or government networks where software installation is restricted, but a secure local or remote inference endpoint is accessible.
-*   **Air-Gapped Systems:** Can be easily distributed via USB and run on disconnected systems that only have access to a local network LLM server.
-*   **Ephemeral Kiosks & Shared Terminals:** Ensures privacy by not saving any chat history, making it safe for public or shared workstations, especially in desk-sharing environments.
+Or ignore all of that and point it at LM Studio, Ollama, llama.cpp or vLLM as a [normal client](#-connect-to-your-own-endpoint).
 
-## ✨ Features
+Built for the machines where nothing else fits: air-gapped boxes, locked-down corporate and government networks, shared kiosks and hot desks.
 
-*   **📦 Zero-Dependency Setup:** The default `index.html` file has all external libraries (Marked.js, DOMPurify, Highlight.js, KaTeX, Mermaid) and the Inter font bundled directly into it. No installation or build steps required for the user. (A developer version using CDNs is available in `dist/hermit-ui-cdn.html`).
-*   **🔒 Privacy First & Ephemeral:** By design, there is no local saving (`localStorage`, `IndexedDB`, or cookies) and no conversation history stored across sessions. Your data stays completely ephemeral.
-*   **🧠 Thinking Model Support:** Built-in parser beautifully formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by advanced reasoning models.
-*   **🖼️ Image & Vision Support:** Upload, drag-and-drop, or paste (Ctrl+V) images straight into the input for vision-capable models. Attachments are sent as `image_url` content per the OpenAI schema, with automatic vision-model detection.
-*   **🎭 Personas:** Switch between preset system prompts on the fly via a dropdown to instantly re-shape the assistant's behavior.
-*   **📎 Context Attachments:** Drag-and-drop or upload text files to inject their contents directly into your prompt as context.
-*   **✏️ Edit & Regenerate:** Edit any previous message or regenerate the assistant's last response without restarting the conversation.
-*   **🎛️ Advanced Sampling Controls:** Tune `temperature`, `max_tokens`, `top_p`, `presence_penalty`, `frequency_penalty`, and `seed` from a collapsible panel in Settings. Params are only sent when set, keeping payloads compatible with minimal backends.
-*   **🎨 Modern UI/UX:** Clean, responsive design with smooth micro-animations, comprehensive CSS variables for easy theming, syntax highlighting, and a premium glassmorphism feel.
-*   **⚡ Real-Time Streaming:** Watch responses generate in real-time with an experience comparable to ChatGPT.
-*   **📊 Live Performance Stats:** Built-in dashboard to monitor Prompt Tokens, Completion Tokens, Generation Speed (Tokens/Second), and Total Duration.
-*   **📝 Markdown & Code Support:** Renders rich Markdown and provides one-click "Copy" buttons for code blocks.
-*   **🧮 Math Rendering:** LaTeX math (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) is rendered via KaTeX to native browser MathML — no webfonts or extra CSS required, and it works mid-stream and fully offline. Currency amounts like "$5 and $10" are left alone.
-*   **📈 Mermaid Diagrams:** ` ```mermaid ` code fences turn into rendered diagrams (flowcharts, sequence diagrams, pie charts, …) once a message finishes streaming. The Mermaid engine is embedded gzipped into the single-file builds and only decompressed the first time a diagram actually appears, so there is no cost for chats without diagrams.
-*   **💾 Chat Export:** Easily download your entire conversation history as a formatted Markdown file for safekeeping.
-*   **⚙️ Customizable Settings:** Quickly adjust the API URL, Model Name, API Key, and System Prompt via the on-page settings overlay.
+## ⚡ Try it in 60 seconds
 
-## 🚀 Quick Start
+**One click:** open the [🧠 In-Browser AI Demo](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) — it pre-fills Qwen3-0.6B (~380 MB) via the `#gguf=` URL parameter; confirm the banner and chat.
 
-1.  **Start your local AI server:**
-    Ensure you have a local AI server running that provides an OpenAI-compatible API endpoint.
-    *   *Examples:* [LM Studio](https://lmstudio.ai/), [Ollama](https://ollama.com/) (with OpenAI compatibility), or [vLLM](https://github.com/vllm-project/vllm).
-    *   *Default expected endpoint:* `http://localhost:1234/v1/chat/completions` (LM Studio default).
-2.  **Open HermitUI:**
-    Simply double-click the `index.html` file to open it in any modern web browser.
-3.  **Configure (if needed):**
-    Click the **⚙️ Settings** button in the top right corner to update the API URL, the Model Name, or the default System Prompt to match your local setup.
+Or do it by hand:
 
-## 💡 Setup Examples
+1. Save [`dist/hermit-ui-wllama.html`](https://raw.githubusercontent.com/moooff/HermitUI/main/dist/hermit-ui-wllama.html) to disk (right-click → *Save link as…*, since GitHub serves raw `.html` as plain text), then open it in your browser.
+2. Settings → Backend Mode → **True Offline (Wllama GGUF)**, then paste into the URL field: `hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf`
+3. Hit **⬇️ Load** (~380 MB download) and chat — no server, no install, and nothing persisted.
 
-Here are a few quick configuration examples based on popular local AI servers:
-
-### Using LM Studio (Default)
-1. Launch LM Studio and start the **Local Server**.
-2. **API URL:** `http://localhost:1234/v1/chat/completions`
-3. **Model Name:** Leave blank, or set to the specific model identifier you loaded.
-4. *Tip:* Ensure CORS is enabled in the LM Studio settings.
-
-### Using Ollama
-1. Start your Ollama server from the terminal, making sure to enable CORS:
-   ```bash
-   OLLAMA_ORIGINS="*" ollama serve
-   ```
-2. **API URL:** `http://localhost:11434/v1/chat/completions`
-3. **Model Name:** The name of the model you pulled (e.g., `llama3`, `mistral`, `deepseek-coder`).
-
-### Using vLLM
-1. Start your vLLM server with an OpenAI-compatible endpoint:
-   ```bash
-   python -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-chat-hf --cors-allowed-origins "*"
-   ```
-2. **API URL:** `http://localhost:8000/v1/chat/completions`
-3. **Model Name:** The model name specified in your command (e.g., `meta-llama/Llama-2-7b-chat-hf`).
-
-### Using Cloud Models (OpenRouter, OpenAI, Groq, etc.)
-You are not limited to local models! HermitUI works perfectly with any cloud provider that offers an OpenAI-compatible API endpoint.
-
-> [!WARNING]
-> **Privacy Note:** While HermitUI supports cloud models, using them is generally **not advised** if you require strict privacy. When using third-party APIs, your data and chat history leave your local machine, and it is unclear how these providers handle, store, or train on that data. For maximum privacy and true ephemerality, stick to local models.
-
-1. **API URL:** The provider's chat completions endpoint (e.g., `https://openrouter.ai/api/v1/chat/completions` or `https://api.openai.com/v1/chat/completions`).
-2. **Model Name:** The specific model you want to use (e.g., `anthropic/claude-3.5-sonnet`, `gpt-4o`).
-3. **API Key:** Enter your provider's API key in the settings menu.
-
-## 🔗 Configuration via URL
-
-You can pre-configure HermitUI through the URL **fragment** (the part after `#`), so a single link or bookmark carries the whole connection setup:
-
-```
-hermit-ui-standalone.html#api=http://localhost:8080/v1&model=qwen3-8b
-hermit-ui-standalone.html#api=https://api.groq.com/openai/v1&key=gsk_...&model=llama-3.3-70b
-hermit-ui-wllama.html#gguf=hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf
-```
-
-| Parameter | Effect |
-|---|---|
-| `api` | API base URL (same as the Settings field) |
-| `model` | Model name |
-| `key` | API key |
-| `persona` | Preset persona: `technical`, `general`, `writing`, or `tutor` |
-| `gguf` | *(wllama build only)* GGUF model to load in-browser — direct URL, Hugging Face link, or `hf:user/repo/file.gguf` shorthand. Shows a one-click confirmation banner before downloading. |
-
-Why the fragment and not `?query`: the part after `#` **never leaves your browser** — it is not sent in any HTTP request — and nothing is stored, so this stays true to the ephemerality promise (the URL *is* the config; refresh keeps your setup). Applied settings are always announced in a toast, so a shared link can't reconfigure the app invisibly. Free-text system prompts are deliberately not supported as a parameter, since a link could smuggle a malicious prompt.
-
-> [!NOTE]
-> A `key` in the URL is never transmitted, but it does end up in your **browser history** (and any bookmark you save). Prefer entering keys in Settings on shared machines.
-
-## 🔧 Troubleshooting (CORS)
-
-If HermitUI fails to connect to your local AI server (e.g., getting a "Network Error"), it is most likely due to **CORS (Cross-Origin Resource Sharing)** restrictions. Because HermitUI runs as a local file (`file://`), modern browsers will block its requests to `http://localhost` unless the server explicitly allows it.
-
-**How to fix it:**
-*   **LM Studio:** Go to the "Local Server" tab, look for the "CORS" toggle, and make sure it is turned **ON**.
-*   **Ollama:** You must set the `OLLAMA_ORIGINS` environment variable before starting Ollama. For example: `OLLAMA_ORIGINS="*" ollama serve`.
-*   **vLLM:** Start your server with the `--cors-allowed-origins` flag. For example: `--cors-allowed-origins "*"`.
-
-## 🏗️ Architecture & Philosophy
-
-HermitUI enforces strict architectural constraints to remain lightweight and accessible:
-*   **Single File Constraint:** The final product must always be a single, standalone `.html` file. The `src/` directory acts only as a blueprint; even if CSS or JS are refactored into separate files for development, the resulting output in the `dist/` directory and the root `index.html` will always remain fully integrated single files.
-*   **Online Version:** You can try the live version hosted on GitHub Pages: [https://moooff.github.io/HermitUI](https://moooff.github.io/HermitUI)
-*   **Vanilla Only:** No React, Vue, Angular, or complex frontend frameworks. 
-*   **No Build Tools:** No `package.json`, `npm`, Webpack, or Vite.
-*   **No CSS Frameworks:** Pure Vanilla CSS, no Tailwind or Bootstrap.
-*   **Security:** All rendered AI responses are rigorously sanitized using `DOMPurify` to prevent XSS attacks.
-
-## 📦 Building & Development
-
-By default, the root `index.html` file (a copy of `dist/hermit-ui-standalone.html`) is a completely offline, standalone version. Web fonts and images are base64-encoded, while external JS/CSS libraries are injected directly into the file. It is perfect for air-gapped environments.
-
-If you wish to modify the source code, edit the modular sources in `src/` — `index.html`, `style.css`, and `script.js` (which reference external libraries via CDN for convenient local development) — and then run the build script to regenerate the standalone root file:
-
-```bash
-python build.py
-```
-
-This generates the standalone build at `dist/hermit-ui-standalone.html`, copies it to the root `index.html` for GitHub Pages, and creates the alternative builds in the `dist/` directory. The standalone and CDN variants (`dist/hermit-ui-standalone.html`, `dist/hermit-ui-cdn.html`) are committed (browsable on GitHub); the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
-
-## 🛠️ Built With
-
-*   **Vanilla HTML5 / CSS3 / ES6 JavaScript**
-*   [Marked.js](https://marked.js.org/) - For parsing Markdown
-*   [DOMPurify](https://github.com/cure53/DOMPurify) - For sanitizing HTML and preventing XSS
-*   [Highlight.js](https://highlightjs.org/) - For code syntax highlighting
-*   [KaTeX](https://katex.org/) - For LaTeX math rendering (MathML output)
-*   [Mermaid](https://mermaid.js.org/) - For diagram rendering from ```` ```mermaid ```` fences
-*   [Google Fonts (Inter)](https://fonts.google.com/specimen/Inter) - For clean, modern typography
-
-## 🧪 In-Browser Inference (wllama build)
+## 🧠 In-Browser Inference
 
 HermitUI can run **true offline inference entirely in the browser** — no local server or OpenAI-compatible endpoint required. It's powered by [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly, with optional WebGPU acceleration): you load a `.gguf` model file and chat with it directly on the page.
 
-This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time. Feature highlights:
+This ships as a dedicated build output, **`dist/hermit-ui-wllama.html`** — the regular standalone app plus a **Backend Mode** switch in Settings (`Remote / Local API` ↔ `True Offline (Wllama GGUF)`). The main builds stay lean: the feature is stripped out of them at build time.
 
-*   **🔌 Truly zero-network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~6 MB file needs **no network access at all** — perfect for USB-stick distribution to air-gapped machines. The model file never leaves your machine.
-*   **📂 Local GGUF loading:** Pick a `.gguf` file from disk and run it fully client-side via WebAssembly, with an optional **WebGPU** toggle for hardware acceleration. **Download a model once, keep it, and re-pick it every session** — no network involved at all, so this is also the fastest way to use HermitUI repeatedly (and the only way on an air-gapped machine).
+*   **🔌 The app needs no network:** The wllama engine (JS + WASM) is embedded directly into the file at build time (gzipped, decompressed in-browser via the native `DecompressionStream` API), so the ~6 MB file is complete on its own — perfect for USB-stick distribution to air-gapped machines. Pair it with a `.gguf` from disk and the whole stack is offline; only the *optional* download-by-URL path touches the network.
+*   **📂 Local GGUF loading:** Pick a `.gguf` file from disk and run it fully client-side, with an optional **WebGPU** toggle for hardware acceleration. **Download a model once, keep it, and re-pick it every session** — no network involved, so this is also the fastest way to use HermitUI repeatedly (and the only way on an air-gapped machine).
 *   **🔗 Load by URL / Hugging Face:** Paste a direct `.gguf` link, a Hugging Face `/blob/` page URL (auto-rewritten to `/resolve/`), or the `hf:user/repo/file.gguf` shorthand and hit Load. The model streams **straight into memory** with a live progress bar — true to the ephemerality promise, nothing is written to browser storage. That means a URL-loaded model re-downloads each session; to avoid that, save the `.gguf` once and load it from disk with the file picker instead. A model can also be baked into a shareable link: `hermit-ui-wllama.html#gguf=hf:user/repo/file.gguf` (see [Configuration via URL](#-configuration-via-url)).
 *   **🎚️ Configurable inference:** Adjustable **context window** (`n_ctx`, default 32k — automatically halved until it fits in memory, with the effective size shown in the status line) and **max output tokens** per reply (default 4096); temperature, top-p, and seed from the regular settings apply too.
 *   **🧩 Layered chat-template handling:** Uses the model's own embedded `tokenizer.chat_template` when present, otherwise auto-detects a sane format from the model architecture (ChatML, Llama 3, Mistral, Gemma, Phi-3, Zephyr, Alpaca, …), with a manual override.
 *   **🐛 Quake-style debug console:** A drop-down console with graduated **verbosity levels** (Off → Errors → Warnings → Info → Debug) that surfaces engine init, download/load progress, model metadata, the exact prompt sent, and native llama.cpp logs.
 *   **⏱️ Live tokens/s:** A real-time generation-speed readout while the model streams.
-
-### Try it in 60 seconds
-
-**One click:** open the [🧠 In-Browser AI Demo](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) — it pre-fills Qwen3-0.6B (~380 MB) via the `#gguf=` URL parameter; confirm the banner and chat.
-
-Or manually:
-
-1. Open [`dist/hermit-ui-wllama.html`](dist/hermit-ui-wllama.html) in your browser (download the raw file first).
-2. Settings → Backend Mode → **True Offline (Wllama GGUF)**, then paste into the URL field: `hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_k_m.gguf`
-3. Hit **⬇️ Load** (~400 MB download) and chat — no server, no install, and nothing persisted.
 
 ### 🚀 One-click model links
 
@@ -215,11 +81,11 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 | **Gemma-4-12B** | 7.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf) |
 | **gpt-oss-20b** ⚠️ | 12.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf) |
 
-⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs a mostly-free GPU and stalled in 1 of 3 benchmark runs — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
+⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs a mostly-free GPU and stalled in 1 of 4 benchmark runs — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
 
 **Downloading once instead of every session:** these links re-fetch the model each time, which is fine for a first try but wasteful afterwards. Save the `.gguf` locally (the links point at the same Hugging Face files, or grab them from the repos directly), then use **Settings → Backend Mode → True Offline → the file picker** to load it from disk — no download, and it works with no network at all. Browsers don't allow a file path to be pre-filled from a link, so it's a manual pick each session; you still pay the model's load time (≈6 s for 0.6B up to ≈59 s for 12B, see the table below), just not the transfer.
 
-### 📊 Benchmark results
+## 📊 Benchmarks
 
 A [Playwright harness](benchmark/) drives the **unmodified** `dist/hermit-ui-wllama.html` — via `#gguf=` and the app's own buttons, exactly as a user would — and has every model answer the same [10 questions](benchmark/questions.json), scored for correctness by hand. 16 threads, RTX 5070 Ti, Edge (WebGPU), 3+ runs per model on a verified-idle GPU (the harness [refuses to start](benchmark/run_benchmark.py) otherwise).
 
@@ -255,7 +121,7 @@ How large a model you can load — and how fast it runs — depends on two WebAs
 
 | Capability | What it enables | Chrome / Edge | Firefox |
 |---|---|---|---|
-| **JSPI** (`WebAssembly.Suspending`) | Streams the GGUF straight into the engine instead of copying it whole into the WASM heap → model size limited only by your RAM/VRAM | ✅ Chrome 137+ | ✅ Firefox **153+** only |
+| **JSPI** (`WebAssembly.Suspending`) | Streams the GGUF straight into the engine instead of copying it whole into the WASM heap → model size limited only by your RAM/VRAM | ✅ Chrome 137+ | ⚠️ Firefox **153+** only |
 | **WebGPU** (in workers) | Hardware-accelerated inference | ✅ mature | ⚠️ new / may fail to initialize → CPU fallback |
 
 In practice:
@@ -263,6 +129,142 @@ In practice:
 *   **Chrome / Edge:** Multi-GB models (7B+ quants) load and run fine, with WebGPU acceleration. The limit is your actual RAM/VRAM.
 *   **Firefox before 153:** Without JSPI, wllama falls back to copying the **entire model file into the 4 GiB WASM heap**. Models larger than roughly ~3 GB fail with the cryptic error `source array is too long` (an unchecked allocation failure inside wllama). **Fix: update to Firefox 153+**, which enables JSPI by default. You can verify support by typing `!!WebAssembly.Suspending` into the DevTools console — it must print `true`.
 *   **Firefox speed:** Even with JSPI, Firefox's WebGPU support is much newer than Chrome's and may not initialize inside the wllama worker, dropping inference to single-threaded CPU WASM — noticeably slower than Chrome on the same machine. Check the debug console (verbosity **Debug**, then reload the model) to see whether a WebGPU device or the CPU backend was picked. If WebGPU misbehaves, try unchecking the WebGPU toggle — a clean CPU run can beat a broken GPU path.
+
+## 🔌 Connect to Your Own Endpoint
+
+Prefer to run the model outside the browser? The standalone build (`index.html` / `dist/hermit-ui-standalone.html`) talks to anything that speaks the OpenAI chat completions API.
+
+1.  **Start your local AI server** — [LM Studio](https://lmstudio.ai/), [Ollama](https://ollama.com/), [llama.cpp](https://github.com/ggml-org/llama.cpp), or [vLLM](https://github.com/vllm-project/vllm).
+2.  **Open HermitUI** — double-click the `index.html` file in any modern browser.
+3.  **Configure** — click **⚙️ Settings** in the top right to set the API URL, model name, API key, or system prompt.
+
+<details>
+<summary><b>Configuration examples for popular servers</b></summary>
+
+### LM Studio (the default)
+1. Launch LM Studio and start the **Local Server**.
+2. **API URL:** `http://localhost:1234/v1/chat/completions`
+3. **Model Name:** leave blank, or set to the specific model identifier you loaded.
+4. *Tip:* ensure CORS is enabled in the LM Studio settings.
+
+### Ollama
+1. Start your Ollama server from the terminal, making sure to enable CORS:
+   ```bash
+   OLLAMA_ORIGINS="*" ollama serve
+   ```
+2. **API URL:** `http://localhost:11434/v1/chat/completions`
+3. **Model Name:** the name of the model you pulled (e.g., `llama3`, `mistral`, `deepseek-coder`).
+
+### vLLM
+1. Start your vLLM server with an OpenAI-compatible endpoint:
+   ```bash
+   python -m vllm.entrypoints.openai.api_server --model meta-llama/Llama-2-7b-chat-hf --cors-allowed-origins "*"
+   ```
+2. **API URL:** `http://localhost:8000/v1/chat/completions`
+3. **Model Name:** the model name specified in your command (e.g., `meta-llama/Llama-2-7b-chat-hf`).
+
+### Cloud models (OpenRouter, OpenAI, Groq, …)
+1. **API URL:** the provider's chat completions endpoint (e.g., `https://openrouter.ai/api/v1/chat/completions`).
+2. **Model Name:** the model you want (e.g., `anthropic/claude-3.5-sonnet`, `gpt-4o`).
+3. **API Key:** enter your provider's key in the settings menu.
+
+> [!WARNING]
+> **Privacy note:** using cloud models is generally **not advised** if you require strict privacy. Your data leaves your machine, and it is unclear how these providers handle, store, or train on it. For true ephemerality, stick to local models.
+
+</details>
+
+### Troubleshooting (CORS)
+
+If HermitUI fails to connect to your local AI server (e.g., a "Network Error"), it is most likely **CORS**. Because HermitUI runs as a local file (`file://`), browsers block its requests to `http://localhost` unless the server explicitly allows it.
+
+*   **LM Studio:** "Local Server" tab → find the **CORS** toggle → turn it **ON**.
+*   **Ollama:** set `OLLAMA_ORIGINS` before starting, e.g. `OLLAMA_ORIGINS="*" ollama serve`.
+*   **vLLM:** start with `--cors-allowed-origins "*"`.
+
+## ✨ Features
+
+*   **📦 Zero-dependency setup:** all external libraries (Marked.js, DOMPurify, Highlight.js, KaTeX, Mermaid) and the Inter font are bundled directly into the file. No installation, no build step. (A CDN-linked developer version lives in `dist/hermit-ui-cdn.html`.)
+*   **🔒 Privacy first & ephemeral:** no `localStorage`, `IndexedDB`, or cookies — nothing survives the tab.
+*   **🧠 Thinking-model support:** built-in parser formats `<think>`, `<thought>`, and `<reasoning>` tags natively streamed by reasoning models.
+*   **⚡ Real-time streaming** with **📊 live performance stats** — prompt tokens, completion tokens, tokens/second, and total duration.
+*   **🖼️ Image & vision support:** upload, drag-and-drop, or paste (Ctrl+V) images for vision-capable models, sent as `image_url` content per the OpenAI schema with automatic vision-model detection.
+*   **📝 Rich rendering:** Markdown with per-block copy buttons, syntax highlighting, **🧮 LaTeX math** (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) rendered via KaTeX to native MathML — no webfonts, works mid-stream and offline — and **📈 Mermaid diagrams** from ```` ```mermaid ```` fences.
+*   **🎭 Personas:** switch between preset system prompts (technical, general, writing, tutor) on the fly.
+*   **✏️ Edit & regenerate** any previous message without restarting the conversation.
+
+<details>
+<summary><b>More features</b></summary>
+
+*   **📎 Context attachments:** drag-and-drop or upload text files to inject their contents into your prompt.
+*   **🎛️ Advanced sampling controls:** `temperature`, `max_tokens`, `top_p`, `presence_penalty`, `frequency_penalty`, and `seed` from a collapsible Settings panel. Params are only sent when set, keeping payloads compatible with minimal backends.
+*   **🎨 Modern UI/UX:** clean, responsive design with smooth micro-animations, comprehensive CSS variables for theming, and a glassmorphism feel. Light and dark themes.
+*   **💾 Chat export:** download the entire conversation as a formatted Markdown file.
+*   **⚙️ Customizable settings:** API URL, model name, API key, and system prompt via the on-page settings overlay.
+
+</details>
+
+## 🔗 Configuration via URL
+
+You can pre-configure HermitUI through the URL **fragment** (the part after `#`), so a single link or bookmark carries the whole connection setup:
+
+```
+hermit-ui-standalone.html#api=http://localhost:8080/v1&model=qwen3-8b
+hermit-ui-standalone.html#api=https://api.groq.com/openai/v1&key=gsk_...&model=llama-3.3-70b
+hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf
+```
+
+| Parameter | Effect |
+|---|---|
+| `api` | API base URL (same as the Settings field) |
+| `model` | Model name |
+| `key` | API key |
+| `persona` | Preset persona: `technical`, `general`, `writing`, or `tutor` |
+| `gguf` | *(wllama build only)* GGUF model to load in-browser — direct URL, Hugging Face link, or `hf:user/repo/file.gguf` shorthand. Shows a one-click confirmation banner before downloading. |
+
+Why the fragment and not `?query`: the part after `#` **never leaves your browser** — it is not sent in any HTTP request — and nothing is stored, so this stays true to the ephemerality promise (the URL *is* the config; refresh keeps your setup). Applied settings are always announced in a toast, so a shared link can't reconfigure the app invisibly. Free-text system prompts are deliberately not supported as a parameter, since a link could smuggle a malicious prompt.
+
+> [!NOTE]
+> A `key` in the URL is never transmitted, but it does end up in your **browser history** (and any bookmark you save). Prefer entering keys in Settings on shared machines.
+
+## 🎯 Ideal Use Cases
+
+*   **Heavily regulated environments:** enterprise or government networks where software installation is restricted, but a secure local or remote inference endpoint is accessible.
+*   **Air-gapped systems:** distribute on a USB stick and run on disconnected machines — either against a local network LLM server, or with the wllama build and a `.gguf`, against nothing at all.
+*   **Ephemeral kiosks & shared terminals:** no chat history is ever written, making it safe for public workstations and desk-sharing environments.
+
+## 🏗️ Architecture & Philosophy
+
+HermitUI enforces strict architectural constraints to remain lightweight and accessible:
+
+*   **Single file constraint:** the final product is always a single, standalone `.html` file. The `src/` directory is a blueprint only — its split into `index.html`, `style.css`, and `script.js` exists for maintainability, and `build.py` assembles them back into one file.
+*   **Vanilla only:** no React, Vue, Angular, or other frontend frameworks.
+*   **No build tools:** no `package.json`, `npm`, Webpack, or Vite.
+*   **No CSS frameworks:** pure vanilla CSS, no Tailwind or Bootstrap.
+*   **Security:** all rendered AI responses are sanitized with `DOMPurify` to prevent XSS.
+*   **Online version:** try the live build on GitHub Pages at [moooff.github.io/HermitUI](https://moooff.github.io/HermitUI).
+
+## 📦 Building & Development
+
+The root `index.html` (a copy of `dist/hermit-ui-standalone.html`) is a completely offline, standalone build: web fonts and images are base64-encoded and external JS/CSS libraries are injected directly into the file, which is what makes it work in air-gapped environments.
+
+To modify it, edit the modular sources in `src/` — `index.html`, `style.css`, and `script.js`, which reference libraries via CDN for convenient local development — then run:
+
+```bash
+python build.py
+```
+
+This generates the standalone build at `dist/hermit-ui-standalone.html`, copies it to the root `index.html` for GitHub Pages, and creates the alternative builds in `dist/`. The standalone, CDN, and wllama variants (`dist/hermit-ui-standalone.html`, `dist/hermit-ui-cdn.html`, `dist/hermit-ui-wllama.html`) are committed so they are browsable and downloadable straight from GitHub; the local variant `dist/hermit-ui-local.html` and the downloaded `libs/` are generated-only and stay gitignored.
+
+## 🛠️ Built With
+
+*   **Vanilla HTML5 / CSS3 / ES6 JavaScript**
+*   [wllama](https://github.com/ngxson/wllama) — llama.cpp in WebAssembly, for in-browser inference
+*   [Marked.js](https://marked.js.org/) — Markdown parsing
+*   [DOMPurify](https://github.com/cure53/DOMPurify) — HTML sanitization / XSS prevention
+*   [Highlight.js](https://highlightjs.org/) — code syntax highlighting
+*   [KaTeX](https://katex.org/) — LaTeX math rendering (MathML output)
+*   [Mermaid](https://mermaid.js.org/) — diagram rendering from ```` ```mermaid ```` fences
+*   [Google Fonts (Inter)](https://fonts.google.com/specimen/Inter) — typography
 
 ## 🗺️ Roadmap
 
