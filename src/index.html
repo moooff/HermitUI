@@ -112,7 +112,7 @@
                     <input type="text" id="settingWllamaUrl" placeholder="https://huggingface.co/…/resolve/main/model.gguf  or  hf:user/repo/file.gguf" style="flex: 1; margin-bottom: 0; min-width: 0;">
                     <button type="button" class="action-btn" id="wllamaUrlLoadBtn" style="flex-shrink: 0; color: var(--primary); font-weight: 600; font-size: 0.85rem; padding: 0 14px; border: 1px solid var(--primary); border-radius: 12px;">⬇️ Load</button>
                 </div>
-                <div style="font-size: 0.75rem; color: #999; margin: 4px 0 8px;">Accepts direct <code>.gguf</code> links, Hugging Face <code>/blob/</code> page URLs, or <code>hf:user/repo/file.gguf</code>. The model is downloaded straight into memory and re-downloaded next session — nothing is ever stored.</div>
+                <div style="font-size: 0.75rem; color: #999; margin: 4px 0 8px;">Accepts direct <code>.gguf</code> links, Hugging Face <code>/blob/</code> page URLs, or <code>hf:user/repo/file.gguf</code>. The model streams straight into memory — nothing is ever stored, so it is fetched again next session.<span id="wllamaSaveCopyHint" style="display: none;"> <a id="wllamaSaveCopyLink" href="#" target="_blank" rel="noopener noreferrer" download>💾 Save a copy to disk</a> to avoid that: download it once, then load it with the file picker above.</span></div>
 
                 <div id="wllamaStatusContainer" style="margin-bottom: 8px;">
                     <div id="wllamaStatus" style="font-size: 0.85rem; color: #666; word-break: break-all; margin-bottom: 4px;">Status: Unloaded</div>

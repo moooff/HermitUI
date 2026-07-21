@@ -1308,6 +1308,35 @@ Rules:
             if (e.key === "Enter") { e.preventDefault(); if (!wllamaDownloadAbort) loadWllamaModelFromUrl(); }
         });
 
+        // Offer the same URL as a plain browser download, so the user can keep the
+        // .gguf and re-pick it from the file picker next session instead of paying
+        // for the transfer again. This does not weaken ephemerality: the app writes
+        // nothing: the browser's own download machinery does, to a location the user
+        // picks, exactly like the Markdown chat export. Deliberately a second,
+        // separate download rather than teeing the in-flight one to disk — that
+        // would need the File System Access API (Chrome/Edge only) and could not
+        // reuse the in-memory MemBlob, whose superclass holds no bytes.
+        // Always target="_blank": a URL served without Content-Disposition would
+        // otherwise navigate the tab away and take the ephemeral session with it.
+        function updateWllamaSaveCopyLink() {
+            const hint = document.getElementById("wllamaSaveCopyHint");
+            const link = document.getElementById("wllamaSaveCopyLink");
+            let url;
+            try {
+                url = normalizeGgufUrl(document.getElementById("settingWllamaUrl").value);
+            } catch {
+                hint.style.display = "none"; // nothing valid to offer yet
+                return;
+            }
+            link.href = url;
+            // Same filename the file picker will show next session. Cross-origin
+            // downloads ignore this attribute, but Hugging Face already sends
+            // Content-Disposition, and it does apply to same-origin .gguf links.
+            link.setAttribute("download", decodeURIComponent(url.split("?")[0].split("/").pop()));
+            hint.style.display = "";
+        }
+        document.getElementById("settingWllamaUrl").addEventListener("input", updateWllamaSaveCopyLink);
+
         // Hash-config hook, called by applyHashConfig() when a #gguf=… param is
         // present. It only prefills and shows a confirmation banner — a shared
         // link must never start a multi-GB download without one explicit click.
@@ -1322,6 +1351,7 @@ Rules:
                 return;
             }
             document.getElementById("settingWllamaUrl").value = url;
+            updateWllamaSaveCopyLink(); // setting .value doesn't fire "input"
             document.getElementById("wllamaHashModelName").textContent = decodeURIComponent(url.split("?")[0].split("/").pop());
             document.getElementById("wllamaHashHost").textContent = new URL(url).host;
             document.getElementById("wllamaHashBanner").style.display = "flex";
