@@ -213,8 +213,9 @@ Every link below opens the wllama build with that model pre-filled via `#gguf=` 
 | **Gemma-4-E2B** | 3.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf) |
 | **Gemma-4-E4B** | 5.0 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf) |
 | **Gemma-4-12B** | 7.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/gemma-4-12b-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf) |
+| **gpt-oss-20b** ⚠️ | 12.1 GB | [▶ Run in browser](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:ggml-org/gpt-oss-20b-GGUF/gpt-oss-20b-MXFP4.gguf) |
 
-⭐ = best speed/quality trade-off on a WebGPU machine. All quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
+⭐ = best speed/quality trade-off on a WebGPU machine. ⚠️ = the fastest large model measured here (~43 t/s), but a 12 GB download that needs a mostly-free GPU and stalled in 1 of 3 benchmark runs — see the note under the results table. Quants are `Q4_K_M` from [unsloth](https://huggingface.co/unsloth) except gpt-oss-20b, which is MXFP4 from [ggml-org](https://huggingface.co/ggml-org). On a CPU-only machine, use **Qwen3-1.7B** or smaller.
 
 **Downloading once instead of every session:** these links re-fetch the model each time, which is fine for a first try but wasteful afterwards. Save the `.gguf` locally (the links point at the same Hugging Face files, or grab them from the repos directly), then use **Settings → Backend Mode → True Offline → the file picker** to load it from disk — no download, and it works with no network at all. Browsers don't allow a file path to be pre-filled from a link, so it's a manual pick each session; you still pay the model's load time (≈6 s for 0.6B up to ≈59 s for 12B, see the table below), just not the transfer.
 
@@ -233,11 +234,11 @@ A [Playwright harness](benchmark/) races the whole ladder through the **unmodifi
 | Gemma-4-E2B | 3.1 GB | 26.5s | 9.3s | 40 | 6.1 |
 | Gemma-4-E4B | 5.0 GB | 36.6s | 11.7s | 32 | 5.6 |
 | Gemma-4-12B | 7.1 GB | 58.6s | 15.2s | 36 | 4.0 |
-| gpt-oss-20b † | 12.1 GB | 112s | 49s | ~2.7 | 1.0 |
+| gpt-oss-20b † | 12.1 GB | 84s | 3.4s | **43** | 15 |
 
 *Load = engine init + model transfer from a local HTTP server (not your Hugging Face download time). Decode = pure generation speed with TTFT excluded; end-to-end = what the app's own stats readout shows, prompt processing included.*
 
-† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it does not finish the benchmark.** It loads reliably — three for three — but at ~1 t/s end-to-end each run aborted after 4–6 of the 10 questions when a longer answer produced nothing within the 300 s per-question timeout, so its averages cover fewer questions than every other row. The answers it *did* complete were accurate and well written; this is purely a speed failure. Not recommended for interactive use, and deliberately left out of the one-click links above so nobody starts a 12 GB download for a model that can't hold a conversation.
+† **gpt-oss-20b is MXFP4, not `Q4_K_M`, and it is a reasoning model** — three caveats on its row. First, it loaded three times out of three, and two of the three runs answered all 10 questions correctly at ~43 t/s; the averages above come from those two complete runs. Second, its end-to-end column is not comparable to the others: gpt-oss emits a hidden reasoning trace before answering, and the app's stats divide *visible* answer tokens by *total* wall-clock, so thinking time inflates the denominator (one terse-but-correct logic answer read 2.9 t/s end-to-end while decoding at 40.5 t/s). Third, **one run in three stalled**: a writing question produced no first token within 120 s, where the same question took ~4.5 s in the other two runs. Decode speed is excellent and the answers are genuinely good, but that intermittent stall is unresolved — treat the 12 GB rung as promising rather than dependable.
 
 CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/s, Qwen3-4B ≈ 3 t/s (unusable), Gemma-4-E2B ≈ 1.6 t/s (unusable).
 
@@ -245,8 +246,9 @@ CPU-only (WebGPU off, same machine): Qwen3-0.6B ≈ 16 t/s, Qwen3-1.7B ≈ 10 t/
 
 *   **Qwen3 is the sweet spot in a browser.** Even 8B stays interactive on WebGPU, and TTFT is ~1 s across the whole family.
 *   **Gemma-4 decodes fine but its prompt processing is much slower under wllama** — 9–15 s before the first token, which drags the end-to-end figure into single digits even though tokens then arrive at 30–40 t/s. All its answers were correct; it's an engine-side prompt-eval gap, not a model-quality one.
-*   **Size is not the limit — speed is.** A 12.1 GB model (gpt-oss-20b) loads fine in ~110 s, so the practical ceiling on a 16 GB card is well past the 7.1 GB rung; what makes the big models unusable is throughput, not allocation. WASM Memory64 (Chrome/Edge) is still required — without it everything above ~4 GB fails outright.
-*   **The quantization format matters more than the parameter count.** gpt-oss-20b activates only ~3.6B parameters per token, yet decodes ~13× slower than dense Gemma-4-12B. MXFP4 has no optimized path in wllama's WebGPU backend, and that costs more than any amount of architectural efficiency saves — stick to `Q4_K_M` in the browser.
+*   **12.1 GB runs, and runs well.** gpt-oss-20b loads in ~84 s and decodes at ~43 t/s — faster than the 7.1 GB Gemma-4-12B, on a 16 GB card. The practical ceiling is much higher than we first assumed. WASM Memory64 (Chrome/Edge) is still required: without it, everything above ~4 GB fails outright.
+*   **Free VRAM is the single biggest variable — check it before you benchmark anything.** The first gpt-oss-20b measurements here were taken with a game holding ~11 GB of the same 16 GB card, and produced 1.9 t/s decode and 39 s TTFT. Identical build, identical model, closed the game: 43 t/s and 3.4 s. That is a **23× swing** from GPU memory pressure alone, and it dwarfs every other factor in this table. If your numbers look nothing like these, check what else is on your GPU first.
+*   **A sparse MoE beats a dense model of similar footprint.** gpt-oss-20b activates only ~3.6B parameters per token and out-decodes dense Gemma-4-12B despite being 70% larger on disk — architecture, not file size, predicts throughput.
 *   Model **size barely dents decode speed** compared to the WebGPU-vs-CPU gap: 0.6B → 8B costs ~30 % of decode throughput, while dropping to CPU costs ~80 %.
 
 Raw reports (`review.md` with every answer + `run.json`) live in `benchmark/results/`; see [`benchmark/README.md`](benchmark/README.md) to reproduce on your own hardware.
