@@ -1600,8 +1600,15 @@ Rules:
         // turn, so an imported bubble shows the same collapsible "📎 Attached Context"
         // and its ✏️ Edit button refills the context pane and file chips. Only leading
         // blocks are peeled — that is the only place submit puts them.
+        // The trailing separator is "\n\n" *or* end-of-string: submit allows sending an
+        // attachment with no prompt text, which leaves the payload ending in "\n\n" that
+        // parseChatExport's .trim() then strips. Without the "$" branch such a turn kept
+        // its raw <file …> tag as visible message text instead of an attachment.
+        // Known limitation: attachment content is inlined unescaped, so a file whose own
+        // body contains "\n</file>\n\n" (or "\n\n</div>") truncates here — same accepted
+        // trade-off as the turn regex above.
         function splitContextBlocks(raw) {
-            const blockRe = /^(?:<context>\n([\s\S]*?)\n<\/context>|<file name="([^"]*)">\n([\s\S]*?)\n<\/file>)\n\n/;
+            const blockRe = /^(?:<context>\n([\s\S]*?)\n<\/context>|<file name="([^"]*)">\n([\s\S]*?)\n<\/file>)(?:\n\n|$)/;
             let rest = raw, contextText = "";
             const files = [];
             let m;
