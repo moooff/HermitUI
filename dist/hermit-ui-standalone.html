@@ -2726,6 +2726,8 @@ return Pe}()
         <div class="header-actions">
             <button class="header-btn icon-only" id="themeToggleBtn" title="Toggle Theme" aria-label="Toggle Theme">🌙</button>
             <button class="header-btn icon-only" id="exportBtn" title="Export Chat (Ctrl+E)" aria-label="Export Chat">📤</button>
+            <button class="header-btn icon-only" id="importBtn" title="Import Chat (Ctrl+I)" aria-label="Import Chat">📂</button>
+            <input type="file" id="importFileInput" accept=".md,.markdown,.txt,text/markdown" style="display: none;">
             <button class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
             <button class="header-btn icon-only" id="aboutBtn" title="About" aria-label="About">ℹ️</button>
         </div>
@@ -2751,6 +2753,21 @@ return Pe}()
             </div>
             <div class="modal-actions">
                 <button class="primary-btn" id="aboutCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Confirmation Modal -->
+    <div class="modal-overlay" id="importConfirmModal" role="dialog" aria-modal="true" aria-labelledby="importConfirmTitle">
+        <div class="modal">
+            <h3 id="importConfirmTitle">📂 Replace this chat?</h3>
+            <p style="margin-bottom: 24px; line-height: 1.6; color: var(--text-main);">
+                Importing loads the conversation from the file and discards the one on screen.
+                Nothing is saved anywhere, so the current chat cannot be recovered — export it first if you want to keep it.
+            </p>
+            <div class="modal-actions">
+                <button class="cancel-btn" id="importCancelBtn">Cancel</button>
+                <button class="primary-btn" id="importConfirmBtn">Import</button>
             </div>
         </div>
     </div>
@@ -2875,6 +2892,17 @@ return Pe}()
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
+        }
+
+        // Inverse of escapeHtml, for values read back out of an exported transcript
+        // (currently attachment filenames). &amp; last, so "&amp;lt;" survives intact.
+        function unescapeHtml(str) {
+            return String(str)
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&amp;/g, '&');
         }
 
         marked.use({
@@ -3262,6 +3290,33 @@ Rules:
             switchPersona(e.target.value);
         });
 
+        // Apply a free-form system prompt (settings edit, or one restored by an
+        // import) and keep the persona dropdown honest: snap back to a preset when
+        // the text matches one, otherwise show a temporary "⚡ Custom" entry.
+        function applySystemPrompt(newPrompt) {
+            SYSTEM_PROMPT = newPrompt;
+            messages[0].content = SYSTEM_PROMPT;
+            document.getElementById("settingSystem").value = SYSTEM_PROMPT;
+
+            const matchingKey = Object.keys(PERSONAS).find(k => PERSONAS[k].prompt === newPrompt);
+            if (matchingKey) {
+                activePersona = matchingKey;
+                personaSelect.value = matchingKey;
+                const customOpt = personaSelect.querySelector('option[value="custom"]');
+                if (customOpt) customOpt.remove();
+            } else {
+                activePersona = "custom";
+                let customOpt = personaSelect.querySelector('option[value="custom"]');
+                if (!customOpt) {
+                    customOpt = document.createElement("option");
+                    customOpt.value = "custom";
+                    customOpt.textContent = "⚡ Custom";
+                    personaSelect.appendChild(customOpt);
+                }
+                personaSelect.value = "custom";
+            }
+        }
+
         // ========== Context Pane, File Upload & Auto-Grow ==========
         const attachContextBtn = document.getElementById("attach-context-btn");
         const contextPane = document.getElementById("context-pane");
@@ -3481,6 +3536,9 @@ Rules:
             if (e.key === "Escape") {
                 const openModal = document.querySelector(".modal-overlay.active");
                 if (openModal) {
+                    // Dismissing the import prompt drops the parsed chat with it —
+                    // nothing the user declined stays in memory.
+                    if (openModal.id === "importConfirmModal") pendingImport = null;
                     closeModalEl(openModal);
                     return;
                 }
@@ -3496,6 +3554,9 @@ Rules:
             } else if (e.ctrlKey && e.key.toLowerCase() === 'e') {
                 e.preventDefault();
                 document.getElementById("exportBtn").click();
+            } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'i') {
+                e.preventDefault();
+                document.getElementById("importBtn").click();
             }
         });
 
@@ -3643,29 +3704,7 @@ Rules:
             const seedVal = parseInt(document.getElementById("settingSeed").value, 10);
             SEED = isNaN(seedVal) ? null : seedVal;
 
-            const newPrompt = document.getElementById("settingSystem").value.trim();
-            SYSTEM_PROMPT = newPrompt;
-            messages[0].content = SYSTEM_PROMPT;
-
-            // Check if the edited prompt still matches a preset
-            const matchingKey = Object.keys(PERSONAS).find(k => PERSONAS[k].prompt === newPrompt);
-            if (matchingKey) {
-                activePersona = matchingKey;
-                personaSelect.value = matchingKey;
-                const customOpt = personaSelect.querySelector('option[value="custom"]');
-                if (customOpt) customOpt.remove();
-            } else {
-                // Temporary custom override
-                activePersona = "custom";
-                let customOpt = personaSelect.querySelector('option[value="custom"]');
-                if (!customOpt) {
-                    customOpt = document.createElement("option");
-                    customOpt.value = "custom";
-                    customOpt.textContent = "⚡ Custom";
-                    personaSelect.appendChild(customOpt);
-                }
-                personaSelect.value = "custom";
-            }
+            applySystemPrompt(document.getElementById("settingSystem").value.trim());
 
             updateOverlay();
             updateMainCloudWarning();
@@ -3845,6 +3884,152 @@ Rules:
             a.click();
             URL.revokeObjectURL(a.href);
             showToast("✅ Chat exported!");
+        });
+
+        // ========== Import Chat ==========
+        // Reads back a file the export button above wrote, so a conversation can be
+        // carried across the sessions the app itself deliberately never remembers.
+        // Parsing is tied to that exact layout — the `> **System:**` block and the
+        // user-message / ai-message wrappers — which keeps older exports importable.
+        // Nothing is persisted: the file is read into memory, replayed, and dropped.
+        // Images can't come back (the export flattens them to "[N images attached]").
+        const importFileInput = document.getElementById("importFileInput");
+        const importConfirmModal = document.getElementById("importConfirmModal");
+        trapModalFocus(importConfirmModal);
+        let pendingImport = null; // parsed chat waiting on the replace confirmation
+
+        function parseChatExport(md) {
+            const text = md.replace(/\r\n/g, "\n");
+            // The system prompt is quoted line-by-line (its blank lines become "> "),
+            // so the first genuinely blank line before the "---" rule ends the block.
+            const sysMatch = text.match(/^# Chat Export\n+> \*\*System:\*\* ?([\s\S]*?)\n\n---\n/);
+            const system = sysMatch ? sysMatch[1].replace(/^> ?/gm, "").trim() : null;
+
+            const turns = [];
+            // Non-greedy: an assistant answer containing this exact closing sequence
+            // verbatim would cut its own bubble short — an accepted format limitation.
+            const turnRe = /<div class="(user|ai)-message">\n\n([\s\S]*?)\n\n<\/div>/g;
+            let m;
+            while ((m = turnRe.exec(text)) !== null) {
+                turns.push({ role: m[1] === "user" ? "user" : "assistant", content: m[2].trim() });
+            }
+            return (turns.length === 0 && system === null) ? null : { system, turns };
+        }
+
+        // Undo the <context>/<file> wrapping the submit handler prepends to a user
+        // turn, so an imported bubble shows the same collapsible "📎 Attached Context"
+        // and its ✏️ Edit button refills the context pane and file chips. Only leading
+        // blocks are peeled — that is the only place submit puts them.
+        function splitContextBlocks(raw) {
+            const blockRe = /^(?:<context>\n([\s\S]*?)\n<\/context>|<file name="([^"]*)">\n([\s\S]*?)\n<\/file>)\n\n/;
+            let rest = raw, contextText = "";
+            const files = [];
+            let m;
+            while ((m = rest.match(blockRe)) !== null) {
+                if (m[1] !== undefined) contextText = m[1];
+                else files.push({ name: unescapeHtml(m[2]), kind: "text", content: m[3] });
+                rest = rest.slice(m[0].length);
+            }
+            return { text: rest, contextText, files };
+        }
+
+        function renderImportedChat(parsed) {
+            chatbox.innerHTML = "";
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}];
+            if (parsed.system) applySystemPrompt(parsed.system);
+            userScrolledUp = false;
+
+            for (const turn of parsed.turns) {
+                const uid = nextMsgUid++;
+                if (turn.role === "user") {
+                    // Mirrors the UI half of the submit handler; history keeps the full
+                    // original text so the next request's payload is unchanged.
+                    const { text, contextText, files } = splitContextBlocks(turn.content);
+                    let uiText = escapeHtml(text).replace(/\n/g, '<br>');
+                    if (contextText || files.length > 0) {
+                        let combinedSafeContext = "";
+                        if (contextText) combinedSafeContext += escapeHtml(contextText) + "\n\n";
+                        files.forEach(f => {
+                            combinedSafeContext += `--- ${escapeHtml(f.name)} ---\n` + escapeHtml(f.content) + "\n\n";
+                        });
+                        uiText = `<details class="attached-context"><summary>📎 Attached Context</summary><pre>${combinedSafeContext.trim()}</pre></details>` + uiText;
+                    }
+                    appendMessage("You", DOMPurify.sanitize(uiText), "user", "🧑‍💻", true,
+                        { text, contextText, files }, uid);
+                    messages.push({"role": "user", "content": turn.content, uid});
+                } else {
+                    const container = document.getElementById(appendMessage("AI", "", "ai", "✨", false, "", uid));
+                    container.innerHTML = `<div class="ai-response-body"></div>`;
+                    // The renderer a finished stream uses: <think> blocks, Markdown,
+                    // sanitizing, math, diagrams and copy buttons all behave identically.
+                    updateMessageUI({
+                        fullRawText: turn.content,
+                        aiReasoning: "",
+                        startTime: Date.now(),
+                        responseContainer: container.querySelector(".ai-response-body")
+                    }, true);
+                    messages.push({"role": "assistant", "content": turn.content, uid});
+                }
+            }
+
+            if (parsed.turns.length === 0) showEmptyState();
+            chatbox.scrollTop = chatbox.scrollHeight;
+            // The imported turns weren't generated here — the counters describe this
+            // session's traffic, so they start over.
+            updateGlobalStats("0", "0", "0.0", "0.0");
+        }
+
+        function finishImport(parsed) {
+            renderImportedChat(parsed);
+            const n = parsed.turns.length;
+            showToast(`✅ Imported ${n} message${n === 1 ? "" : "s"}.`);
+        }
+
+        document.getElementById("importBtn").addEventListener("click", () => {
+            if (isWaiting) {
+                showToast("⏳ Wait for the current response to finish.");
+                return;
+            }
+            importFileInput.value = ""; // so re-picking the same file still fires "change"
+            importFileInput.click();
+        });
+
+        importFileInput.addEventListener("change", async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            let parsed = null;
+            try {
+                parsed = parseChatExport(await file.text());
+            } catch (error) {
+                console.error("Import failed:", error);
+            }
+            if (!parsed) {
+                showToast("❌ Not a HermitUI chat export.");
+                return;
+            }
+            // Only ask when there is actually something to lose.
+            if (messages.some(m => m.role !== "system")) {
+                pendingImport = parsed;
+                openModalEl(importConfirmModal);
+                return;
+            }
+            finishImport(parsed);
+        });
+
+        document.getElementById("importConfirmBtn").addEventListener("click", () => {
+            closeModalEl(importConfirmModal);
+            if (pendingImport) finishImport(pendingImport);
+            pendingImport = null;
+        });
+        document.getElementById("importCancelBtn").addEventListener("click", () => {
+            closeModalEl(importConfirmModal);
+            pendingImport = null;
+        });
+        importConfirmModal.addEventListener("click", (e) => {
+            if (e.target === importConfirmModal) {
+                closeModalEl(importConfirmModal);
+                pendingImport = null;
+            }
         });
 
         // ========== Summarize Chat ==========

@@ -211,7 +211,7 @@ If HermitUI fails to connect to your local AI server (e.g., a "Network Error"), 
 *   **📎 Context attachments:** drag-and-drop or upload text files to inject their contents into your prompt.
 *   **🎛️ Advanced sampling controls:** `temperature`, `max_tokens`, `top_p`, `presence_penalty`, `frequency_penalty`, and `seed` from a collapsible Settings panel. Params are only sent when set, keeping payloads compatible with minimal backends.
 *   **🎨 Modern UI/UX:** clean, responsive design with smooth micro-animations, comprehensive CSS variables for theming, and a glassmorphism feel. Light and dark themes.
-*   **💾 Chat export:** download the entire conversation as a formatted Markdown file.
+*   **💾 Chat export & import:** download the entire conversation as a formatted Markdown file (📤, `Ctrl+E`), and load one back in later with 📂 (`Ctrl+I`) — messages, system prompt and attached context are restored, and the model picks the conversation up where you left it. The exported file is the only copy: nothing is stored in the browser. Images can't come back, since the export records them as `[N images attached]`.
 *   **⚙️ Customizable settings:** API URL, model name, API key, and system prompt via the on-page settings overlay.
 
 </details>
