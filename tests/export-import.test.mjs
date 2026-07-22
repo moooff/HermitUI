@@ -1,6 +1,7 @@
 // Round-trip tests for 📤 Export / 📂 Import, with an emphasis on how file
 // attachments survive the trip. Run with:  node tests/export-import.test.mjs
 import H from "./extract.mjs";
+import { check, report } from "./check.mjs";
 const { SUMMARY_PREFIX, escapeHtml, parseChatExport, splitContextBlocks, exportMd } = H;
 
 // Mirror of the payload the submit handler builds for a user turn (src/script.js,
@@ -28,14 +29,6 @@ function userMsg(text, contextText, files = []) {
 const SYS = { role: "system", content: "You are a helpful assistant." };
 const AI = t => ({ role: "assistant", content: t });
 
-let pass = 0, fail = 0;
-function check(name, cond, detail) {
-    if (cond) { pass++; console.log("  PASS  " + name); }
-    else {
-        fail++;
-        console.log("  FAIL  " + name + (detail ? "\n        " + String(detail).replace(/\n/g, "\n        ") : ""));
-    }
-}
 const roundtrip = msgs => {
     const md = exportMd(msgs);
     return { md, parsed: parseChatExport(md) };
@@ -207,5 +200,4 @@ console.log("\n=== 12. empty vs absent system prompt ===");
     check("missing system block parses as null", noSys.system === null, JSON.stringify(noSys.system));
 }
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
-process.exit(fail === 0 ? 0 : 1);
+report();

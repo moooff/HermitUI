@@ -1,20 +1,42 @@
 # Tests
 
-Focused regression tests for 📤 Export / 📂 Import. Not a general test suite — the project
-has no test runner, no `package.json`, and no dependencies to install for the unit half.
-These exist because the export format doubles as the import format, so a change to one side
-silently breaks the other.
+A deliberately small suite: no test runner, no `package.json`, no dependencies to install
+for the unit half. It covers the pure logic where a silent regression would be expensive —
+the Export/Import format (which doubles as both writer and reader) and the parsing and
+normalization the app does before anything reaches the screen or the network.
 
-## Unit round-trip — `export-import.test.mjs`
+```bash
+node tests/run.mjs        # every *.test.mjs file, aggregate exit code
+```
+
+Individual files can be run directly. `extract.mjs` slices the functions under test
+straight out of `src/script.js` and evaluates them, so the tests exercise shipped code and
+fail loudly if something is renamed rather than quietly testing a stale copy. Only pure
+functions can be covered this way — anything touching `document` belongs in the end-to-end
+test instead. `check.mjs` is the shared 30-line assertion helper.
+
+## Core logic — `core.test.mjs`
+
+```bash
+node tests/core.test.mjs
+```
+
+Covers, per numbered section: `parseThinkSegments` (closed/unclosed segments, unslashed
+`<|thought_end|>` closers, and half-arrived tags during streaming never flashing as literal
+text), `buildFinalHistory` (a separate `reasoning` field folded in exactly once),
+`apiEndpoint` (base URLs and pasted full endpoints), `detectCloudProvider` (providers match
+as hostname suffixes — `mybox.ai` must not trip the `x.ai` warning), `isTextFile` /
+`isImageFile` (including SVG's deliberate exclusion), vision-model detection,
+`normalizeGgufUrl` (the three accepted URL shapes plus the rejections), and
+`detectTemplateFromArch` / `buildWllamaPrompt` (prompt wrapping asserted byte for byte,
+since a malformed prompt only shows up as a model answering badly). Section 10 covers
+`createThrottle`, which is timing-based and uses real timers.
+
+## Export/Import round-trip — `export-import.test.mjs`
 
 ```bash
 node tests/export-import.test.mjs
 ```
-
-Node only, no install step. `extract.mjs` slices the real `escapeHtml`, `unescapeHtml`,
-`contentToText`, `parseChatExport`, `splitContextBlocks` and the export handler's
-Markdown-building body straight out of `src/script.js` and evaluates them, so the tests
-exercise shipped code and fail loudly if a function is renamed.
 
 Covers: system prompt and turn recovery, text attachments (single, multiple, alongside
 context-pane text), attachments sent with no prompt text, filenames needing HTML escaping,
@@ -22,7 +44,7 @@ images being flattened to a placeholder, 📋 summaries keeping their `isSummary
 an empty system prompt staying distinguishable from an absent one, and the documented
 truncation limits.
 
-Exits non-zero on failure.
+Every file exits non-zero on failure.
 
 ## End-to-end — `e2e_export_import.py`
 
