@@ -3865,6 +3865,37 @@ Rules:
         });
         document.getElementById("settingModelInput").addEventListener("input", updateVisionBadge);
 
+        // ========== Summary bubbles (shared by Summarize, Export and Import) ==========
+        // A summary is a session artifact, not a turn of the conversation: it is kept
+        // out of every request payload (see the `isSummary` filter on the chat payload).
+        // Its history entry carries this heading so the entry still reads as a summary
+        // on its own; the bubble and the export both label it themselves and strip it.
+        const SUMMARY_PREFIX = "## Summary\n\n";
+
+        // Built in one place so a freshly-streamed summary and an imported one cannot drift.
+        function buildSummaryBubble(uid) {
+            const container = document.getElementById(appendMessage("AI", "", "summary", "📋", false, "", uid));
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
+                    <button class="action-btn copy-summary-btn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">📋 Copy</button>
+                </div>
+                <div class="ai-response-body"></div>
+            `;
+            return container;
+        }
+        // getText is a callback because a streaming summary only knows its text once done.
+        function wireSummaryCopy(container, getText) {
+            const copyBtn = container.querySelector(".copy-summary-btn");
+            if (!copyBtn) return;
+            copyBtn.addEventListener("click", () => {
+                copyToClipboard(getText()).then(() => {
+                    copyBtn.textContent = "✅ Copied!";
+                    setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
+                }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
+            });
+        }
+
         // ========== Export Chat ==========
         document.getElementById("exportBtn").addEventListener("click", () => {
             let md = "# Chat Export\n\n";
@@ -3873,6 +3904,12 @@ Rules:
                     md += `> **System:** ${msg.content.replace(/\n/g, '\n> ')}\n\n---\n\n`;
                 } else if (msg.role === "user") {
                     md += `## 🧑‍💻 You\n\n<div class="user-message">\n\n${contentToText(msg.content)}\n\n</div>\n\n`;
+                } else if (msg.isSummary) {
+                    // Tagged with its own wrapper so an import restores it as a summary
+                    // instead of replaying it as a real answer the model then sees.
+                    const raw = contentToText(msg.content);
+                    const body = raw.startsWith(SUMMARY_PREFIX) ? raw.slice(SUMMARY_PREFIX.length) : raw;
+                    md += `## 📋 Summary\n\n<div class="summary-message">\n\n${body}\n\n</div>\n\n---\n\n`;
                 } else if (msg.role === "assistant") {
                     md += `## ✨ AI\n\n<div class="ai-message">\n\n${contentToText(msg.content)}\n\n</div>\n\n---\n\n`;
                 }
@@ -3908,10 +3945,14 @@ Rules:
             const turns = [];
             // Non-greedy: an assistant answer containing this exact closing sequence
             // verbatim would cut its own bubble short — an accepted format limitation.
-            const turnRe = /<div class="(user|ai)-message">\n\n([\s\S]*?)\n\n<\/div>/g;
+            const turnRe = /<div class="(user|ai|summary)-message">\n\n([\s\S]*?)\n\n<\/div>/g;
             let m;
             while ((m = turnRe.exec(text)) !== null) {
-                turns.push({ role: m[1] === "user" ? "user" : "assistant", content: m[2].trim() });
+                turns.push({
+                    role: m[1] === "user" ? "user" : "assistant",
+                    isSummary: m[1] === "summary",
+                    content: m[2].trim()
+                });
             }
             return (turns.length === 0 && system === null) ? null : { system, turns };
         }
@@ -3943,7 +3984,9 @@ Rules:
         function renderImportedChat(parsed) {
             chatbox.innerHTML = "";
             messages = [{"role": "system", "content": SYSTEM_PROMPT}];
-            if (parsed.system) applySystemPrompt(parsed.system);
+            // `null` means the file had no System block at all (keep the current prompt);
+            // "" means it was exported with the prompt deliberately cleared — restore that.
+            if (parsed.system !== null) applySystemPrompt(parsed.system);
             userScrolledUp = false;
 
             for (const turn of parsed.turns) {
@@ -3964,6 +4007,18 @@ Rules:
                     appendMessage("You", DOMPurify.sanitize(uiText), "user", "🧑‍💻", true,
                         { text, contextText, files }, uid);
                     messages.push({"role": "user", "content": turn.content, uid});
+                } else if (turn.isSummary) {
+                    // Restored as a summary, not as an answer: same 📋 bubble as a
+                    // freshly-streamed one, and isSummary keeps it out of the payload.
+                    const container = buildSummaryBubble(uid);
+                    updateMessageUI({
+                        fullRawText: turn.content,
+                        aiReasoning: "",
+                        startTime: Date.now(),
+                        responseContainer: container.querySelector(".ai-response-body")
+                    }, true);
+                    wireSummaryCopy(container, () => turn.content);
+                    messages.push({"role": "assistant", "content": SUMMARY_PREFIX + turn.content, isSummary: true, uid});
                 } else {
                     const container = document.getElementById(appendMessage("AI", "", "ai", "✨", false, "", uid));
                     container.innerHTML = `<div class="ai-response-body"></div>`;
@@ -4060,14 +4115,7 @@ Rules:
             userScrolledUp = false;
 
             const uid = nextMsgUid++;
-            const responseContainer = document.getElementById(appendMessage("AI", "", "summary", "📋", false, "", uid));
-            responseContainer.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <div class="summary-badge" style="margin-bottom: 0;">Summary</div>
-                    <button class="action-btn copy-summary-btn" style="color: var(--primary); font-weight: 600; font-size: 0.75rem; padding: 2px 6px;">📋 Copy</button>
-                </div>
-                <div class="ai-response-body"></div>
-            `;
+            const responseContainer = buildSummaryBubble(uid);
 
             const ctx = await runStreamingResponse({
                 payload: {
@@ -4085,7 +4133,7 @@ Rules:
                 estimatePromptTokens: () => Math.ceil(summaryPrompt.length / 4),
                 onFinal: (ctx, aborted) => {
                     if (!aborted) {
-                        messages.push({"role": "assistant", "content": "## Summary\n\n" + buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), "isSummary": true, uid});
+                        messages.push({"role": "assistant", "content": SUMMARY_PREFIX + buildFinalHistory(ctx.fullRawText, ctx.aiReasoning), "isSummary": true, uid});
                     }
                 },
                 onFailure: (error, ctx) => {
@@ -4095,15 +4143,7 @@ Rules:
                 }
             });
 
-            const copyBtn = responseContainer.querySelector(".copy-summary-btn");
-            if (copyBtn) {
-                copyBtn.addEventListener("click", () => {
-                    copyToClipboard(ctx.fullRawText).then(() => {
-                        copyBtn.textContent = "✅ Copied!";
-                        setTimeout(() => { copyBtn.textContent = "📋 Copy"; }, 2000);
-                    }).catch(() => showToast("⚠️ Copy failed — clipboard unavailable in this context."));
-                });
-            }
+            wireSummaryCopy(responseContainer, () => ctx.fullRawText);
         });
 
         // The async clipboard API is missing on insecure origins (e.g. plain

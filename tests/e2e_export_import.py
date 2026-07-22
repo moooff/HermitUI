@@ -128,6 +128,52 @@ def main():
         check("no image preview after import", page.locator(".attached-image-preview").count() == 0)
         check("placeholder shown as literal text", any("[1 image attached]" in t for t in after), after)
 
+        # A 📋 summary is filtered out of every request payload. It used to export as a
+        # normal AI turn, so importing turned it into a real answer the model then saw.
+        print("\n=== summary survives import as a summary, not as an answer ===")
+        page.goto(APP)
+        page.evaluate(STUB)
+        page.fill("#userInput", "hi")
+        page.click("#sendBtn")
+        page.wait_for_selector(".ai-response-body", timeout=10000)
+        page.wait_for_timeout(700)
+        page.click("#summarizeBtn")
+        page.wait_for_selector(".msg-wrapper.summary", timeout=10000)
+        page.wait_for_timeout(700)
+
+        out = tmp / "summary.md"
+        with page.expect_download() as dl:
+            page.click("#exportBtn")
+        dl.value.save_as(str(out))
+        md = out.read_text()
+        check("summary exported under its own wrapper", '<div class="summary-message">' in md, md)
+        check("summary not exported as an ai-message", md.count("ai-message") == 1, md)
+
+        page.set_input_files("#importFileInput", str(out))
+        page.wait_for_timeout(300)
+        if page.is_visible("#importConfirmModal"):
+            page.click("#importConfirmBtn")
+        page.wait_for_timeout(700)
+        check("imported summary keeps its 📋 bubble", page.locator(".msg-wrapper.summary").count() == 1)
+        check("imported summary has a working copy button",
+              page.locator(".msg-wrapper.summary .copy-summary-btn").count() == 1)
+        # The stored "## Summary" prefix would render as an <h2> under the badge.
+        body = page.locator(".msg-wrapper.summary .ai-response-body")
+        check("summary body rendered", "Acknowledged." in body.inner_text(), body.inner_text())
+        check("stored heading not duplicated under the badge",
+              "<h2" not in body.inner_html(), body.inner_html())
+
+        # The decisive check: the next request must not contain the summary.
+        page.fill("#userInput", "again")
+        page.click("#sendBtn")
+        page.wait_for_timeout(900)
+        payload = page.evaluate("window.__lastPayload")
+        roles = [m["role"] for m in payload["messages"]]
+        joined = " ".join(m["content"] for m in payload["messages"] if isinstance(m["content"], str))
+        check("imported summary excluded from the outgoing payload",
+              "## Summary" not in joined, joined)
+        check("payload is system + user + ai + user", roles == ["system", "user", "assistant", "user"], roles)
+
         browser.close()
 
     failed = [n for ok, n in results if not ok]

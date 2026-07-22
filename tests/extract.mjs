@@ -21,6 +21,13 @@ function fn(name) {
     return src.slice(i, j);
 }
 
+// Slice a single-line `const NAME = …;` declaration the extracted code depends on.
+function constDecl(name) {
+    const m = src.match(new RegExp(`^\\s*const ${name} = .*;$`, "m"));
+    if (!m) throw new Error(`extract.mjs: const ${name} not found in src/script.js`);
+    return m[0].trim();
+}
+
 // The export handler is an inline arrow, so take just its Markdown-building body —
 // everything from the header string up to the Blob/download plumbing.
 function exportBody() {
@@ -31,13 +38,14 @@ function exportBody() {
 }
 
 const mod = `
+${constDecl("SUMMARY_PREFIX")}
 ${fn("escapeHtml")}
 ${fn("unescapeHtml")}
 ${fn("contentToText")}
 ${fn("parseChatExport")}
 ${fn("splitContextBlocks")}
 function exportMd(messages) { ${exportBody()} return md; }
-export { escapeHtml, unescapeHtml, contentToText, parseChatExport, splitContextBlocks, exportMd };
+export { SUMMARY_PREFIX, escapeHtml, unescapeHtml, contentToText, parseChatExport, splitContextBlocks, exportMd };
 `;
 
 export default await import("data:text/javascript;base64," + Buffer.from(mod).toString("base64"));

@@ -1,7 +1,7 @@
 // Round-trip tests for 📤 Export / 📂 Import, with an emphasis on how file
 // attachments survive the trip. Run with:  node tests/export-import.test.mjs
 import H from "./extract.mjs";
-const { escapeHtml, parseChatExport, splitContextBlocks, exportMd } = H;
+const { SUMMARY_PREFIX, escapeHtml, parseChatExport, splitContextBlocks, exportMd } = H;
 
 // Mirror of the payload the submit handler builds for a user turn (src/script.js,
 // "Send Message" handler). Kept in step with it by hand — if the wrapping format
@@ -169,6 +169,42 @@ console.log("\n=== 10. empty and malformed input ===");
     check("system-only export still parses", parsed !== null && parsed.turns.length === 0, JSON.stringify(parsed));
     check("unrelated markdown rejected", parseChatExport("# Some notes\n\nhello world") === null);
     check("empty file rejected", parseChatExport("") === null);
+}
+
+// A 📋 summary is a session artifact that is deliberately filtered out of every request
+// payload. Before it got its own wrapper it exported as a normal `ai-message`, so an
+// import turned it into a genuine assistant turn that the model then saw.
+console.log("\n=== 11. summary keeps its status across the round trip ===");
+{
+    const summary = {
+        role: "assistant",
+        content: SUMMARY_PREFIX + "## TL;DR\nThey greeted each other.",
+        isSummary: true,
+    };
+    const msgs = [SYS, userMsg("hi", ""), AI("hello"), summary];
+    const { md, parsed } = roundtrip(msgs);
+    check("exported under its own wrapper", md.includes('<div class="summary-message">'), md);
+    check("not exported as a normal AI turn", (md.match(/ai-message/g) || []).length === 1);
+    check("redundant stored heading stripped from the body", !md.includes("\n## Summary\n"), md);
+    check("three turns", parsed.turns.length === 3, JSON.stringify(parsed.turns));
+    check("summary flagged on import", parsed.turns[2].isSummary === true, JSON.stringify(parsed.turns[2]));
+    check("real answer not flagged", parsed.turns[1].isSummary === false);
+    check("user turn not flagged", parsed.turns[0].isSummary === false);
+    check("summary body restored", parsed.turns[2].content === "## TL;DR\nThey greeted each other.",
+        JSON.stringify(parsed.turns[2].content));
+    check("history entry rebuilds byte-identically",
+        SUMMARY_PREFIX + parsed.turns[2].content === summary.content);
+}
+
+// The System block distinguishes "absent" (old/other export — keep the current prompt)
+// from "present but empty" (exported with the prompt deliberately cleared).
+console.log("\n=== 12. empty vs absent system prompt ===");
+{
+    const { parsed } = roundtrip([{ role: "system", content: "" }, userMsg("q", "")]);
+    check("empty system prompt parses as \"\", not null", parsed.system === "", JSON.stringify(parsed.system));
+
+    const noSys = parseChatExport('# Chat Export\n\n## 🧑‍💻 You\n\n<div class="user-message">\n\nq\n\n</div>\n\n');
+    check("missing system block parses as null", noSys.system === null, JSON.stringify(noSys.system));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

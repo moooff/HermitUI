@@ -18,7 +18,9 @@ exercise shipped code and fail loudly if a function is renamed.
 
 Covers: system prompt and turn recovery, text attachments (single, multiple, alongside
 context-pane text), attachments sent with no prompt text, filenames needing HTML escaping,
-images being flattened to a placeholder, and the documented truncation limits.
+images being flattened to a placeholder, 📋 summaries keeping their `isSummary` status,
+an empty system prompt staying distinguishable from an absent one, and the documented
+truncation limits.
 
 Exits non-zero on failure.
 
@@ -31,7 +33,9 @@ benchmark/.venv/bin/python tests/e2e_export_import.py
 
 Drives the real `dist/hermit-ui-standalone.html` in headless Chromium through its own
 buttons — attach, send, export, re-import — and asserts on the resulting DOM: the 📎 Attached
-Context disclosure, the ✏️ Edit button refilling file chips, and images not surviving.
+Context disclosure, the ✏️ Edit button refilling file chips, images not surviving, and an
+imported 📋 summary coming back as a summary bubble that stays out of the next request's
+payload (asserted on the stubbed `fetch`'s actual body).
 `fetch` is stubbed with a one-chunk SSE stream, so no API server is needed. Reuses the
 `benchmark/` virtualenv rather than adding another one.
 
@@ -47,3 +51,9 @@ Context disclosure, the ✏️ Edit button refilling file chips, and images not 
 - Attachment bodies are inlined unescaped, so content reproducing `\n\n</div>` or
   `\n</file>\n\n` truncates the block. Asserted in the tests as accepted limitations so a
   future format change is a deliberate decision.
+- A 📋 summary is written as `<div class="summary-message">` rather than `ai-message`, so
+  the import restores it as a summary. That matters beyond styling: summaries are filtered
+  out of every request payload, and an untagged one would come back as a real assistant
+  turn the model then sees. Older exports have no such block and are unaffected.
+- The `> **System:**` block distinguishes absent (keep the session's current prompt) from
+  present-but-empty (restore the cleared prompt).
