@@ -70,6 +70,30 @@ Notes:
   enabled to exercise HermitUI's `<think>` rendering. Gemma has no such
   switch, so its prompts are sent verbatim.
 
+## Prompt-cache probe (API backend)
+
+`prompt_cache_probe.py` is a separate, much smaller tool: it checks whether a local
+OpenAI-compatible server (llama.cpp, LM Studio, Ollama) actually reuses its KV cache
+across a HermitUI conversation. It replays the app's payload shape — append-only
+history, a `<file>` attachment baked into one turn — and prints how many prompt
+tokens the server had to evaluate per turn.
+
+```bash
+llama-server -m models/Qwen3-8B-Q4_K_M.gguf -c 8192 -np 1 -ngl 99 --slots
+python3 prompt_cache_probe.py --url http://127.0.0.1:8081/v1
+```
+
+Stdlib only, no venv. It needs `timings.prompt_n` in the response to be precise
+(llama.cpp reports it); otherwise fall back to reading `prompt_ms`/wall time, which
+stays flat on a hit and grows with the prompt on a miss.
+
+Measured on the dev machine (Qwen3-8B-Q4_K_M, llama-server b10068, GPU, 2026-07-23):
+a 3k-token attachment costs 2914 evaluated tokens on its own turn and **13–16** on
+every following turn (795 ms → 33 ms prompt time). Switching persona mid-chat rewrites
+`messages[0]` and re-evaluates 3021 of 3027 — the one thing that reliably throws the
+cache away. A one-off summarize request does *not*: llama.cpp restores the
+conversation's prefix from its host-RAM prompt cache afterwards.
+
 ## Results
 
 Each run writes `results/<timestamp>-<backend>/`:
