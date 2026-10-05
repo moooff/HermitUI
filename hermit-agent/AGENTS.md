@@ -57,6 +57,10 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **Worker messages are untrusted.** Agent code can reach the worker's JS globals.
   The main thread validates every worker message and never evaluates anything it
   receives (DESIGN.md §4.1).
+- **A minor version per phase.** When a phase meets its exit criterion, raise the
+  minor version (`APP_VERSION` in `src/script.js`, the header badge in `src/index.html`,
+  the status line in `README.md`) in the commit that completes it. v0.1.0 was Phase 1,
+  v0.2.0 Phase 3 (2a and 2b had no bump of their own).
 - **Never send the API key to the worker or into an export.**
 - **Never auto-execute imported sessions.** Import restores in a paused state (DESIGN
   §3.3).

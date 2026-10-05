@@ -23,7 +23,6 @@ look.
   directly: it loads the libraries and Pyodide from the CDNs, under a looser CSP.
 - **Default API URL is `http://localhost:8080/v1`** (llama.cpp) rather than HermitUI's
   `:1234` (LM Studio), because that's what the spike and your machine use.
-- **Version v0.1.0**, shown in the header. No git tag was created.
 
 ## Agent loop
 

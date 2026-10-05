@@ -2,7 +2,7 @@
 
 *A supervised, sandboxed, ephemeral agent that runs entirely in your browser.*
 
-> **Status: MVP (v0.1.0).** One self-contained HTML file,
+> **Status: v0.2.0** (Phase 3, native tool calls). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (≈ 9 MB,
 > Python included). It is developed here, separately from the main app in
 > [`../src/`](../src/), so it can move fast without destabilising HermitUI.
