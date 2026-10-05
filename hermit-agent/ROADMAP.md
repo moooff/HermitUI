@@ -205,12 +205,21 @@ the setting was lowered; that attempt's run otherwise passed the same way.
 
 ### Phase 2b — Rich output
 
-- [ ] matplotlib capture (Agg plus a patched `show()`) with inline figures (§8).
-- [ ] Image previews.
-- [ ] A binary summary.
-- [ ] A periodic file listing in the context (§5.4).
+- [x] matplotlib capture (Agg plus a patched `show()`) with inline figures (§8).
+- [x] Image previews.
+- [x] A binary summary.
+- [x] A periodic file listing in the context (§5.4).
 
-**Exit criteria:** set before 2b starts.
+**Exit criteria** (set on 2026-10-05, before 2b started):
+- Every item is covered: pure logic by unit tests, the worker and the DOM by an e2e
+  scenario against the mock, green in Chromium and Playwright's Firefox; the existing
+  suites stay green.
+- The success measurement grows by three Phase 2b tasks: a chart the prompt asks to
+  *show* (no file name, so it must be captured from `plt.show()` or the end of the
+  step), an image made with Pillow, and a question about an uploaded binary file. The
+  18-task suite passes **≥ 90 %** over 3 runs against a real model (Phase 2a: 98 % on
+  15), and in every run of the shown-chart task the figure is captured: a PNG under
+  `figures/` that its step card shows inline.
 
 ---
 

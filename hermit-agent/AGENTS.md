@@ -8,12 +8,12 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-Phase 1 (MVP) and Phase 2a (reliability) are built: `src/` → `build.py` →
-`dist/hermit-agent-standalone.html`. The
-source of truth is [DESIGN.md](DESIGN.md), and the current phase is in
-[ROADMAP.md](ROADMAP.md). If an implementation needs to deviate from the design, update
-DESIGN.md in the same commit. Open decisions taken without the owner (the MVP build,
-Phase 2a) are listed in [REVIEW_NOTES.md](REVIEW_NOTES.md).
+Phase 1 (MVP), Phase 2a (reliability) and Phase 2b (rich output) are built: `src/` →
+`build.py` → `dist/hermit-agent-standalone.html`. The source of truth is
+[DESIGN.md](DESIGN.md), and the current phase is in [ROADMAP.md](ROADMAP.md). If an
+implementation needs to deviate from the design, update DESIGN.md in the same commit.
+Open decisions taken without the owner (the MVP build, Phases 2a and 2b) are listed in
+[REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ## Build & test
 ```bash

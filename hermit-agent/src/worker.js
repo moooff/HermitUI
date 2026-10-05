@@ -113,13 +113,104 @@ function hermitWorkerMain() {
     }
 
     // ---------- Python harness ----------
+    // matplotlib draws off-screen (DESIGN §8). This backend is Agg whose show() hands every
+    // open figure to the harness, which saves it under figures/ for the step card. It
+    // lives outside /workspace, so it is neither a workspace file nor re-imported per step.
+    const INLINE_BACKEND_PY = `
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas  # noqa: F401
+import hermit_figures
+
+def show(*args, **kwargs):
+    hermit_figures.capture("show")
+`;
+
     const HARNESS_PY = `
-import os, sys, hashlib, importlib, json
+import os, sys, hashlib, importlib, json, types
 os.makedirs("/workspace", exist_ok=True)
 os.chdir("/workspace")
 if "/workspace" not in sys.path:
     sys.path.insert(0, "/workspace")
-os.environ["MPLBACKEND"] = "Agg"
+os.makedirs("/hermit", exist_ok=True)
+with open("/hermit/hermit_inline.py", "w") as fh:
+    fh.write(INLINE_BACKEND_PY)
+if "/hermit" not in sys.path:
+    sys.path.append("/hermit")
+os.environ["MPLBACKEND"] = "module://hermit_inline"
+
+# ---- Figures (DESIGN §8): plt.show(), and figures still open when a step ends, are saved
+# as figures/step-N-k.png and closed, like a notebook's inline backend. A figure the agent
+# saved itself (savefig) isn't saved twice: its own file is shown instead.
+_fig = {"step": 0, "count": 0, "saved": [], "errors": []}
+
+def _fig_has_content(fig):
+    return bool(fig.axes or fig.texts or fig.images or fig.lines or fig.patches or fig.artists)
+
+def hermit_capture(reason):
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return
+    from matplotlib._pylab_helpers import Gcf
+    for manager in list(Gcf.get_all_fig_managers()):
+        fig = manager.canvas.figure
+        try:
+            if not getattr(fig, "_hermit_saved", False) and _fig_has_content(fig):
+                _fig["count"] += 1
+                path = "figures/step-%d-%d.png" % (_fig["step"], _fig["count"])
+                os.makedirs("/workspace/figures", exist_ok=True)
+                fig.savefig("/workspace/" + path, format="png")
+                w, h = fig.canvas.get_width_height()
+                _fig["saved"].append({"path": path, "width": int(w), "height": int(h), "how": reason})
+        except Exception as e:
+            _fig["errors"].append("%s: %s" % (type(e).__name__, str(e)[:300]))
+        finally:
+            plt.close(fig)
+
+_figmod = types.ModuleType("hermit_figures")
+_figmod.capture = hermit_capture
+sys.modules["hermit_figures"] = _figmod
+
+def _patch_savefig(module):
+    F = getattr(module, "Figure", None)
+    if F is None or getattr(F.savefig, "_hermit", False):
+        return
+    original = F.savefig
+    def savefig(self, *args, **kwargs):
+        self._hermit_saved = True
+        return original(self, *args, **kwargs)
+    savefig._hermit = True
+    savefig.__doc__ = original.__doc__
+    F.savefig = savefig
+
+# Mark figures saved with savefig, from the moment matplotlib.figure is first imported
+# (whichever backend the agent picks).
+class _HermitFigureHook:
+    def find_spec(self, name, path=None, target=None):
+        if name != "matplotlib.figure":
+            return None
+        for finder in sys.meta_path:
+            if finder is self or not hasattr(finder, "find_spec"):
+                continue
+            spec = finder.find_spec(name, path, target)
+            if spec is not None:
+                break
+        else:
+            return None
+        loader = spec.loader
+        original = loader.exec_module
+        def exec_module(module):
+            original(module)
+            _patch_savefig(module)
+        loader.exec_module = exec_module
+        return spec
+
+sys.meta_path.insert(0, _HermitFigureHook())
+
+def hermit_figures_begin(step):
+    _fig.update(step=int(step), count=0, saved=[], errors=[])
+
+def hermit_figures_end():
+    hermit_capture("end")
+    return json.dumps({"saved": _fig["saved"], "errors": _fig["errors"]})
 
 def hermit_listing():
     out = {}
@@ -220,6 +311,7 @@ def hermit_clear_workspace():
         py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl, stdin: undefined });
         py.setStdin({ error: true });   // input() raises instead of hanging
         harness = py.globals.get("dict")();
+        harness.set("INLINE_BACKEND_PY", INLINE_BACKEND_PY);
         py.runPython(HARNESS_PY, { globals: harness });
         ns = py.globals.get("dict")();
         ns.set("__name__", "__main__");
@@ -293,7 +385,7 @@ def hermit_clear_workspace():
         return { loaded, failed, errors, netAttempts: netAttempts.slice(), ms: Math.round(performance.now() - t0) };
     }
 
-    async function run({ code, allowNetwork }) {
+    async function run({ code, allowNetwork, step }) {
         const t0 = performance.now();
         const notes = [];
         netAttempts = [];
@@ -306,6 +398,7 @@ def hermit_clear_workspace():
         // The step itself, in the persistent namespace. Its packages were loaded before
         // (the load op), with the network limited to the pinned CDN.
         netMode = allowNetwork ? "open" : "closed";
+        harness.get("hermit_figures_begin")(Number.isInteger(step) ? step : 0);
         try {
             harness.get("hermit_forget_workspace_modules")();
             await py.runPythonAsync(code, { globals: ns, filename: "<step>" });
@@ -314,6 +407,15 @@ def hermit_clear_workspace():
             errorText = trimTraceback(e && e.message || e);
         }
         netMode = "closed";
+        // Figures still open are saved too (a failed step's included), then closed.
+        let figures = [];
+        try {
+            const f = JSON.parse(harness.get("hermit_figures_end")());
+            figures = f.saved;
+            for (const err of f.errors) notes.push("A figure couldn't be saved: " + err);
+        } catch (e) {
+            notes.push("Figures couldn't be captured: " + String(e && e.message || e).split("\n").pop().slice(0, 300));
+        }
 
         // What changed, relative to the workspace the main thread knows about.
         const after = listing();
@@ -325,7 +427,7 @@ def hermit_clear_workspace():
         let output = out.text();
         if (errorText) output += (output && !output.endsWith("\n") ? "\n" : "") + errorText;
         return {
-            status, output, notes, netAttempts: netAttempts.slice(), listing: after, files,
+            status, output, notes, netAttempts: netAttempts.slice(), listing: after, files, figures,
             durationMs: Math.round(performance.now() - t0),
         };
     }

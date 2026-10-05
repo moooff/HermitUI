@@ -42,8 +42,8 @@ and `<edit_file>` actions that need no Python and are gated before they apply.
 
 What makes it different from CLI agents is that **you can supervise it**:
 
-- **Every step is visible:** the model's reasoning, the exact code, the output, and
-  a diff of which files changed.
+- **Every step is visible:** the model's reasoning, the exact code, the output, the
+  charts and images it made (inline), and a diff of which files changed.
 - **Risky steps wait for you.** Harmless steps run on their own. Anything that
   deletes or overwrites your files, or tries to reach the network, is held for
   approval.
@@ -75,5 +75,5 @@ See [DESIGN.md §11](DESIGN.md#11-project-layout--merge-path).
 | [ROADMAP.md](ROADMAP.md) | Phases with checklists and exit criteria, from the first spike to the merge decision |
 | [PHASE0_FINDINGS.md](PHASE0_FINDINGS.md) | What the Phase 0 spike measured: offline boot, kill & re-seed, network blocking, GitHub Pages |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or AI) working in this folder, build & test commands |
-| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Decisions taken without the owner (MVP, Phase 2a), waiting for a review |
+| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Decisions taken without the owner (MVP, Phases 2a and 2b), waiting for a review |
 | [tests/README.md](tests/README.md) | What the unit, end-to-end and real-model tests cover |

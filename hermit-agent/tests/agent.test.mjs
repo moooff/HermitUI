@@ -40,6 +40,10 @@ section("1. parseReply — what runs and what doesn't (DESIGN §5.1)");
     check("a made-up <observation> runs nothing (not a final answer)", X.parseReply("<observation>\nNow let me run it.\n</observation>", "stop").kind === "fakeobs");
     check("…but a final answer mentioning observations mid-line stands", X.parseReply("The <observation> showed 42.", "stop").kind === "final");
     check("a <tool_call> runs nothing", X.parseReply('<tool_call>\n{"name": "run_python", "arguments": {"code": "1"}}\n</tool_call>', "stop").kind === "toolcall");
+    const rp = X.parseReply("Now let me run it.\n\n<run_python>\npython process.py\n</run_python>", "stop");
+    check("a guessed <run_python> tag runs nothing and isn't a final answer (seen with Qwen3.8)", rp.kind === "toolcall" && rp.tag === "run_python", JSON.stringify(rp));
+    check("…nor <bash>", X.parseReply("<bash>ls</bash>", "stop").tag === "bash");
+    check("…but prose that mentions run_python is still an answer", X.parseReply("Done. I didn't need <run_python> at all.", "stop").kind === "final");
 }
 
 section("2. splitReply — inline think tags become reasoning");

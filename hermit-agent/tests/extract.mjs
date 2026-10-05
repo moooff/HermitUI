@@ -46,6 +46,7 @@ const FUNCS = [
     "transcriptMarkdown", "buildSessionArchive", "validateManifest", "validateSession", "parseSessionArchive", "workspaceEntriesFromZip",
     "lineDiff", "diffHunks", "elideHistory", "isRetryableError", "retryDelayMs", "contextGauge", "uploadWarning",
     "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "readEntry",
+    "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
 ];
 
 const mod = `

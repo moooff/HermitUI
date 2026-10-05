@@ -184,6 +184,29 @@ print(len(rows), total)
         "E2E-OFFLINE": [py("import attrs\nprint('attrs ok')"), final("Offline handled.")],
         "E2E-ELIDE": [py(f"print('{i}' * 3000)") for i in range(1, 10)] + [final("Long outputs done.")],
         "E2E-UPLOAD": [py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'), final("Listed uploads.")],
+        "E2E-FIG": [
+            py('''
+import matplotlib.pyplot as plt
+plt.plot([1, 2, 3], [2, 4, 1]); plt.title("shown")
+plt.show()
+fig, ax = plt.subplots(); ax.bar(["a", "b"], [3, 5]); fig.savefig("bars.png")
+plt.figure(); plt.plot([0, 1]); plt.title("left open")
+print("plotted")
+'''),
+            py('''
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+print("open before:", plt.get_fignums())
+plt.plot([3, 1, 2]); plt.savefig("agg.png"); plt.show()
+plt.figure(); plt.plot([1, 1])
+'''),
+            py('from PIL import Image\nImage.new("RGB", (32, 16), "red").save("red.jpg")\nprint("saved")'),
+            final('<read_file path="red.jpg"/>'),
+            py('print("five")'),
+            py('import matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(4, 3)); ax.bar(["a"], [1]); fig.savefig("bars.png")\nprint("resaved")'),
+            final("Charts done."),
+        ],
         "E2E-APPROVE": [
             py('print("original")'),
             py("while True:\n    pass"),
@@ -946,6 +969,90 @@ def packages_scenario(browser, port, state):
     page.context.close()
 
 
+def figures_scenario(browser, port, state, downloads=True):
+    print("— figures: plt.show() and end-of-step capture, inline images, binary summaries, the periodic file list")
+    page = open_app(browser)
+    configure(page, port, 120)   # the first matplotlib import loads it from the CDN
+    page.select_option("#autonomySelect", "autopilot")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-FIG: draw charts")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 300, "figures task")
+    reqs = [r for r in state.requests[n0:] if "E2E-FIG" in r["messages"][1]["content"]]
+    st = page.evaluate("() => S.timeline.filter(t => t.type === 'step').map(t => ({ n: t.n, status: t.status, output: t.output, notes: t.notes, figures: t.figures, fileListSent: t.fileListSent, added: t.changes ? t.changes.added.map(f => f.path) : [] }))")
+    s1 = st[0]
+    check("step 1 ran", s1["status"] == "ok" and s1["output"].strip() == "plotted", s1)
+    check("plt.show() and the figure left open were captured; the savefig'd one wasn't saved twice",
+          s1["figures"] == [{"path": "figures/step-1-1.png", "width": 640, "height": 480, "how": "show"}, {"path": "figures/step-1-2.png", "width": 640, "height": 480, "how": "end"}]
+          and sorted(s1["added"]) == ["bars.png", "figures/step-1-1.png", "figures/step-1-2.png"], s1)
+    obs1 = reqs[1]["messages"][-1]["content"]
+    check("the model is told about the figures, and that it can't see them",
+          "Figures saved and shown to the user: figures/step-1-1.png (640×480 px, from plt.show()), figures/step-1-2.png (640×480 px, still open at the end of the step)" in obs1 and "You can't see images" in obs1, obs1[-600:])
+    check("…and what the other binary file is", "Binary file written: bars.png: PNG image, 640×480 px, RGBA" in obs1, obs1[-600:])
+    check("step 2: figures were closed after step 1", "open before: []" in st[1]["output"], st[1]["output"])
+    check("step 2: with Agg chosen by the agent, savefig'd figures still aren't doubled, an open one is captured",
+          st[1]["figures"] == [{"path": "figures/step-2-1.png", "width": 640, "height": 480, "how": "end"}] and sorted(st[1]["added"]) == ["agg.png", "figures/step-2-1.png"], st[1])
+    check("a Pillow image is described", any("red.jpg: JPEG image, 32×16 px, color" in n for n in st[2]["notes"]), st[2]["notes"])
+    obs4 = reqs[4]["messages"][-1]["content"]
+    check("read_file of a binary says what it is", "red.jpg is a binary file (JPEG image, 32×16 px, color," in obs4, obs4[-400:])
+    tail = reqs[5]["messages"][-1]["content"].split("</observation>")[-1].strip()
+    check("step 5 sends the current file list after its observation", st[4]["fileListSent"] == 6 and tail.startswith("Files in /workspace now: agg.png (")
+          and "figures/step-2-1.png" in tail and tail.endswith("red.jpg (" + tail.split("red.jpg (")[-1]), tail)
+    check("…and only then", all("Files in /workspace now" not in r["messages"][-1]["content"] for i, r in enumerate(reqs) if i != 5))
+    idx5 = page.evaluate("() => S.timeline.findIndex(t => t.type === 'step' && t.n === 5)")
+    check("…its card says so", "The agent also got the current file list (6 files)" in page.inner_text(f'[data-idx="{idx5}"]'))
+
+    # The cards show the images inline, figures first; they load.
+    wait_until(page, "() => [...document.querySelectorAll('.step-image img')].every(i => i.complete && i.naturalWidth > 0)", 20, "inline images load")
+    card1 = page.evaluate("() => { const i = S.timeline.findIndex(t => t.type === 'step' && t.n === 1); return [...document.querySelectorAll(`[data-idx='${i}'] .step-image`)].map(b => [b.querySelector('.step-image-caption').textContent, b.querySelector('img').naturalWidth]); }")
+    check("step 1's card shows its three images, figures first", card1 == [["figures/step-1-1.png · plt.show()", 640], ["figures/step-1-2.png · open figure", 640], ["bars.png", 640]], card1)
+    check("the Pillow image is shown too", page.evaluate("() => [...document.querySelectorAll('.step-image-caption')].some(c => c.textContent === 'red.jpg')"))
+    page.locator(".step-image").first.click()
+    page.wait_for_selector("#viewerModal.active")
+    check("an image opens in the viewer with its summary", "PNG image, 640×480 px" in page.inner_text("#viewerMeta"), page.inner_text("#viewerMeta"))
+    page.click("#viewerClose")
+
+    # A changed binary file: both versions side by side.
+    idx6 = page.evaluate("() => S.timeline.findIndex(t => t.type === 'step' && t.n === 6)")
+    page.locator(f'[data-idx="{idx6}"] .file-chip.modified').click()
+    page.wait_for_selector("#viewerModal.active")
+    wait_until(page, "() => [...document.querySelectorAll('.binary-change img')].filter(i => i.complete && i.naturalWidth > 0).length === 2", 15, "before/after images")
+    sides = page.evaluate("() => [...document.querySelectorAll('.binary-side .hint')].map(p => p.textContent)")
+    check("a changed image opens on both versions with their summaries",
+          len(sides) == 2 and "640×480 px" in sides[0] and "400×300 px" in sides[1], sides)
+    check("…with tabs for either version", page.evaluate("() => [...document.querySelectorAll('#viewerTabs .viewer-tab')].map(b => b.textContent)") == ["± Changes", "This version", "Before"])
+    page.click("#viewerClose")
+    page.click("#debugBtn")
+    check("the debug console logs the file list", "file list sent with step 5 (6 files" in page.inner_text("#debugLog"))
+    page.keyboard.press("Escape")
+
+    # Binary files that aren't images: a summary and a zip's entries in the viewer.
+    page.evaluate("""async () => {
+        const z = await zipWrite([{ path: '[Content_Types].xml', data: new TextEncoder().encode('<Types/>') }, { path: 'xl/workbook.xml', data: new TextEncoder().encode('<w/>') }]);
+        await addUserFiles([{ path: 'book.xlsx', bytes: z }]); }""")
+    page.locator('[data-action=view-file][data-path="book.xlsx"]').click()
+    page.wait_for_selector("#viewerModal.active")
+    body = page.inner_text("#viewerBody")
+    check("a binary's viewer says what it is and lists a zip's entries", "Excel workbook (.xlsx)" in body and "xl/workbook.xml" in body and "First " in body, body[:300])
+    page.click("#viewerClose")
+
+    if downloads:
+        with page.expect_download() as dl:
+            page.click("#exportBtn")
+            page.click("#exportSessionBtn")
+        zpath = str(pathlib.Path(tempfile.mkdtemp()) / "figures-session.zip")
+        dl.value.save_as(zpath)
+        page.context.close()
+        page = open_app(browser)
+        page.set_input_files("#importInput", zpath)
+        wait_until(page, "() => S.status === 'paused' && S.timeline.length > 0", 30, "import")
+        figs = page.evaluate("() => S.timeline.find(t => t.type === 'step' && t.n === 1).figures.map(f => f.path)")
+        check("figures survive export → import", figs == ["figures/step-1-1.png", "figures/step-1-2.png"], figs)
+        wait_until(page, "() => document.querySelectorAll('.step-image img').length >= 6 && [...document.querySelectorAll('.step-image img')].every(i => i.complete && i.naturalWidth > 0)", 20, "images after import")
+        check("…and the cards show them again", True)
+    page.context.close()
+
+
 def elide_scenario(browser, port, state):
     print("— old long outputs are elided from requests, in blocks, while the history keeps them")
     page = open_app(browser)
@@ -1140,6 +1247,8 @@ def main():
                 for n, fn in [("packages", packages_scenario), ("elide", elide_scenario)]:
                     if want(n):
                         fn(browser, port, state)
+                if want("figures"):
+                    figures_scenario(browser, port, state, downloads=not exe)
                 if want("upload"):
                     upload_scenario(browser, port, state, folders=not exe)
             except AssertionError as e:

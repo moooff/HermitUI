@@ -437,6 +437,29 @@ pre.output.is-error { border-color: var(--danger); }
 .file-chip.modified { color: var(--warn); border-color: var(--warn); }
 .file-chip.deleted { color: var(--danger); border-color: var(--danger); }
 .chip-stat { margin-left: 6px; color: var(--text-muted); font-size: 0.72rem; }
+/* Images a step wrote (figures first), inline on its card; click opens the viewer. A tile
+   is as wide as its image, which is scaled down to fit but never up. */
+.step-images { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.step-image {
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 100%;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--glass-strong);
+    cursor: zoom-in;
+    color: var(--text-muted);
+    font: inherit;
+    text-align: left;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.step-image:hover, .step-image:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
+.step-image img { display: block; width: auto; height: auto; max-width: 100%; max-height: 220px; border-radius: 6px; background: #fff; }
+.step-images.single .step-image img { max-height: 420px; }
+.step-image-caption { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.74rem; overflow-wrap: anywhere; }
 /* Unified line diffs (file changes, edited code): text only, line numbers in gutters. */
 .diff-view { display: flex; flex-direction: column; gap: 6px; }
 pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60vh; padding: 6px 0; }
@@ -669,6 +692,13 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .viewer-body { max-height: 65vh; overflow: auto; }
 .viewer-body pre { white-space: pre; }
 .viewer-img { max-width: 100%; height: auto; border-radius: 8px; background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+/* Binary files: what they are, and a changed one's two versions side by side. */
+.binary-summary { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.binary-type { font-weight: 600; }
+.zip-list { max-height: 30vh; overflow: auto; font-size: 0.78rem; }
+.binary-change { display: flex; flex-wrap: wrap; gap: 12px; }
+.binary-side { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.binary-side-label { font-weight: 600; font-size: 0.85rem; color: var(--text-muted); }
 .toast {
     position: fixed;
     bottom: 20px;

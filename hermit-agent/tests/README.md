@@ -63,6 +63,17 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
     file), the system prompt's list, `packageFailureMessage` (offline, CDN down,
     redirected outside the CDN), `moduleNotFoundHint`.
   - `readEntry` on a fake dropped folder read in batches, and the exported retry note.
+- **`richoutput.test.mjs`** covers Phase 2b:
+  - `describeBinary` on hand-built headers (PNG, a progressive JPEG behind other
+    segments, GIF, the three WebP kinds, a top-down BMP, `.npy`, a pickle, PDF, tar, WAV,
+    wasm, TrueType, PE) and on real files (an SQLite database, a gzip member), zips
+    written by `zipWrite` (xlsx, npz, plain), and look-alikes that must stay "binary
+    data"; 2,000 truncated and corrupted samples, none of which may throw.
+  - `binarySummary`, `binaryFileNotes` (figures, other binaries, text skipped, the cap),
+    `periodicFileListing` (due steps, unchanged, changed, off), the binary messages of
+    `read_file` / `edit_file`, the prompt's figure rules.
+  - `figures` and `fileListSent` through `validateSession` (unsafe paths dropped, junk
+    coerced, older exports) and the transcript.
 - **`files.test.mjs`** covers the file actions (DESIGN §5.1):
   - `extractFileActions`: both quote styles, fences inside written content,
     line-start only, unclosed tags, path normalising and unsafe paths.
@@ -163,6 +174,13 @@ it stall, on cue; see its docstring):
     synthetic drop, so the `files` fallback; entry-based folder drops still need a real
     drag), and the large-upload confirm.
 15. **Step limit**: *Run 1 more step* runs exactly one.
+16. **Figures** (Phase 2b; loads matplotlib from the CDN): `plt.show()` and a figure left
+    open are captured as `figures/step-1-K.png`, a `savefig`'d one isn't saved twice,
+    figures are closed between steps, `matplotlib.use("Agg")` by the agent still gets
+    end-of-step capture, a Pillow JPEG is described, `read_file` of a binary says what it
+    is, the file list follows step 5's observation (and no other), the cards show the
+    images (figures first) and they load, the viewer shows a summary, a changed PNG opens
+    on both versions, a zip's entries are listed, and figures survive export → import.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters
@@ -178,11 +196,13 @@ Waits poll `page.evaluate()` instead, which goes through the browser protocol.
 ## Real model — `e2e_reference.py`
 
 The success measurement (Phase 2a; its first three tasks are the Phase 1 exit
-criterion). A real model does 15 tasks in the built app under risk-based supervision:
+criterion). A real model does 18 tasks in the built app under risk-based supervision:
 data processing, code plus tests, calculation, fixing a bug in an uploaded file, a JSON
 transform, word frequencies, log analysis, code from a spec, a matplotlib chart, a
 pandas pivot, renaming a setting across two uploaded files, SQLite, counting, dates and
-a Markdown report. `--runs N` repeats the suite; the result is one pass rate, plus a
+a Markdown report, plus Phase 2b's three: a chart it must *show* (the figure has to be
+captured and shown inline on its card), a Pillow image, and a question about an
+uploaded SQLite file. `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks
 the results inside the same interpreter, or against the final answer. The two tasks

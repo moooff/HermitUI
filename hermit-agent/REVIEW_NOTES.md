@@ -1,6 +1,6 @@
-# Decisions to review (Phase 1 MVP build, Phase 2a)
+# Decisions to review (Phase 1 MVP build, Phases 2a and 2b)
 
-The MVP was built unattended on 2026-10-03, and Phase 2a on 2026-10-05, on the instruction "make educated guesses
+The MVP was built unattended on 2026-10-03, and Phases 2a and 2b on 2026-10-05, on the instruction "make educated guesses
 when problems arise, note them for me to decide later". Each entry says what was
 decided, why, and what the alternative is. When you confirm or reverse one, delete it
 here; if you reverse it, update DESIGN.md too. The ⭐ entries are the ones most worth a
@@ -224,6 +224,45 @@ look.
   Tab for keyboard users in that one field.
 - **"Run N more steps" remembers N** for the session (default 10); the composer's
   Continue at the limit uses it too.
+
+## Phase 2b (rich output), decided while building it
+
+- ⭐ **2b's exit criteria were set by the agent**, as the roadmap asked, before building:
+  every item tested (unit + e2e in Chromium and Firefox), and an 18-task success
+  measurement (three new 2b tasks) at ≥ 90 % over 3 runs, with the shown-chart task's
+  figure captured in every run. Alternative: a stricter bar (no regression from 2a's
+  98 %) or a separate figure-only suite.
+- ⭐ **Figures are workspace files** (`figures/step-N-K.png`), as DESIGN §8 planned:
+  checkpointed, exported, rewindable, and the agent can open them. The cost: they add to
+  the workspace and the checkpoint budget, and the file tree grows with every plot.
+  Alternative: keep figures as step attachments outside the workspace.
+- ⭐ **Figures still open at the end of a step are captured and closed**, like a
+  notebook, not only those passed to `plt.show()`. A figure saved with `savefig` isn't
+  captured again (its own file is shown). The catch, also a notebook's: `savefig` *after*
+  `show()` saves an empty figure, and a figure built across several steps with
+  `plt.*` calls is gone after the first (`fig.savefig` on a kept `fig` still works).
+  The prompt says so. Alternative: capture only on `show()` and leave figures open.
+- **Every image file a step writes is shown on its card**, by extension (PNG, JPEG, GIF,
+  WebP, BMP, SVG), at most 8, never upscaled; not only captured figures. TIFF and ICO
+  aren't shown inline (browsers don't render TIFF), but the viewer describes them.
+- **The model is told what binary files it wrote** (format, size, header facts; at most
+  10 per step), and which figures the user saw, with "you can't see images". Images are
+  never sent to the model, even to a vision model: that would need image content parts
+  and vision detection. Alternative: send figures to vision-capable endpoints.
+- **The binary summary reads headers only**, never decodes a file: for a PDF it scans up
+  to 16 MB of text for the page tree's `/Count` (absent when the page tree sits in a
+  compressed object stream), for SQLite up to 4 MB for `CREATE TABLE` names (sorted).
+  Format detection is by magic bytes, not extension.
+- **The periodic file list goes out every 5 steps, only when the workspace changed**
+  since the model's last list, appended after that step's observation. Rewind, import
+  and ➕ New forget the last list, so the next due step sends one. Alternatives: every
+  N steps regardless, or a tool the model calls.
+
+- **A guessed tool tag at the start of a line runs nothing** (`<run_python>`, `<bash>`,
+  `<shell>`, `<execute_python>`, …), with advice to send a ```python block and to run
+  a script with `runpy.run_path`. Found in the 2b measurement, where such a reply ended
+  a task as its "final answer". Alternative: run the tag's content as Python, like
+  `<python>` (here it held a shell command, which would only fail).
 
 ## Not covered by automated tests
 

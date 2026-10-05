@@ -17,7 +17,9 @@ import argparse
 import datetime
 import json
 import pathlib
+import sqlite3
 import sys
+import tempfile
 import time
 
 from playwright.sync_api import sync_playwright
@@ -135,10 +137,32 @@ ORDERS_CSV = "id,customer_id,amount\n1,1,120.0\n2,2,80.5\n3,1,30.0\n4,3,200.25\n
 MONTHLY_CSV = "month,total\n2026-01,200.5\n2026-02,300.0\n2026-03,350.0\n2026-04,280.75\n"
 INVENTORY_CSV = "item,qty,min_qty\nbolts,120,100\nnuts,40,100\nwashers,5,50\nscrews,300,250\nrivets,0,20\n"
 
-# Each task: files to upload, the prompt, and how to check the result: `check` runs in the
-# agent's interpreter and must print CHECK OK; `answer_contains` (all of them) is matched
-# against the final answer with commas and spaces removed; `needs_approval` means a step
-# must have been held because it changed one of your files.
+
+
+def library_db():
+    """An SQLite file for the binary-file question (Phase 2b): the author with the most
+    books overall (Banks, 8) isn't the one with the most before 2000 (Pratchett, 5)."""
+    books = [("Iain Banks", y) for y in (1984, 1987, 1990, 1996, 2000, 2004, 2008, 2012)] + \
+            [("Terry Pratchett", y) for y in (1983, 1986, 1989, 1992, 1998, 2003, 2015)] + \
+            [("Ursula K. Le Guin", y) for y in (1968, 1969, 1974)] + [("Octavia E. Butler", y) for y in (1979, 1993, 2005)]
+    path = pathlib.Path(tempfile.mkdtemp()) / "library.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")
+    con.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, author_id INTEGER, title TEXT, year INTEGER)")
+    names = sorted({a for a, _ in books})
+    con.executemany("INSERT INTO authors VALUES (?, ?)", [(i + 1, n) for i, n in enumerate(names)])
+    con.executemany("INSERT INTO books (author_id, title, year) VALUES (?, ?, ?)", [(names.index(a) + 1, f"Book {i}", y) for i, (a, y) in enumerate(books)])
+    con.commit()
+    con.close()
+    return path.read_bytes()
+
+
+# Each task: files to upload (text, or bytes for binary files), the prompt, and how to
+# check the result: `check` runs in the agent's interpreter and must print CHECK OK;
+# `answer_contains` (all of them) is matched against the final answer with commas and
+# spaces removed; `needs_approval` means a step must have been held because it changed
+# one of your files; `figure_shown` means a figure must have been captured (plt.show() or
+# still open at the end of a step) and shown inline on its step card.
 TASKS = [
     {
         "name": "data processing",
@@ -309,6 +333,34 @@ print("CHECK OK")
         "answer_contains": ["4001"],
     },
     {
+        "name": "chart shown (plt.show)",
+        "files": {"monthly.csv": MONTHLY_CSV},
+        "prompt": "Show me a line chart of the total per month in monthly.csv, with markers and a title. I don't need a file, just show it to me.",
+        "figure_shown": True,
+    },
+    {
+        "name": "image (Pillow)",
+        "files": {},
+        "prompt": "Using Pillow, create a 200×100 pixel PNG named badge.png with a dark blue background and the white text HERMIT roughly in the middle.",
+        "check": """
+from PIL import Image
+im = Image.open("/workspace/badge.png")
+assert im.format == "PNG" and im.size == (200, 100), (im.format, im.size)
+rgb = im.convert("RGB")
+r, g, b = rgb.getpixel((2, 2))
+assert b > r and b > g and b >= 60 and r < 100 and g < 100, (r, g, b)
+middle = [rgb.getpixel((x, y)) for x in range(50, 150) for y in range(30, 70)]
+assert sum(1 for p in middle if min(p) > 180) >= 20, "no white text in the middle"
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "question about a binary file",
+        "files": {"library.db": library_db()},
+        "prompt": "library.db is a file from my library app. Which author has the most books published before 2000, and how many?",
+        "answer_contains": ["Pratchett", "5"],
+    },
+    {
         "name": "dates",
         "files": {},
         "prompt": "How many weekdays (Monday to Friday) are there in the year 2027, not counting these holidays: 2027-01-01, 2027-12-24, 2027-12-25 and 2027-12-31? Compute it.",
@@ -341,7 +393,8 @@ def run_task(page, task, deadline_s):
     while ev(page, "() => PY.state") != "idle":
         time.sleep(0.3)
     if task["files"]:
-        page.set_input_files("#wsFileInput", files=[{"name": n, "mimeType": "text/plain", "buffer": c.encode()} for n, c in task["files"].items()])
+        page.set_input_files("#wsFileInput", files=[{"name": n, "mimeType": "application/octet-stream" if isinstance(c, bytes) else "text/plain",
+                                                     "buffer": c if isinstance(c, bytes) else c.encode()} for n, c in task["files"].items()])
         while ev(page, "() => WS.files.size") < len(task["files"]):
             time.sleep(0.2)
     page.fill("#taskInput", task["prompt"])
@@ -389,6 +442,17 @@ def run_task(page, task, deadline_s):
             problems.append("check: " + out[-500:])
     if task.get("needs_approval") and not any(any("your file" in r for r in a) for a in approvals):
         problems.append("no step was held for changing your file")
+    if task.get("figure_shown"):
+        # A captured figure: a PNG under figures/ in the workspace, shown (loaded) on its step card.
+        shown = ev(page, """() => {
+            const figs = S.timeline.filter(t => t.type === 'step').flatMap(t => t.figures || []).map(f => f.path);
+            const imgs = [...document.querySelectorAll('.step-image')].filter(b => figs.includes(b.dataset.path))
+                .map(b => b.querySelector('img')).filter(i => i.complete && i.naturalWidth > 0);
+            return { figs, inWorkspace: figs.filter(p => WS.files.has(p)), shown: imgs.length };
+        }""")
+        base["figures"] = shown["figs"]
+        if not shown["inWorkspace"] or not shown["shown"]:
+            problems.append(f"no figure captured and shown inline: {shown}")
     return {**base, "passed": not problems, "detail": "; ".join(problems)}
 
 

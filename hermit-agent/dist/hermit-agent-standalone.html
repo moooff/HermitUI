@@ -2047,6 +2047,29 @@ pre.output.is-error { border-color: var(--danger); }
 .file-chip.modified { color: var(--warn); border-color: var(--warn); }
 .file-chip.deleted { color: var(--danger); border-color: var(--danger); }
 .chip-stat { margin-left: 6px; color: var(--text-muted); font-size: 0.72rem; }
+/* Images a step wrote (figures first), inline on its card; click opens the viewer. A tile
+   is as wide as its image, which is scaled down to fit but never up. */
+.step-images { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.step-image {
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 100%;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--glass-strong);
+    cursor: zoom-in;
+    color: var(--text-muted);
+    font: inherit;
+    text-align: left;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.step-image:hover, .step-image:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
+.step-image img { display: block; width: auto; height: auto; max-width: 100%; max-height: 220px; border-radius: 6px; background: #fff; }
+.step-images.single .step-image img { max-height: 420px; }
+.step-image-caption { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.74rem; overflow-wrap: anywhere; }
 /* Unified line diffs (file changes, edited code): text only, line numbers in gutters. */
 .diff-view { display: flex; flex-direction: column; gap: 6px; }
 pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60vh; padding: 6px 0; }
@@ -2279,6 +2302,13 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .viewer-body { max-height: 65vh; overflow: auto; }
 .viewer-body pre { white-space: pre; }
 .viewer-img { max-width: 100%; height: auto; border-radius: 8px; background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+/* Binary files: what they are, and a changed one's two versions side by side. */
+.binary-summary { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.binary-type { font-weight: 600; }
+.zip-list { max-height: 30vh; overflow: auto; font-size: 0.78rem; }
+.binary-change { display: flex; flex-wrap: wrap; gap: 12px; }
+.binary-side { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.binary-side-label { font-weight: 600; font-size: 0.85rem; color: var(--text-muted); }
 .toast {
     position: fixed;
     bottom: 20px;
@@ -2622,13 +2652,104 @@ function hermitWorkerMain() {
     }
 
     // ---------- Python harness ----------
+    // matplotlib draws off-screen (DESIGN §8). This backend is Agg whose show() hands every
+    // open figure to the harness, which saves it under figures/ for the step card. It
+    // lives outside /workspace, so it is neither a workspace file nor re-imported per step.
+    const INLINE_BACKEND_PY = `
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas  # noqa: F401
+import hermit_figures
+
+def show(*args, **kwargs):
+    hermit_figures.capture("show")
+`;
+
     const HARNESS_PY = `
-import os, sys, hashlib, importlib, json
+import os, sys, hashlib, importlib, json, types
 os.makedirs("/workspace", exist_ok=True)
 os.chdir("/workspace")
 if "/workspace" not in sys.path:
     sys.path.insert(0, "/workspace")
-os.environ["MPLBACKEND"] = "Agg"
+os.makedirs("/hermit", exist_ok=True)
+with open("/hermit/hermit_inline.py", "w") as fh:
+    fh.write(INLINE_BACKEND_PY)
+if "/hermit" not in sys.path:
+    sys.path.append("/hermit")
+os.environ["MPLBACKEND"] = "module://hermit_inline"
+
+# ---- Figures (DESIGN §8): plt.show(), and figures still open when a step ends, are saved
+# as figures/step-N-k.png and closed, like a notebook's inline backend. A figure the agent
+# saved itself (savefig) isn't saved twice: its own file is shown instead.
+_fig = {"step": 0, "count": 0, "saved": [], "errors": []}
+
+def _fig_has_content(fig):
+    return bool(fig.axes or fig.texts or fig.images or fig.lines or fig.patches or fig.artists)
+
+def hermit_capture(reason):
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return
+    from matplotlib._pylab_helpers import Gcf
+    for manager in list(Gcf.get_all_fig_managers()):
+        fig = manager.canvas.figure
+        try:
+            if not getattr(fig, "_hermit_saved", False) and _fig_has_content(fig):
+                _fig["count"] += 1
+                path = "figures/step-%d-%d.png" % (_fig["step"], _fig["count"])
+                os.makedirs("/workspace/figures", exist_ok=True)
+                fig.savefig("/workspace/" + path, format="png")
+                w, h = fig.canvas.get_width_height()
+                _fig["saved"].append({"path": path, "width": int(w), "height": int(h), "how": reason})
+        except Exception as e:
+            _fig["errors"].append("%s: %s" % (type(e).__name__, str(e)[:300]))
+        finally:
+            plt.close(fig)
+
+_figmod = types.ModuleType("hermit_figures")
+_figmod.capture = hermit_capture
+sys.modules["hermit_figures"] = _figmod
+
+def _patch_savefig(module):
+    F = getattr(module, "Figure", None)
+    if F is None or getattr(F.savefig, "_hermit", False):
+        return
+    original = F.savefig
+    def savefig(self, *args, **kwargs):
+        self._hermit_saved = True
+        return original(self, *args, **kwargs)
+    savefig._hermit = True
+    savefig.__doc__ = original.__doc__
+    F.savefig = savefig
+
+# Mark figures saved with savefig, from the moment matplotlib.figure is first imported
+# (whichever backend the agent picks).
+class _HermitFigureHook:
+    def find_spec(self, name, path=None, target=None):
+        if name != "matplotlib.figure":
+            return None
+        for finder in sys.meta_path:
+            if finder is self or not hasattr(finder, "find_spec"):
+                continue
+            spec = finder.find_spec(name, path, target)
+            if spec is not None:
+                break
+        else:
+            return None
+        loader = spec.loader
+        original = loader.exec_module
+        def exec_module(module):
+            original(module)
+            _patch_savefig(module)
+        loader.exec_module = exec_module
+        return spec
+
+sys.meta_path.insert(0, _HermitFigureHook())
+
+def hermit_figures_begin(step):
+    _fig.update(step=int(step), count=0, saved=[], errors=[])
+
+def hermit_figures_end():
+    hermit_capture("end")
+    return json.dumps({"saved": _fig["saved"], "errors": _fig["errors"]})
 
 def hermit_listing():
     out = {}
@@ -2729,6 +2850,7 @@ def hermit_clear_workspace():
         py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl, stdin: undefined });
         py.setStdin({ error: true });   // input() raises instead of hanging
         harness = py.globals.get("dict")();
+        harness.set("INLINE_BACKEND_PY", INLINE_BACKEND_PY);
         py.runPython(HARNESS_PY, { globals: harness });
         ns = py.globals.get("dict")();
         ns.set("__name__", "__main__");
@@ -2802,7 +2924,7 @@ def hermit_clear_workspace():
         return { loaded, failed, errors, netAttempts: netAttempts.slice(), ms: Math.round(performance.now() - t0) };
     }
 
-    async function run({ code, allowNetwork }) {
+    async function run({ code, allowNetwork, step }) {
         const t0 = performance.now();
         const notes = [];
         netAttempts = [];
@@ -2815,6 +2937,7 @@ def hermit_clear_workspace():
         // The step itself, in the persistent namespace. Its packages were loaded before
         // (the load op), with the network limited to the pinned CDN.
         netMode = allowNetwork ? "open" : "closed";
+        harness.get("hermit_figures_begin")(Number.isInteger(step) ? step : 0);
         try {
             harness.get("hermit_forget_workspace_modules")();
             await py.runPythonAsync(code, { globals: ns, filename: "<step>" });
@@ -2823,6 +2946,15 @@ def hermit_clear_workspace():
             errorText = trimTraceback(e && e.message || e);
         }
         netMode = "closed";
+        // Figures still open are saved too (a failed step's included), then closed.
+        let figures = [];
+        try {
+            const f = JSON.parse(harness.get("hermit_figures_end")());
+            figures = f.saved;
+            for (const err of f.errors) notes.push("A figure couldn't be saved: " + err);
+        } catch (e) {
+            notes.push("Figures couldn't be captured: " + String(e && e.message || e).split("\n").pop().slice(0, 300));
+        }
 
         // What changed, relative to the workspace the main thread knows about.
         const after = listing();
@@ -2834,7 +2966,7 @@ def hermit_clear_workspace():
         let output = out.text();
         if (errorText) output += (output && !output.endsWith("\n") ? "\n" : "") + errorText;
         return {
-            status, output, notes, netAttempts: netAttempts.slice(), listing: after, files,
+            status, output, notes, netAttempts: netAttempts.slice(), listing: after, files, figures,
             durationMs: Math.round(performance.now() - t0),
         };
     }
@@ -2877,7 +3009,7 @@ const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 const SESSION_FORMAT = "hermit-agent-session";
 const SESSION_FORMAT_VERSION = 1;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -3178,7 +3310,7 @@ Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the u
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
-- matplotlib uses the Agg backend: save figures with plt.savefig("name.png"); plt.show() displays nothing.
+- matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
 - Each step has a time limit. A step that runs too long is killed.
 
 Every reply must be exactly ONE of:
@@ -3248,7 +3380,8 @@ function splitReply(raw, isFinal) {
 // output was once executed as code); the first block wins; an unclosed block means
 // the stream was cut. Models trained on tool-call formats sometimes write
 // <python>…</python> (at the start of a line) instead of a fence: that runs the same way.
-// A <tool_call>, or an <observation> the model wrote itself, runs nothing and gets advice.
+// A <tool_call> (or a guessed tool tag such as <run_python>, seen with Qwen3.8 holding a
+// shell command), or an <observation> the model wrote itself, runs nothing and gets advice.
 // File actions and a python block in one reply are "mixed": nothing runs.
 // Returns { kind: code|files|mixed|ask|final|broken|cutoff|empty|toolcall|fakeobs, ... }.
 function parseReply(text, finishReason) {
@@ -3274,7 +3407,8 @@ function parseReply(text, finishReason) {
     }
     if (unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim() };
     if (finishReason === "length") return { kind: "cutoff", prose: t.trim() };
-    if (/^[ \t]*<(?:tool_call|function_call|function=)/im.test(t)) return { kind: "toolcall", prose: t.trim() };
+    const tool = t.match(/^[ \t]*<(tool_call|function_call|function=|run_python|execute_python|run_code|execute_code|code_interpreter|bash|shell|terminal)\b/im);
+    if (tool) return { kind: "toolcall", prose: t.trim(), tag: tool[1].replace(/=$/, "") };
     // Observations only ever come from the harness: a reply that writes one imitates a
     // result instead of acting (seen with Qwen3.8: "<observation>Now let me run it.").
     if (/^[ \t]*<\/?observation\b/im.test(t)) return { kind: "fakeobs", prose: t.trim() };
@@ -3611,7 +3745,7 @@ function applyFileActions(actions, ws, opts) {
         const bytes = paths.has(p) ? ws.read(p) : null;
         if (!bytes) return null;
         const text = decodeTextFile(bytes);
-        return text === null ? { binary: bytes.length } : { text };
+        return text === null ? { binary: bytes } : { text };
     };
     const lineCount = (s) => (s === "" ? 0 : s.split("\n").length - (s.endsWith("\n") ? 1 : 0));
     for (const a of actions || []) {
@@ -3625,7 +3759,7 @@ function applyFileActions(actions, ws, opts) {
         const cur = current(path);
         if (a.tool === "read_file") {
             if (!cur) { fail(`There is no file ${path} in /workspace.`); continue; }
-            if (cur.binary !== undefined) { fail(`${path} is a binary file (${formatBytes(cur.binary)}); inspect it with python.`); continue; }
+            if (cur.binary !== undefined) { fail(`${path} is a binary file (${binarySummary(cur.binary)}); inspect it with python.`); continue; }
             if (budget <= 0) { fail("Not read: this reply's read budget is used up. Read it in your next reply."); continue; }
             const lines = cur.text.split(/\r?\n/);
             if (cur.text.endsWith("\n")) lines.pop();
@@ -3673,7 +3807,7 @@ function applyFileActions(actions, ws, opts) {
         }
         // edit_file
         if (!cur) { fail(`There is no file ${path} in /workspace. Create it with <write_file>.`); continue; }
-        if (cur.binary !== undefined) { fail(`${path} is a binary file; it can't be edited as text.`); continue; }
+        if (cur.binary !== undefined) { fail(`${path} is a binary file (${describeBinary(cur.binary).type}); it can't be edited as text.`); continue; }
         let text = cur.text;
         const crlf = text.includes("\r\n") && !/(^|[^\r])\n/.test(text);
         const fix = (s) => (crlf ? String(s).replace(/\r?\n/g, "\r\n") : String(s));
@@ -3942,6 +4076,217 @@ function moduleNotFoundHint(output, available) {
     return `${top} isn't part of the Pyodide distribution and can't be installed here (no pip, no network). Use the standard library or one of the packages listed in your instructions, or write the code yourself.`;
 }
 
+// ---------- Binary files (DESIGN §2.1) ----------
+// What a binary file is, from its first bytes: the format and what its header tells
+// cheaply (image size, entry or page count, array shape, audio length). It never decodes
+// the file. Returns { kind, type, details }: kind is "image" | "archive" | "document" |
+// "data" | "audio" | "video" | "font" | "program" | "binary"; details are short phrases.
+function describeBinary(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(0);
+    const n = b.length;
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const at = (off, sig) => off >= 0 && off + sig.length <= n && sig.every((x, i) => x === b[off + i]);
+    const ascii = (off, s) => at(off, [...s].map(c => c.charCodeAt(0)));
+    const u16 = (o, le) => (o >= 0 && o + 2 <= n ? dv.getUint16(o, le) : 0);
+    const u32 = (o, le) => (o >= 0 && o + 4 <= n ? dv.getUint32(o, le) : 0);
+    const latin1 = (from, to) => new TextDecoder("latin1").decode(b.subarray(from, Math.min(n, to)));
+    const px = (w, h) => (w > 0 && h > 0 ? [`${w}×${h} px`] : []);
+    const plural = (k, one, many) => `${k.toLocaleString("en-US")} ${k === 1 ? one : many}`;
+    const out = (kind, type, details) => ({ kind, type, details: (details || []).filter(Boolean) });
+
+    // Images
+    if (at(0, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) {
+        return out("image", "PNG image", [...px(u32(16), u32(20)), { 0: "grayscale", 2: "RGB", 3: "palette", 4: "grayscale + alpha", 6: "RGBA" }[b[25]]]);
+    }
+    if (at(0, [0xFF, 0xD8, 0xFF])) {
+        for (let o = 2; o + 9 < n;) {
+            if (b[o] !== 0xFF) { o++; continue; }
+            const m = b[o + 1];
+            if (m === 0xFF) { o++; continue; }
+            if (m === 0x01 || (m >= 0xD0 && m <= 0xD8)) { o += 2; continue; }   // markers without a length
+            if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+                return out("image", "JPEG image", [...px(u16(o + 7), u16(o + 5)), { 1: "grayscale", 3: "color", 4: "CMYK" }[b[o + 9]]]);
+            }
+            if (m === 0xDA || m === 0xD9) break;   // image data: no frame header before it
+            o += 2 + u16(o + 2);
+        }
+        return out("image", "JPEG image");
+    }
+    if (ascii(0, "GIF87a") || ascii(0, "GIF89a")) return out("image", "GIF image", px(u16(6, true), u16(8, true)));
+    if (ascii(0, "RIFF") && ascii(8, "WEBP")) {
+        const v = (o) => b[o] | (b[o + 1] << 8) | (b[o + 2] << 16);
+        if (ascii(12, "VP8X")) return out("image", "WebP image", [...px(v(24) + 1, v(27) + 1), b[20] & 2 ? "animated" : ""]);
+        if (ascii(12, "VP8L")) { const bits = u32(21, true); return out("image", "WebP image", px((bits & 0x3FFF) + 1, ((bits >>> 14) & 0x3FFF) + 1)); }
+        if (ascii(12, "VP8 ")) return out("image", "WebP image", px(u16(26, true) & 0x3FFF, u16(28, true) & 0x3FFF));
+        return out("image", "WebP image");
+    }
+    if (ascii(0, "BM") && n >= 26 && u32(2, true) <= n + 1024) return out("image", "BMP image", px(dv.getInt32(18, true), Math.abs(dv.getInt32(22, true))));
+    if (at(0, [0x49, 0x49, 0x2A, 0]) || at(0, [0x4D, 0x4D, 0, 0x2A])) return out("image", "TIFF image");
+    if (at(0, [0, 0, 1, 0]) && u16(4, true) >= 1 && n >= 6 + 16 * u16(4, true)) return out("image", "ICO icon", [plural(u16(4, true), "image", "images")]);
+    // Documents and data
+    if (ascii(0, "%PDF-")) {
+        const text = latin1(0, 16 << 20);
+        let pages = 0;
+        for (const m of text.matchAll(/\/Type\s*\/Pages\b[^>]*?\/Count\s+(\d+)|\/Count\s+(\d+)[^>]*?\/Type\s*\/Pages\b/g)) pages = Math.max(pages, Number(m[1] || m[2]));
+        return out("document", "PDF document", ["version " + latin1(5, 8).replace(/[^\d.]/g, ""), pages ? plural(pages, "page", "pages") : ""]);
+    }
+    if (ascii(0, "SQLite format 3\0")) {
+        const pageSize = u16(16) === 1 ? 65536 : u16(16);
+        const tables = [];
+        for (const m of latin1(0, 4 << 20).matchAll(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`[]?([A-Za-z_][\w$]*)/gi)) {
+            if (!tables.includes(m[1]) && !m[1].startsWith("sqlite_")) tables.push(m[1]);
+        }
+        tables.sort((x, y) => x.localeCompare(y));   // records sit back to front in a page
+        return out("data", "SQLite database", [tables.length ? `tables: ${tables.slice(0, 12).join(", ")}${tables.length > 12 ? " …" : ""}` : "", plural(u32(28), "page", "pages") + ` of ${formatBytes(pageSize)}`]);
+    }
+    if (at(0, [0x93]) && ascii(1, "NUMPY")) {
+        const head = b[6] === 1 ? latin1(10, 10 + u16(8, true)) : latin1(12, 12 + u32(8, true));
+        const descr = (head.match(/'descr':\s*'([^']*)'/) || [])[1] || "";
+        const shape = (head.match(/'shape':\s*\(([^)]*)\)/) || [])[1];
+        const t = descr.match(/^[<>|=]?([a-zA-Z])(\d*)/);
+        const names = { f: "float", i: "int", u: "uint", c: "complex", b: "bool", U: "str", S: "bytes", O: "object", M: "datetime64", m: "timedelta64" };
+        const dtype = !t ? descr : "fiuc".includes(t[1]) && t[2] ? names[t[1]] + Number(t[2]) * 8 : names[t[1]] || descr;
+        return out("data", "NumPy array (.npy)", [dtype && "dtype " + dtype, shape !== undefined ? `shape (${shape.trim()})` : ""]);
+    }
+    if (ascii(0, "PAR1") && n >= 8 && ascii(n - 4, "PAR1")) return out("data", "Parquet file");
+    if (ascii(0, "ARROW1")) return out("data", "Arrow IPC / Feather file");
+    if (at(0, [0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A])) return out("data", "HDF5 file");
+    if (b[0] === 0x80 && b[1] >= 2 && b[1] <= 5 && b[n - 1] === 0x2E) return out("data", "Python pickle", ["protocol " + b[1]]);
+    if (at(0, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])) return out("document", "legacy Microsoft Office file (.xls, .doc or .ppt)");
+    // Archives
+    if (ascii(0, "PK") && (at(2, [3, 4]) || at(2, [5, 6]))) {
+        const cd = zipCentralDirectory(b, 2000);
+        if (!cd) return out("archive", "ZIP archive", ["unreadable directory"]);
+        const names = cd.entries.map(e => e.name);
+        const files = names.filter(x => !x.endsWith("/"));
+        let type = "ZIP archive";
+        if (names.includes("[Content_Types].xml")) {
+            type = names.some(x => x.startsWith("xl/")) ? "Excel workbook (.xlsx)" : names.some(x => x.startsWith("word/")) ? "Word document (.docx)" : names.some(x => x.startsWith("ppt/")) ? "PowerPoint presentation (.pptx)" : "Office Open XML file";
+        } else if (files.length && files.every(x => x.endsWith(".npy"))) type = "NumPy archive (.npz)";
+        else if (names.some(x => /\.dist-info\/WHEEL$/.test(x))) type = "Python wheel";
+        else if (names.includes("mimetype") && names.includes("META-INF/container.xml")) type = "EPUB e-book";
+        else if (names.includes("META-INF/MANIFEST.MF")) type = "Java archive (JAR)";
+        const kind = /Excel|Word|PowerPoint|Office|EPUB/.test(type) ? "document" : type.startsWith("NumPy") ? "data" : "archive";
+        return out(kind, type, [
+            type.startsWith("NumPy") ? `arrays: ${files.slice(0, 8).map(x => x.slice(0, -4)).join(", ")}${files.length > 8 ? " …" : ""}` : plural(cd.count, "entry", "entries"),
+            cd.count ? `unpacks to ${formatBytes(cd.total)}` + (cd.entries.length < cd.count ? "+" : "") : "",
+        ]);
+    }
+    if (at(0, [0x1F, 0x8B])) {
+        let name = "";
+        if (b[3] & 8) {
+            let o = 10 + (b[3] & 4 ? 2 + u16(10, true) : 0);
+            const end = b.indexOf(0, o);
+            if (end > o) name = latin1(o, Math.min(end, o + 200));
+        }
+        return out("archive", /\.tar$/i.test(name) ? "gzip-compressed tar archive" : "gzip-compressed data", [name && "of " + name, n >= 18 ? `unpacks to ${formatBytes(u32(n - 4, true))}` : ""]);
+    }
+    if (ascii(257, "ustar")) {
+        let count = 0;
+        for (let o = 0; o + 512 <= n && b[o] && count < 100000; count++) {
+            const size = parseInt(latin1(o + 124, o + 136).replace(/[^0-7]/g, "") || "0", 8);
+            o += 512 + Math.ceil(size / 512) * 512;
+        }
+        return out("archive", "tar archive", [plural(count, "entry", "entries")]);
+    }
+    if (ascii(0, "BZh")) return out("archive", "bzip2-compressed data");
+    if (at(0, [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00])) return out("archive", "xz-compressed data");
+    if (at(0, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C])) return out("archive", "7-Zip archive");
+    if (at(0, [0x28, 0xB5, 0x2F, 0xFD])) return out("archive", "Zstandard-compressed data");
+    // Audio and video
+    if (ascii(0, "RIFF") && ascii(8, "WAVE")) {
+        let channels = 0, rate = 0, byteRate = 0, bits = 0, dataSize = -1;
+        for (let o = 12; o + 8 <= n;) {
+            const id = latin1(o, o + 4), size = u32(o + 4, true);
+            if (id === "fmt ") { channels = u16(o + 10, true); rate = u32(o + 12, true); byteRate = u32(o + 16, true); bits = u16(o + 22, true); }
+            if (id === "data") { dataSize = Math.min(size, n - o - 8); break; }
+            o += 8 + size + (size & 1);
+        }
+        return out("audio", "WAV audio", [
+            rate ? `${rate.toLocaleString("en-US")} Hz` : "", { 1: "mono", 2: "stereo" }[channels] || (channels ? `${channels} channels` : ""), bits ? `${bits}-bit` : "",
+            byteRate && dataSize >= 0 ? `${(dataSize / byteRate).toFixed(dataSize / byteRate < 10 ? 2 : 1)} s` : "",
+        ]);
+    }
+    if (ascii(0, "ID3") || (b[0] === 0xFF && [0xFB, 0xF3, 0xF2].includes(b[1]))) return out("audio", "MP3 audio");
+    if (ascii(0, "OggS")) return out("audio", "Ogg media");
+    if (ascii(0, "fLaC")) return out("audio", "FLAC audio");
+    if (ascii(4, "ftyp")) {
+        const brand = latin1(8, 12);
+        return brand === "M4A " ? out("audio", "MPEG-4 audio") : out("video", brand === "qt  " ? "QuickTime video" : "MP4 video", ["brand " + brand.trim()]);
+    }
+    // Fonts and programs
+    if (ascii(0, "wOFF")) return out("font", "WOFF font");
+    if (ascii(0, "wOF2")) return out("font", "WOFF2 font");
+    if (ascii(0, "OTTO")) return out("font", "OpenType font");
+    if (at(0, [0, 1, 0, 0]) && u16(4) > 0 && u16(4) < 64 && /^[A-Za-z0-9 /]{4}$/.test(latin1(12, 16))) return out("font", "TrueType font");
+    if (at(0, [0, 0x61, 0x73, 0x6D])) return out("program", "WebAssembly module", ["version " + u32(4, true)]);
+    if (at(0, [0x7F, 0x45, 0x4C, 0x46])) return out("program", "ELF executable", [{ 1: "32-bit", 2: "64-bit" }[b[4]]]);
+    if (ascii(0, "MZ") && ascii(u32(60, true), "PE\0\0")) return out("program", "Windows executable");
+    return out("binary", "binary data");
+}
+
+// The central directory of a zip, read without unpacking anything: { count, total (the
+// unpacked size of the entries read), entries: [{ name, size }] (at most max) }, or null.
+function zipCentralDirectory(bytes, max) {
+    const n = bytes.length;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let eocd = -1;
+    for (let i = n - 22; i >= Math.max(0, n - 22 - 65535); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) return null;
+    const count = dv.getUint16(eocd + 10, true);
+    const entries = [];
+    let total = 0;
+    const dec = new TextDecoder();
+    for (let i = 0, p = dv.getUint32(eocd + 16, true); i < Math.min(count, max); i++) {
+        if (p + 46 > n || dv.getUint32(p, true) !== 0x02014b50) return entries.length ? { count, total, entries } : null;
+        const nameLen = dv.getUint16(p + 28, true);
+        const size = dv.getUint32(p + 24, true);
+        entries.push({ name: dec.decode(bytes.subarray(p + 46, p + 46 + nameLen)), size });
+        total += size;
+        p += 46 + nameLen + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+    }
+    return { count, total, entries };
+}
+
+// One line: "PNG image, 640×480 px, RGBA, 18.2 KB".
+function binarySummary(bytes) {
+    const d = describeBinary(bytes);
+    return [d.type, ...d.details, formatBytes(bytes ? bytes.length : 0)].join(", ");
+}
+
+// What the model is told about the binary files a step wrote, since it can't open them:
+// their format, and which were figures captured for the user (DESIGN §8). written:
+// [{ path, bytes }] of the added and modified files; figures: the worker's captures,
+// [{ path, width, height, how: "show" | "end" }]. Returns notes (strings).
+function binaryFileNotes(written, figures) {
+    const figs = new Map((figures || []).map(f => [f.path, f]));
+    const shown = [], other = [];
+    for (const w of written || []) {
+        const f = figs.get(w.path);
+        if (f) shown.push(`${w.path} (${f.width}×${f.height} px, ${f.how === "show" ? "from plt.show()" : "still open at the end of the step"})`);
+        else if (decodeTextFile(w.bytes) === null) other.push(`${w.path}: ${binarySummary(w.bytes)}`);
+    }
+    const notes = [];
+    if (shown.length) notes.push(`Figure${shown.length === 1 ? "" : "s"} saved and shown to the user: ${shown.join(", ")}. You can't see images; the user can.`);
+    if (other.length) notes.push(`Binary file${other.length === 1 ? "" : "s"} written: ${other.slice(0, 10).join("; ")}${other.length > 10 ? `; and ${other.length - 10} more` : ""}.`);
+    return notes;
+}
+
+// DESIGN §5.4: every `every` steps the model gets the current file list again, when it
+// changed since the last list it got, so it doesn't work from a stale memory of
+// /workspace. files: [{ path, size, hash }]; lastKey: the key of that last list.
+// Returns { note, key } when one is due, else null.
+function periodicFileListing(step, every, lastKey, files) {
+    if (!(every > 0 && step > 0 && step % every === 0)) return null;
+    const key = fileListingKey(files);
+    if (key === lastKey) return null;
+    return { key, note: `Files in /workspace now: ${formatFileList([...files].sort((a, b) => (a.path < b.path ? -1 : 1)))}` };
+}
+
+function fileListingKey(files) {
+    return (files || []).map(f => f.path + ":" + f.hash).sort().join("\n");
+}
+
 // ========== 4. Zip + session archive (pure) ==========
 const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 
@@ -4151,6 +4496,8 @@ function transcriptMarkdown(session) {
                 if (item.edited && item.ranCode) md.push(`Edited by the user before it ran:`, ``, block("python", item.ranCode), ``);
                 if (item.output) md.push(`Output:`, ``, block("text", item.output), ``);
                 if (item.changes) md.push(`Files changed: ${formatChanges(item.changes)}`, ``);
+                if ((item.figures || []).length) md.push(`Figures shown: ${item.figures.map(f => `${f.path} (${f.width}×${f.height} px)`).join(", ")}`, ``);
+                if (item.fileListSent) md.push(`The current file list (${item.fileListSent} files) was sent with this step.`, ``);
                 if (item.risk && item.risk.reasons && item.risk.reasons.length) md.push(`Held because it ${item.risk.reasons.join("; ")}.`, ``);
                 if (item.rejectReason) md.push(`Rejection reason: ${item.rejectReason}`, ``);
             }
@@ -4254,6 +4601,10 @@ function validateSession(raw) {
                     : null;
                 s.risk = it.risk && typeof it.risk === "object" ? { verdict: str(it.risk.verdict), reasons: strArr(it.risk.reasons) } : null;
                 s.stats = cleanStepStats(it.stats);
+                const dim = (v) => (Number.isInteger(v) && v > 0 && v <= 100000 ? v : 0);
+                s.figures = (Array.isArray(it.figures) ? it.figures : []).filter(f => f && typeof f === "object" && isSafeRelPath(f.path)).slice(0, 500)
+                    .map(f => ({ path: f.path, width: dim(f.width), height: dim(f.height), how: f.how === "show" ? "show" : "end" }));
+                s.fileListSent = Number.isInteger(it.fileListSent) && it.fileListSent > 0 ? it.fileListSent : 0;
                 if (Array.isArray(it.fileActions)) {
                     s.fileActions = it.fileActions.filter(a => a && typeof a === "object" && FILE_TOOLS.includes(a.tool)).map(a => {
                         const r = { tool: a.tool, path: str(a.path), ok: a.ok === true, message: str(a.message) };
@@ -4539,6 +4890,13 @@ function validateRunResult(r) {
     for (const [p, b] of Object.entries(r.files)) {
         if (!(p in r.listing) || !(b instanceof Uint8Array)) bad("file bytes");
     }
+    // Captured figures: only ones that exist after the step are kept (a step may delete
+    // what plt.show() saved earlier in it).
+    if (r.figures === undefined) r.figures = [];
+    if (!Array.isArray(r.figures) || r.figures.length > 500) bad("figures");
+    const dim = (v) => (Number.isInteger(v) && v > 0 && v <= 100000 ? v : 0);
+    r.figures = r.figures.filter(f => f && typeof f === "object" && isSafeRelPath(f.path) && f.path in r.listing)
+        .map(f => ({ path: f.path, width: dim(f.width), height: dim(f.height), how: f.how === "show" ? "show" : "end" }));
     return r;
 }
 
@@ -4585,7 +4943,7 @@ async function runInWorker(code, opts) {
                 setInterpreterState("idle");
                 const listing = {};
                 for (const [p, f] of WS.files) listing[p] = f.hash;
-                return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing, files: {}, packageError: true };
+                return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing, files: {}, figures: [], packageError: true };
             }
             if (lr.loaded.length) {
                 pkgNotes = [`Loaded ${lr.loaded.join(", ")} from the Pyodide CDN (${(lr.ms / 1000).toFixed(1)} s).`];
@@ -4594,7 +4952,7 @@ async function runInWorker(code, opts) {
             if (typeof setActivity === "function" && RUN.active) setActivity("python");
         }
         phase = "run";
-        const r = validateRunResult(await workerCall("run", { code, allowNetwork: !!o.allowNetwork }, o.timeoutMs));
+        const r = validateRunResult(await workerCall("run", { code, allowNetwork: !!o.allowNetwork, step: o.step }, o.timeoutMs));
         r.notes = [...pkgNotes, ...r.notes];
         r.netAttempts = [...pkgAttempts, ...r.netAttempts];
         setInterpreterState("idle");
@@ -4606,7 +4964,7 @@ async function runInWorker(code, opts) {
         const output = status === "crashed" ? e.message
             : phase === "packages" && status === "timeout" ? `Loading the packages this code imports took longer than ${Math.round(LIMITS.packageTimeoutMs / 1000)} s, so it was stopped. The package CDN may be slow or unreachable.`
             : "";
-        return { status, output, notes: [], netAttempts: [], listing: null, files: {}, packagePhase: phase === "packages" };
+        return { status, output, notes: [], netAttempts: [], listing: null, files: {}, figures: [], packagePhase: phase === "packages" };
     }
 }
 
@@ -4947,13 +5305,19 @@ let S = freshSession();
 // compactNext: the last reply ran out of context, so compact before the next request.
 // retry: { n, at, error } while waiting to retry a failed request; restartTurn: abort the
 // model request and ask again (⚡ Send now); lastError: why the endpoint was given up on;
-// moreSteps: what ⏯ Continue at the step limit allows.
-const RUN = { active: false, abort: null, stopRequested: false, decision: null, activeSince: 0, modelNotes: [], step: 0, activity: "", tokenRatio: 0, overflowRetried: false, compactAfter: 0, compactNext: false, retry: null, restartTurn: false, requesting: false, lastError: null, moreSteps: LIMITS.stepLimitIncrement };
+// moreSteps: what ⏯ Continue at the step limit allows; listedKey: the workspace as the
+// model last got its file list ("" = unknown, so the next periodic list goes out).
+const RUN = { active: false, abort: null, stopRequested: false, decision: null, activeSince: 0, modelNotes: [], step: 0, activity: "", tokenRatio: 0, overflowRetried: false, compactAfter: 0, compactNext: false, retry: null, restartTurn: false, requesting: false, lastError: null, moreSteps: LIMITS.stepLimitIncrement, listedKey: "" };
 
 function workspaceSize() {
     let total = 0;
     for (const f of WS.files.values()) total += (WS.blobs.get(f.hash) || []).length;
     return total;
+}
+
+// The workspace as the model's file lists see it: [{ path, size, hash }].
+function workspaceFileList() {
+    return [...WS.files].map(([p, f]) => ({ path: p, size: (WS.blobs.get(f.hash) || []).length, hash: f.hash }));
 }
 
 function snapshotFiles() {
@@ -5039,6 +5403,7 @@ function collectGarbage() {
         if (item.type === "step" && item._held) for (const h of item._held) live.add(h);
     }
     for (const h of [...WS.blobs.keys()]) if (!live.has(h)) WS.blobs.delete(h);
+    if (typeof document !== "undefined") pruneImageUrls();
 }
 
 async function addUserFiles(list) {
@@ -5203,7 +5568,7 @@ async function startTask(text) {
     CHECKPOINTS = [];
     S.task = text;
     S.createdAt = nowIso();
-    const files = [...WS.files].map(([p, f]) => ({ path: p, size: (WS.blobs.get(f.hash) || []).length }));
+    const files = workspaceFileList();
     S.messages = [
         { role: "system", content: buildSystemPrompt(SETTINGS.instructions, PKG.names) },
         { role: "user", content: buildTaskMessage(text, files) },
@@ -5211,6 +5576,7 @@ async function startTask(text) {
     RUN.modelNotes = [];
     RUN.compactAfter = 0;
     RUN.compactNext = false;
+    RUN.listedKey = fileListingKey(files);
     renderTimeline();
     addTimelineItem({ type: "task", text, files: files.map(f => f.path) });
     S.timeline[S.timeline.length - 1].checkpoint = takeCheckpoint("start");
@@ -5505,7 +5871,7 @@ async function agentTurn() {
                 ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
                 : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.",
             mixed: "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.",
-            toolcall: "Your reply had a <tool_call>, but there are no tool calls here, so nothing ran. To run code, reply with ONE ```python block; to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).",
+            toolcall: `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py")); to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).`,
             fakeobs: "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.",
         }[parsed.kind];
         debugLog("error", "no tool call (" + parsed.kind + ")", why);
@@ -5514,6 +5880,7 @@ async function agentTurn() {
         step.phase = "done";
         step.endedAt = nowIso();
         S.messages.push({ role: "user", content: buildObservation({ step: n, status: "error", notes: [why] }) });
+        sendFileListingIfDue(step);
         step.checkpoint = takeCheckpoint("step " + n);
         renderTimelineItem(idx);
         return "continue";
@@ -5535,6 +5902,7 @@ async function agentTurn() {
     step.phase = "done";
     step.endedAt = nowIso();
     S.messages.push({ role: "user", content: outcome.observation });
+    sendFileListingIfDue(step);
     step.checkpoint = takeCheckpoint("step " + n);
     // Decided: the versions it wrote are now the workspace's (and the checkpoint's) or
     // rolled back. Keeping them listed would hold every version ever written.
@@ -5555,6 +5923,18 @@ function endpointDown(e) {
     addTimelineItem({ type: "error", text: err.message || String(err), hint });
     setStatus("paused");
     return "error";
+}
+
+// DESIGN §5.4: every few steps, the current file list follows the step's observation when
+// the workspace changed since the model last got one. The step records how many files.
+function sendFileListingIfDue(step) {
+    const files = workspaceFileList();
+    const due = periodicFileListing(step.n, LIMITS.fileListEvery, RUN.listedKey, files);
+    if (!due) return;
+    appendToLastUserMessage(S.messages, due.note);
+    RUN.listedKey = due.key;
+    step.fileListSent = files.length;
+    debugLog("tool", `file list sent with step ${step.n} (${files.length} file${files.length === 1 ? "" : "s"}; every ${LIMITS.fileListEvery} steps when it changed)`, clipForDebug(due.note, 4000));
 }
 
 // DESIGN §5.4: summarise the older steps into the task message, keeping the last few
@@ -5610,7 +5990,8 @@ async function compactHistory(reason) {
         addNote("⚠️ Couldn't compact the history: the model returned an empty summary. Continuing with the full history.", "warn");
         return "skipped";
     }
-    const files = [...WS.files].map(([p, f]) => ({ path: p, size: (WS.blobs.get(f.hash) || []).length }));
+    const files = workspaceFileList();
+    RUN.listedKey = fileListingKey(files);   // the compacted history carries the list
     S.compactions.push({ before: S.messages.map(m => ({ role: m.role, content: m.content })), fromStep, toStep });
     S.messages = buildCompactedMessages(S.messages, plan.cut, summary, toStep, files);
     const tokensAfter = estimateTokens(requestMessages(), RUN.tokenRatio);
@@ -5647,7 +6028,7 @@ async function executeStep(step, idx, notes) {
         debugLog("tool", `python · ${code.split("\n").length} lines${allowNetwork ? " · network allowed" : ""}`, code);
         const t0 = performance.now();
         renderTimelineItem(idx);
-        const r = await runInWorker(code, { allowNetwork, timeoutMs: SETTINGS.stepTimeoutSec * 1000 });
+        const r = await runInWorker(code, { allowNetwork, timeoutMs: SETTINGS.stepTimeoutSec * 1000, step: step.n });
         step.notes = [...notes, ...(r.notes || [])];
         step.netAttempts = r.netAttempts || [];
         debugLog(r.status === "ok" ? "result" : "error", `python → ${r.status} · ${Math.round(performance.now() - t0)} ms` + (step.netAttempts.length ? ` · ${step.netAttempts.length} blocked network attempt(s)` : ""), clipForDebug(r.output, 4000) + (step.netAttempts.length ? "\n\nBlocked: " + step.netAttempts.join(", ") : ""));
@@ -5675,6 +6056,9 @@ async function executeStep(step, idx, notes) {
         const risk = classifyEffect(effect.diff, origins, { bytesWritten: effect.bytesWritten, netAttempts: step.netAttempts, overLimit: effect.overLimit });
         step.risk = risk;
         if (step.netAttempts.length) step.notes.push("Network access is blocked; these attempts failed: " + step.netAttempts.join(", "));
+        // Figures and other binary files: the model is told what they are (it can't see them).
+        step.figures = r.figures.filter(f => effect.pending.has(f.path));
+        step.notes.push(...binaryFileNotes([...effect.pending].map(([p, h]) => ({ path: p, bytes: WS.blobs.get(h) })), step.figures));
         const fileHint = filenameCommentHint(code, Object.keys(r.listing));
         if (fileHint) step.notes.push(fileHint);
         const modHint = moduleNotFoundHint(r.output, PKG.names);
@@ -5912,6 +6296,7 @@ async function rewindTo(idx) {
     RUN.modelNotes = ["The session was rewound to this point and the interpreter was restarted: variables are lost, files are as they were at this point."];
     RUN.compactAfter = 0;
     RUN.compactNext = false;
+    RUN.listedKey = "";
     restartInterpreter();
     const last = S.messages[S.messages.length - 1];
     addNote(`⏪ Rewound to ${label}. ` + (last && last.role === "user" ? "Press Continue to resume, or send a note first." : "Send a follow-up to continue."));
@@ -6052,8 +6437,78 @@ function renderFileChips(changes, idx) {
             if (stat) b.appendChild(el("span", "chip-stat", stat));
         }
         b.title = kind === "deleted" ? "View the version before this step" : kind === "modified" ? "View the changes this step made" : "View this version";
+        const summary = cachedBinarySummary(hash);
+        if (summary) b.title += " — " + summary;
         wrap.appendChild(b);
     }
+    return wrap;
+}
+
+// "PNG image, 640×480 px, …" for a held binary version, "" for text or a version no
+// longer held. Cached: chips re-render often and a version never changes.
+const BINARY_SUMMARY_CACHE = new Map();
+function cachedBinarySummary(hash) {
+    if (!hash) return "";
+    if (BINARY_SUMMARY_CACHE.has(hash)) return BINARY_SUMMARY_CACHE.get(hash);
+    const bytes = WS.blobs.get(hash);
+    if (!bytes) return "";
+    const summary = decodeTextFile(bytes) === null ? binarySummary(bytes) : "";
+    BINARY_SUMMARY_CACHE.set(hash, summary);
+    return summary;
+}
+
+// Object URLs of images shown inline, by content hash; revoked once the version is freed.
+const IMAGE_URLS = new Map();
+function imageUrl(hash, type) {
+    let url = IMAGE_URLS.get(hash);
+    if (!url) {
+        url = URL.createObjectURL(new Blob([WS.blobs.get(hash)], { type }));
+        IMAGE_URLS.set(hash, url);
+    }
+    return url;
+}
+
+function pruneImageUrls() {
+    for (const [hash, url] of IMAGE_URLS) {
+        if (!WS.blobs.has(hash)) { URL.revokeObjectURL(url); IMAGE_URLS.delete(hash); }
+    }
+    for (const hash of BINARY_SUMMARY_CACHE.keys()) if (!WS.blobs.has(hash)) BINARY_SUMMARY_CACHE.delete(hash);
+}
+
+function imageType(path) {
+    return IMAGE_TYPES[(path.split(".").pop() || "").toLowerCase()] || "";
+}
+
+// Images a step created or changed, inline on its card (DESIGN §2.1): its captured
+// figures first, then the rest, while their versions are held. An <img> never runs
+// scripts, SVG included.
+function renderStepImages(item) {
+    const ch = item.changes;
+    if (!ch) return null;
+    const figs = new Map((item.figures || []).map(f => [f.path, f]));
+    const list = [...(ch.added || []), ...(ch.modified || [])]
+        .filter(f => imageType(f.path) && WS.blobs.has(f.hash))
+        .sort((a, b) => figs.has(b.path) - figs.has(a.path));
+    if (!list.length) return null;
+    const wrap = el("div", "step-images" + (list.length === 1 ? " single" : ""));
+    for (const f of list.slice(0, LIMITS.stepImagesMax)) {
+        const fig = figs.get(f.path);
+        const b = el("button", "step-image");
+        b.type = "button";
+        b.dataset.action = "view-file";
+        b.dataset.path = f.path;
+        b.dataset.hash = f.hash;
+        if (f.prevHash) b.dataset.prev = f.prevHash;
+        b.title = `Open ${f.path}`;
+        const img = el("img");
+        img.src = imageUrl(f.hash, imageType(f.path));
+        img.alt = fig ? `Figure ${f.path}` : f.path;
+        img.decoding = "async";
+        b.appendChild(img);
+        b.appendChild(el("span", "step-image-caption", f.path + (fig ? (fig.how === "show" ? " · plt.show()" : " · open figure") : "")));
+        wrap.appendChild(b);
+    }
+    if (list.length > LIMITS.stepImagesMax) wrap.appendChild(el("p", "hint", `${list.length - LIMITS.stepImagesMax} more image${list.length - LIMITS.stepImagesMax === 1 ? "" : "s"} in the file list above.`));
     return wrap;
 }
 
@@ -6141,9 +6596,11 @@ function buildStepCard(item, idx, old) {
             card.appendChild(d);
         }
     } else if (item.kind !== "code" && item.status) {
-        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off before it finished — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran.", toolcall: "The reply used a <tool_call>, which isn't how actions work here — nothing ran.", fakeobs: "The reply wrote its own <observation> instead of acting — nothing ran." }[item.status] || ""));
+        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off before it finished — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran.", toolcall: "The reply used a tool-call tag, which isn't how actions work here — nothing ran.", fakeobs: "The reply wrote its own <observation> instead of acting — nothing ran." }[item.status] || ""));
     }
     if (item.changes) card.appendChild(renderFileChips(item.changes, idx));
+    const images = item.phase !== "running" ? renderStepImages(item) : null;
+    if (images) card.appendChild(images);
     const shownNotes = (item.notes || []).filter(n => !n.startsWith("The user edited your code"));
     if (shownNotes.length) {
         const ul = el("ul", "step-notes");
@@ -6151,6 +6608,7 @@ function buildStepCard(item, idx, old) {
         card.appendChild(ul);
     }
     if (item.rejectReason) card.appendChild(el("p", "hint", "Reason given: " + item.rejectReason));
+    if (item.fileListSent) card.appendChild(el("p", "hint", `📋 The agent also got the current file list (${item.fileListSent} file${item.fileListSent === 1 ? "" : "s"}), as every ${LIMITS.fileListEvery} steps when the workspace changed.`));
 
     if (item.phase === "pending-run" || item.phase === "pending-approval") {
         const box = el("div", "decision");
@@ -6426,6 +6884,7 @@ function renderTreeNode(node, ul, prefix) {
 function renderWorkspace() {
     const tree = $("wsTree");
     if (!tree) return;
+    pruneImageUrls();
     renderStatusBar();
     tree.innerHTML = "";
     if (!WS.files.size) {
@@ -6441,10 +6900,18 @@ function renderWorkspace() {
 // ---------- File viewer ----------
 const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml" };
 const HL_LANGS = { py: "python", js: "javascript", mjs: "javascript", ts: "typescript", json: "json", md: "markdown", html: "xml", xml: "xml", css: "css", csv: "plaintext", sh: "bash", yml: "yaml", yaml: "yaml", java: "java", c: "c", h: "c", cpp: "cpp", rs: "rust", go: "go", sql: "sql", toml: "ini", ini: "ini", txt: "plaintext" };
-let viewerUrl = null;
+let viewerUrls = [];
 
-// prevHash: the version before a step changed the file; when both versions are held text,
-// the viewer opens on their diff, with tabs for either version.
+// An object URL for one viewer image; all of them are revoked when the viewer reopens.
+function viewerImageUrl(bytes, type) {
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
+    viewerUrls.push(url);
+    return url;
+}
+
+// prevHash: the version before a step changed the file. When it is held, the viewer opens
+// on the changes — a line diff for text, both versions side by side for binaries — with
+// tabs for either version.
 function openViewer(path, hash, prevHash) {
     const bytes = WS.blobs.get(hash);
     const body = $("viewerBody");
@@ -6453,7 +6920,8 @@ function openViewer(path, hash, prevHash) {
     const tabs = $("viewerTabs");
     tabs.replaceChildren();
     tabs.hidden = true;
-    if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
+    for (const u of viewerUrls) URL.revokeObjectURL(u);
+    viewerUrls = [];
     if (!bytes) {
         $("viewerMeta").textContent = "This version is no longer held in memory (it was rolled back or rewound away).";
         $("viewerDownload").disabled = true;
@@ -6463,17 +6931,18 @@ function openViewer(path, hash, prevHash) {
     $("viewerDownload").disabled = false;
     $("viewerDownload").onclick = () => downloadBytes(bytes, path.split("/").pop());
     const f = WS.files.get(path);
-    const meta = `${formatBytes(bytes.length)}${f && f.hash === hash ? " · " + (f.origin === "user" ? "your file" : "created by the agent") : " · an earlier version"}`;
+    const kind = cachedBinarySummary(hash) || formatBytes(bytes.length);
+    const meta = `${kind}${f && f.hash === hash ? " · " + (f.origin === "user" ? "your file" : "created by the agent") : " · an earlier version"}`;
     $("viewerMeta").textContent = meta;
     const prev = prevHash ? WS.blobs.get(prevHash) : null;
-    const oldText = prev ? decodeTextFile(prev) : null, newText = decodeTextFile(bytes);
-    if (prevHash && !prev) $("viewerMeta").textContent = meta + " · the version before this step is no longer held, so there is no diff";
-    if (oldText !== null && newText !== null) {
+    if (prevHash && !prev) $("viewerMeta").textContent = meta + " · the version before this step is no longer held, so there is no comparison";
+    if (prev) {
+        const oldText = decodeTextFile(prev), newText = decodeTextFile(bytes);
         const views = [["changes", "± Changes"], ["after", "This version"], ["before", "Before"]];
         const show = (which) => {
             for (const b of tabs.children) b.setAttribute("aria-selected", b.dataset.view === which ? "true" : "false");
             body.innerHTML = "";
-            if (which === "changes") body.appendChild(renderDiffView(oldText, newText));
+            if (which === "changes") body.appendChild(oldText !== null && newText !== null ? renderDiffView(oldText, newText) : renderBinaryChange(path, prev, bytes));
             else renderFileBody(body, path, which === "after" ? bytes : prev);
             $("viewerDownload").onclick = () => downloadBytes(which === "before" ? prev : bytes, path.split("/").pop());
         };
@@ -6494,38 +6963,67 @@ function openViewer(path, hash, prevHash) {
     openModal("viewerModal");
 }
 
-// One file version in the viewer: image, highlighted text, or a hex dump.
+// A changed binary file: both versions side by side, as images when they are, each with
+// its summary.
+function renderBinaryChange(path, before, after) {
+    const wrap = el("div", "binary-change");
+    for (const [label, bytes] of [["Before", before], ["This version", after]]) {
+        const side = el("div", "binary-side");
+        side.appendChild(el("p", "binary-side-label", label));
+        if (imageType(path)) {
+            const img = el("img", "viewer-img");
+            img.src = viewerImageUrl(bytes, imageType(path));
+            img.alt = `${path} (${label.toLowerCase()})`;
+            side.appendChild(img);
+        }
+        side.appendChild(el("p", "hint", decodeTextFile(bytes) === null ? binarySummary(bytes) : `text, ${formatBytes(bytes.length)}`));
+        wrap.appendChild(side);
+    }
+    if (before.length === after.length && before.every((x, i) => x === after[i])) wrap.appendChild(el("p", "hint", "Both versions are identical."));
+    return wrap;
+}
+
+// One file version in the viewer: an image, highlighted text, or a binary's summary (with
+// a zip's entries) and the start of a hex dump.
 function renderFileBody(body, path, bytes) {
     const ext = (path.split(".").pop() || "").toLowerCase();
     if (IMAGE_TYPES[ext]) {
         // An <img> never runs scripts, SVG included.
-        if (viewerUrl) URL.revokeObjectURL(viewerUrl);
-        viewerUrl = URL.createObjectURL(new Blob([bytes], { type: IMAGE_TYPES[ext] }));
         const img = el("img", "viewer-img");
-        img.src = viewerUrl;
+        img.src = viewerImageUrl(bytes, IMAGE_TYPES[ext]);
         img.alt = path;
         body.appendChild(img);
-    } else {
-        let text = null;
-        try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch (e) { text = null; }
-        if (text !== null && !text.includes("\0")) {
-            const shown = text.length > 500000 ? text.slice(0, 500000) : text;
-            const lang = HL_LANGS[ext];
-            if (lang && lang !== "plaintext" && shown.length < 300000) body.appendChild(highlightedCode(shown, lang));
-            else { const pre = el("pre", "viewer-text"); pre.textContent = shown; body.appendChild(pre); }
-            if (shown.length < text.length) body.appendChild(el("p", "hint", "Showing the first 500,000 characters. Download the file to see all of it."));
-        } else {
-            const pre = el("pre", "viewer-text");
-            const head = bytes.subarray(0, 512);
-            const rows = [];
-            for (let i = 0; i < head.length; i += 16) {
-                const chunk = head.subarray(i, i + 16);
-                rows.push(i.toString(16).padStart(6, "0") + "  " + Array.from(chunk, b => b.toString(16).padStart(2, "0")).join(" ").padEnd(48) + "  " + Array.from(chunk, b => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join(""));
-            }
-            pre.textContent = `Binary file. First ${head.length} bytes:\n\n` + rows.join("\n");
-            body.appendChild(pre);
-        }
+        return;
     }
+    const text = decodeTextFile(bytes);
+    if (text !== null) {
+        const shown = text.length > 500000 ? text.slice(0, 500000) : text;
+        const lang = HL_LANGS[ext];
+        if (lang && lang !== "plaintext" && shown.length < 300000) body.appendChild(highlightedCode(shown, lang));
+        else { const pre = el("pre", "viewer-text"); pre.textContent = shown; body.appendChild(pre); }
+        if (shown.length < text.length) body.appendChild(el("p", "hint", "Showing the first 500,000 characters. Download the file to see all of it."));
+        return;
+    }
+    const d = describeBinary(bytes);
+    const box = el("div", "binary-summary");
+    box.appendChild(el("p", "binary-type", d.type));
+    if (d.details.length) box.appendChild(el("p", "hint", d.details.join(" · ")));
+    const cd = bytes[0] === 0x50 && bytes[1] === 0x4B ? zipCentralDirectory(bytes, 200) : null;   // "PK": a zip
+    if (cd && cd.entries.length) {
+        const list = el("pre", "viewer-text zip-list");
+        list.textContent = cd.entries.map(e => `${formatBytes(e.size).padStart(10)}  ${e.name}`).join("\n") + (cd.count > cd.entries.length ? `\n… ${cd.count - cd.entries.length} more` : "");
+        box.appendChild(list);
+    }
+    body.appendChild(box);
+    const pre = el("pre", "viewer-text");
+    const head = bytes.subarray(0, 512);
+    const rows = [];
+    for (let i = 0; i < head.length; i += 16) {
+        const chunk = head.subarray(i, i + 16);
+        rows.push(i.toString(16).padStart(6, "0") + "  " + Array.from(chunk, b => b.toString(16).padStart(2, "0")).join(" ").padEnd(48) + "  " + Array.from(chunk, b => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join(""));
+    }
+    pre.textContent = `First ${head.length} bytes:\n\n` + rows.join("\n");
+    body.appendChild(pre);
 }
 
 function downloadBytes(bytes, name, type) {
@@ -6925,6 +7423,7 @@ async function importSessionFile(file) {
     SETTINGS.contextSize = s.settings.contextSize;
     RUN.compactAfter = 0;
     RUN.compactNext = false;
+    RUN.listedKey = "";
     $("autonomySelect").value = SETTINGS.autonomy;
     RUN.modelNotes = ["This session was restored from an export into a fresh interpreter: variables are lost, files are intact."];
     restartInterpreter();
@@ -7165,6 +7664,7 @@ function wireEvents() {
             WS.files = new Map(); WS.blobs = new Map(); WS.version++; WS.lastChanged = new Set();
         }
         RUN.modelNotes = [];
+        RUN.listedKey = "";
         restartInterpreter();
         renderTimeline(); renderWorkspace(); setStatus("idle");
     });

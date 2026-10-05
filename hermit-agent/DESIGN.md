@@ -1,6 +1,7 @@
 # HermitUI Agent — Design
 
-Status: **Phase 1 (MVP) and Phase 2a (reliability) implemented** in `src/` (see
+Status: **Phase 1 (MVP), Phase 2a (reliability) and Phase 2b (rich output) implemented**
+in `src/` (see
 [ROADMAP.md](ROADMAP.md)). Where
 the build deviated from the original plan, the section says so; decisions taken
 during the unattended MVP build that still need an owner's call are collected in
@@ -48,13 +49,21 @@ This is the core of the product. Everything else serves it.
      (`parseThinkSegments`).
   2. **Proposed code:** syntax-highlighted Python, editable while the step is pending.
   3. **Output:** stdout and stderr. Tracebacks are trimmed for display, with the full
-     text on expand. Generated images (matplotlib figures) appear inline.
+     text on expand. Generated images (matplotlib figures) appear inline. *As built
+     (Phase 2b):* every image file a step created or changed (by extension: PNG, JPEG,
+     GIF, WebP, BMP, SVG) is shown on its card while its version is held, captured
+     figures first, at most 8, scaled down to fit but never up; a click opens the
+     viewer. They are `<img>` elements on Blob URLs (an `<img>` never runs scripts, SVG
+     included), cached per content hash and revoked once the version is freed.
   4. **Effect:** files created, modified or deleted, with a per-file diff on click.
      *As built:* the chip of a modified text file counts its changed lines (`+3 −1`,
      while both versions are held and under 512 KB together) and opens the viewer on a
      unified line diff (Myers, `lineDiff` / `diffHunks`, 3 lines of context), with tabs
      for the version after and before the step. Added files open as they are, deleted
      ones as they were. A diff is drawn as text, never HTML, and stops at 4,000 lines.
+     A modified *binary* file (Phase 2b) opens on both versions side by side, each with
+     its summary (below), as images when they are; a binary chip's tooltip carries the
+     summary too.
   5. **Verdict:** a badge showing auto-committed, approved, edited & approved, or
      rejected, plus who decided.
   6. **Model stats:** a footer row for that step's model request: generation speed
@@ -69,6 +78,16 @@ This is the core of the product. Everything else serves it.
   in the latest step are highlighted. Clicking a file opens a viewer: text with
   highlighting, image previews, or hex/size info for other binaries. Files can be
   uploaded by drag-drop and downloaded individually or as a zip.
+  *As built (Phase 2b), the binary summary:* `describeBinary` reads what a file is from
+  its first bytes, never decoding it: the format and what its header tells cheaply —
+  image size and colour type (PNG, JPEG, GIF, WebP, BMP), a PDF's version and page
+  count, an SQLite database's tables and pages, a `.npy` array's dtype and shape, a
+  pickle's protocol, a zip's entry count and unpacked size (recognising `.xlsx`,
+  `.docx`, `.pptx`, `.npz`, wheels, JARs and EPUBs), a gzip member's name and size, a
+  tar's entries, a WAV's rate, channels and length, and the type alone for about twenty
+  more formats. The viewer shows it above the hex dump, with a zip's entries listed;
+  the model gets it for the binary files a step writes and for a `<read_file>` of a
+  binary (§5.1).
 - **Status bar.** The step being worked on and the step the run pauses at (each
   instruction or follow-up moves that point on by the step limit; Continue at the
   limit by as many steps as the limit note's field says, 10 by default, and never
@@ -226,6 +245,9 @@ hermit-agent-session-2026-10-03-14-30.zip
   untruncated), the per-file changes with hashes, the risk verdict and its reasons,
   the decision, who made it, and timestamps. *(Built as a timeline rather than a bare
   `steps` list, so an import can rebuild the exact view.)*
+- per python step, `figures`: the figures captured from it (path, width, height, and
+  whether `plt.show()` or the end of the step captured them), and per step
+  `fileListSent`: how many files the periodic file list (§5.4) that followed it named;
 - per file-action step, `fileActions`: tool, path, ok, message, the line range of a read
   and the old/new pairs of an edit. Written content isn't repeated: it is in the
   workspace and checkpoint blobs, which the step's file chips point to;
@@ -323,7 +345,8 @@ below.
   boundary.
 - *As built:* before each step the harness drops every module loaded from
   `/workspace` from `sys.modules`, so an edited module is re-read (spike finding).
-  `input()` raises instead of hanging, and `MPLBACKEND=Agg` is set. Output is capped
+  `input()` raises instead of hanging, and `MPLBACKEND` selects the harness's inline
+  backend (§8, matplotlib). Output is capped
   at the first 1 MB plus the last 64 KB per step. The main thread re-hashes every
   changed file it receives and refuses a result whose bytes don't match the
   worker's listing. A forged result can therefore only *hide* changes, which never
@@ -396,6 +419,9 @@ Parsing rules:
   (a fence inside the tags is the code). Qwen3.8, trained on tool-call formats, answered
   with exactly that, and the reply used to count as a final answer that ended the task.
   A `<tool_call>` runs nothing; the model is told there are no tool calls here.
+  *Phase 2b:* so does a guessed tool tag (`<run_python>`, `<bash>`, `<shell>`, …): in the
+  2b success measurement Qwen3.8 once answered `<run_python>python process.py</run_python>`,
+  which counted as a final answer and ended the task with nothing run.
 
 **File actions** *(added after the MVP)*. Writing a file from Python means escaping its
 source inside a string, changing one line means rewriting the file, and printing a file
@@ -432,7 +458,8 @@ replacement
   `<new>` are adapted to a CRLF file.
 - **Reads** are capped at 400 lines and 32 000 characters per read, 64 000 per reply,
   and 2 000 per line. They end with where to continue. Binary files are refused, so
-  Python handles those. File-step output skips the §5.2 truncation, because the reads
+  Python handles those; the refusal says what the file is (`binarySummary`: "PNG
+  image, 640×480 px, RGBA, 18 KB"). File-step output skips the §5.2 truncation, because the reads
   are already capped.
 - Gating is in §2.3.
 
@@ -484,8 +511,16 @@ The last 4–7 steps are sent in full: the boundary moves in blocks of 4 steps, 
 4 requests in a row the prompt prefix is byte-identical and llama.cpp can reuse its
 prompt cache (a boundary that moved every step would make it re-read the tail every
 time). The token estimate, the compaction trigger and the context gauge all measure
-the elided request; the summariser reads the full history. The periodic file listing
-is still open (Phase 2b).
+the elided request; the summariser reads the full history.
+
+*As built (Phase 2b): the periodic file listing.* Every 5th step (`LIMITS.fileListEvery`),
+"Files in /workspace now: …" (names and sizes, sorted, at most 50) follows that step's
+observation in the same user message, but only when the workspace changed since the
+model last got a list: the task message and every compaction carry one, so they reset
+the comparison, while a rewind, an import or ➕ New clear it, so the next due step sends
+one. It goes into the history like the observation it follows, so the prompt prefix
+stays cacheable and elision (which only shortens observation bodies) leaves it alone.
+The step card says it was sent, and the debug console logs it.
 
 *As built (auto-compaction):*
 - **Setting:** *Auto-compact at (%)*, default 85, 0 = off, and *Context size*, default
@@ -671,6 +706,27 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
 
 **matplotlib:** force the `Agg` backend. `plt.show()` is patched to save to
 `/workspace/figures/step-N-k.png` and render it inline in the timeline.
+
+*As built (Phase 2b):*
+- `MPLBACKEND=module://hermit_inline` selects a backend the harness writes to
+  `/hermit/hermit_inline.py` (outside `/workspace`, so it is no workspace file): Agg's
+  canvas, whose `show()` hands every open figure to the harness. That one saves each as
+  `figures/step-N-K.png` (K counts within the step) and closes it, like a notebook's
+  inline backend: a `show()` per figure in a loop gives one image each.
+- **At the end of every step** (a failed one too) figures still open are saved the
+  same way and closed. That also covers an agent that picked a backend itself
+  (`matplotlib.use("Agg")`, where `show()` does nothing), and code that never calls
+  `show()`.
+- **A figure the agent saved itself isn't saved twice.** An import hook marks
+  `Figure.savefig` from the moment `matplotlib.figure` is first imported, whichever
+  backend is active; a figure saved that way is closed without a capture, and its own
+  file is shown on the card instead. Empty figures are skipped. The prompt warns that a
+  `savefig` *after* `show()` saves an empty figure (the notebook rule).
+- The worker reports the figures with the run result (path, size, `show` or `end`);
+  the main thread keeps only those whose file exists and is a change of the step.
+  The model is told which figures the user was shown, and that it can't see images;
+  other binary files the step wrote get their summary (`binaryFileNotes`).
+- The figures are ordinary agent files: checkpointed, gated, exported, rewindable.
 
 ---
 
