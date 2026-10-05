@@ -166,17 +166,20 @@ section("8. Packages: the list, the index, failures");
         sqlite3: { name: "sqlite3", package_type: "cpython_module", imports: ["sqlite3"] },
         pytest: { name: "pytest", package_type: "package", imports: ["pytest", "_pytest"] },
         Pillow: { name: "Pillow", package_type: "package", imports: ["PIL"] },
+        micropip: { name: "micropip", package_type: "package", imports: ["micropip"] },
     } };
     const names = X.packageImportNames(lock);
     check("import names of real packages, sorted case-insensitively", JSON.stringify(names) === JSON.stringify(["numpy", "PIL", "pytest", "sklearn"]), names);
     const idx = X.importPackageIndex(lock);
     check("the index maps imports to packages, stdlib modules included", idx.get("sklearn") === "scikit-learn" && idx.get("sqlite3") === "sqlite3" && idx.get("PIL") === "Pillow" && !idx.has("libhdf5"));
+    check("micropip is neither listed nor loadable for agent code", !names.includes("micropip") && !idx.has("micropip"));
     check("garbage lock files give nothing", X.packageImportNames(null).length === 0 && X.importPackageIndex({ packages: 5 }).size === 0);
     const real = join(here, "..", "libs", "pyodide-0.29.5", "pyodide-lock.json");
     if (existsSync(real)) {
         const r = X.packageImportNames(JSON.parse(readFileSync(real, "utf8")));
         check(`the real lock file lists ${r.length} import names, numpy, pandas and sklearn among them`, r.length > 200 && ["numpy", "pandas", "sklearn", "matplotlib"].every(n => r.includes(n)));
         check("…and the prompt that lists them stays under 4 KB of names", r.join(", ").length < 4000, r.join(", ").length);
+        check("…without micropip", !r.includes("micropip"));
     }
     const p = X.buildSystemPrompt("", ["numpy", "pandas"]);
     check("system prompt lists the packages", p.includes("Only these packages from the Pyodide distribution can be imported besides the standard library") && p.includes("numpy, pandas."));
@@ -194,6 +197,9 @@ section("8. Packages: the list, the index, failures");
     check("unknown module: no pip here", /requests_oauthlib isn't part of the Pyodide distribution/.test(hint), hint);
     check("a known module (submodule typo): no hint", X.moduleNotFoundHint("ModuleNotFoundError: No module named 'numpy.foo'", ["numpy"]) === "");
     check("no error: no hint", X.moduleNotFoundHint("all good", []) === "");
+    const mp = X.moduleNotFoundHint("ModuleNotFoundError: No module named 'micropip'", ["numpy"]);
+    check("import micropip: just import the package instead", /no micropip here/.test(mp) && /Just import it/.test(mp), mp);
+    check("the prompt says not to install anything", /Don't install anything: there is no pip or micropip/.test(X.buildSystemPrompt("", ["numpy"])) && /no pip or micropip/.test(X.buildSystemPrompt("", ["numpy"], "tools")));
 }
 
 section("9. readEntry — dropped folders, read in batches");

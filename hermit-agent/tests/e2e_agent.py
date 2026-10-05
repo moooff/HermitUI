@@ -185,7 +185,8 @@ print(len(rows), total)
             py("import pmod\nprint(pmod.W)"),
             final("Modules reloaded."),
         ],
-        "E2E-PKG": [py("import six\nprint('six', six.__version__)"), py("import requests_oauthlib\nprint('x')"), final("Packages done.")],
+        "E2E-PKG": [py("import six\nprint('six', six.__version__)"), py("import requests_oauthlib\nprint('x')"),
+                    py("import micropip\nawait micropip.install('six')"), final("Packages done.")],
         "E2E-OFFLINE": [py("import attrs\nprint('attrs ok')"), final("Offline handled.")],
         "E2E-ELIDE": [py(f"print('{i}' * 3000)") for i in range(1, 10)] + [final("Long outputs done.")],
         "E2E-UPLOAD": [py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'), final("Listed uploads.")],
@@ -1088,6 +1089,8 @@ def packages_scenario(browser, port, state):
     check("an unknown module gets a 'no pip here' note", any("isn't part of the Pyodide distribution" in n for n in st[1]["notes"]), st[1]["notes"])
     m = [r["messages"][-1]["content"] for r in state.requests[n0:] if "E2E-PKG" in r["messages"][1]["content"]]
     check("…which the model is told", "isn't part of the Pyodide distribution" in m[2], m[2][-400:])
+    check("micropip isn't offered or loaded: the import fails", "micropip" not in system.split("Only these packages")[1].split(".")[0] and "No module named 'micropip'" in st[2]["output"], st[2]["output"][-300:])
+    check("…and the model is told to just import the package", "no micropip here" in m[3] and "Just import it" in m[3], m[3][-400:])
     page.click("#debugBtn")
     check("the debug console logs the package load", "loading packages: six" in page.inner_text("#debugLog"))
     page.keyboard.press("Escape")

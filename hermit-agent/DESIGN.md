@@ -490,7 +490,7 @@ The user's custom instructions are appended after it, like HermitUI personas.
 
 *As built:* the prompt lists every package Pyodide can load, by import name (about 300
 names, ~1k tokens, read from the inlined `pyodide-lock.json`: real packages only, no
-shared libraries, `*-tests` or `_private` names). Before the core is read it names a
+shared libraries, `*-tests` or `_private` names). Nor `micropip`: it installs at run time, which agent code can't (no network), and with it on the list the agent was seen reaching for `micropip.install` instead of a plain import, which failed (2026-10-05). A package loads by being imported; an `import micropip` gets that advice. Before the core is read it names a
 few examples instead. It costs a fixed prefix the server caches, and it stops the model
 from reaching for `requests` or `pip`.
 

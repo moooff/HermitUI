@@ -30,7 +30,7 @@ function constDecl(name) {
     return m[0].trim();
 }
 
-const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "AGENT_TOOL_NAMES"];
+const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES"];
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
     "detectCloudProvider", "isLocalEndpoint", "describeRemoteEndpoint", "chatErrorHint",

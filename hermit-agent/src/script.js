@@ -364,7 +364,7 @@ Rules:
 
 Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the user's browser.
 - The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
-- The standard library is available. ${pkgs} There is no pip and no network access, so nothing else can be installed. input() does not work.
+- The standard library is available. ${pkgs} Don't install anything: there is no pip or micropip and no network access, so nothing else can be installed. input() does not work.
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
@@ -1372,11 +1372,16 @@ function uploadWarning(files, currentBytes) {
 // ---------- Packages (DESIGN §8) ----------
 // The import names of the packages Pyodide can load on demand, from its lock file:
 // real packages only (no shared libraries, no *-tests), private names left out.
+// Pyodide packages agent code must not use: micropip installs at run time, but agent code
+// has no network (only the harness's package loading reaches the CDN), so a model that
+// sees it in the list reaches for micropip.install instead of a plain import, and fails.
+const HARNESS_ONLY_PACKAGES = ["micropip"];
+
 function packageImportNames(lock) {
     const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
     const names = new Set();
     for (const p of Object.values(pk)) {
-        if (!p || p.package_type !== "package" || /-tests$/.test(p.name || "")) continue;
+        if (!p || p.package_type !== "package" || /-tests$/.test(p.name || "") || HARNESS_ONLY_PACKAGES.includes(p.name)) continue;
         for (const i of Array.isArray(p.imports) ? p.imports : []) {
             if (typeof i === "string" && /^[A-Za-z][\w.-]*$/.test(i)) names.add(i);
         }
@@ -1390,7 +1395,7 @@ function importPackageIndex(lock) {
     const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
     const map = new Map();
     for (const p of Object.values(pk)) {
-        if (!p || typeof p.name !== "string" || p.package_type === "shared_library" || p.package_type === "static_library") continue;
+        if (!p || typeof p.name !== "string" || p.package_type === "shared_library" || p.package_type === "static_library" || HARNESS_ONLY_PACKAGES.includes(p.name)) continue;
         for (const i of Array.isArray(p.imports) ? p.imports : []) if (typeof i === "string" && !map.has(i)) map.set(i, p.name);
     }
     return map;
@@ -1419,6 +1424,7 @@ function moduleNotFoundHint(output, available) {
     if (!m) return "";
     const top = m[1].split(".")[0];
     if ((available || []).includes(top)) return "";
+    if (top === "micropip" || top === "pip") return `There is no ${top} here, and nothing needs installing: a package from the list in your instructions loads by itself when you import it. Just import it.`;
     return `${top} isn't part of the Pyodide distribution and can't be installed here (no pip, no network). Use the standard library or one of the packages listed in your instructions, or write the code yourself.`;
 }
 
