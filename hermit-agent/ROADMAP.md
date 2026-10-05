@@ -221,6 +221,17 @@ the setting was lowered; that attempt's run otherwise passed the same way.
   15), and in every run of the shown-chart task the figure is captured: a PNG under
   `figures/` that its step card shows inline.
 
+**Result (2026-10-05): met.** Unit tests (5 files, `tests/richoutput.test.mjs` new) and
+`tests/e2e_agent.py` (418/418 checks in Chromium and Playwright's Firefox, with the new
+figures scenario) are green. The success measurement against Qwen3.8-27B (IQ4_XS,
+llama.cpp, reasoning effort Low), risk-based, 18 tasks × 3 runs: **53/54 = 98 %** (16
+min); the shown chart was captured as `figures/step-N-1.png` and shown inline in 3 of 3
+runs, and the Pillow and binary-file tasks passed 3/3. The one failure is the known
+int32 overflow in the calculation task. A first, partial measurement (16/18 in its
+first run) surfaced a `<run_python>` reply that ended a task as a "final answer"; such
+guessed tool tags now run nothing and get advice (DESIGN §5.1), and the result above is
+for the build with that fix.
+
 ---
 
 ## Phase 3 — Native tool calls
