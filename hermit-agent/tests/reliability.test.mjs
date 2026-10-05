@@ -199,6 +199,35 @@ section("8. Packages: the list, the index, failures");
     check("no error: no hint", X.moduleNotFoundHint("all good", []) === "");
     const mp = X.moduleNotFoundHint("ModuleNotFoundError: No module named 'micropip'", ["numpy"]);
     check("import micropip: just import the package instead", /no micropip here/.test(mp) && /Just import it/.test(mp), mp);
+    check("the prompt points to libraries for common formats, PDFs via pymupdf, in both protocols",
+        ["", "tools"].every(pr => /Use a library for common jobs/.test(X.buildSystemPrompt("", ["numpy"], pr || undefined)) && /pymupdf \(import pymupdf\) to create, read and edit PDFs/.test(X.buildSystemPrompt("", ["numpy"], pr || undefined))));
+
+    // Packages imported by the workspace modules a step uses (runpy, import) load too.
+    const files = {
+        "make_report.py": "import pandas as pd\nfrom helpers.fmt import money\n",
+        "helpers/__init__.py": "",
+        "helpers/fmt.py": "import numpy\ndef money(x): return x\n",
+        "unused.py": "import scipy\n",
+        "data.csv": "a,b\n",
+        "notes.txt": "mentions unused but not as a file",
+    };
+    const rd = (p) => (p in files ? files[p] : null);
+    const ref = (code) => X.referencedPythonFiles(code, Object.keys(files), rd).sort().join();
+    check("runpy of a script: the script and the modules it imports, transitively", ref('import runpy\nrunpy.run_path("make_report.py")') === "helpers/__init__.py,helpers/fmt.py,make_report.py", ref('import runpy\nrunpy.run_path("make_report.py")'));
+    check("from-import of a module", ref("from helpers.fmt import money") === "helpers/__init__.py,helpers/fmt.py");
+    check("import of a module by name", ref("import make_report") === "helpers/__init__.py,helpers/fmt.py,make_report.py");
+    check("a mere word that matches a module name is not a reference", ref("unused = 1\nprint(unused)") === "");
+    check("a stdlib import doesn't pull in workspace files", ref("import os, json") === "");
+    check("the number of files is capped", X.referencedPythonFiles('exec(open("make_report.py").read())', Object.keys(files), rd, 1).length === 1);
+    const pyNote = "ModuleNotFoundError: No module named 'pandas'\nThe module 'pandas' is included in the Pyodide distribution, but it is not installed.\nYou can install it by calling:\n  await micropip.install(\"pandas\") in Python, or\n  await pyodide.loadPackage(\"pandas\") in JavaScript\nSee https://pyodide.org/en/stable/usage/loading-packages.html for more details.";
+    const rewritten = X.rewritePyodideInstallAdvice(pyNote);
+    check("Pyodide's micropip advice is replaced in the output", !/micropip\.install|loadPackage/.test(rewritten) && /no micropip here\. pandas loads by itself/.test(rewritten) && rewritten.startsWith("ModuleNotFoundError"), rewritten);
+    const pil = X.rewritePyodideInstallAdvice(pyNote.replace("No module named 'pandas'", "No module named 'PIL'").replace(/"pandas"/g, '"pillow"'));
+    check("…naming the module to import (PIL), not the package (pillow)", /has "import PIL"/.test(pil), pil);
+    const mpNote = pyNote.replace(/pandas/g, "micropip");
+    check("…and for micropip it says micropip isn't available", /micropip isn't available to agent code/.test(X.rewritePyodideInstallAdvice(mpNote)) && /no micropip here/.test(X.moduleNotFoundHint(mpNote, [])));
+    const notLoaded = X.moduleNotFoundHint(pyNote, ["pandas"]);
+    check("a package that exists but wasn't loaded: import it in the step's own code", /pandas is available but wasn't loaded/.test(notLoaded) && /Add "import pandas"/.test(notLoaded), notLoaded);
     check("the prompt says not to install anything", /Don't install anything: there is no pip or micropip/.test(X.buildSystemPrompt("", ["numpy"])) && /no pip or micropip/.test(X.buildSystemPrompt("", ["numpy"], "tools")));
 }
 

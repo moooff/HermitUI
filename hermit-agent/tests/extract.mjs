@@ -45,7 +45,7 @@ const FUNCS = [
     "crc32", "streamThrough", "sha256Hex", "sha256HexJs", "zipWrite", "zipRead", "cleanForExport",
     "transcriptMarkdown", "buildSessionArchive", "validateManifest", "validateSession", "parseSessionArchive", "workspaceEntriesFromZip",
     "lineDiff", "diffHunks", "elideHistory", "isRetryableError", "retryDelayMs", "contextGauge", "uploadWarning",
-    "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "readEntry",
+    "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "referencedPythonFiles", "rewritePyodideInstallAdvice", "readEntry",
     "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
     "awaitsModel", "copyMessage", "agentToolDefs", "resolveProtocol", "toolSupportFromProps", "toolSupportFromOllamaShow", "findListedModel",
     "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "parseToolCalls", "toolCallAsText",

@@ -368,6 +368,24 @@ print("CHECK OK")
         "answer_contains": ["258"],
     },
     {
+        # A library-made PDF (pymupdf or matplotlib), not one assembled by hand: no step's
+        # code or workspace script may hold raw PDF syntax.
+        "name": "pdf report",
+        "files": {"inventory.csv": INVENTORY_CSV},
+        "prompt": "Read inventory.csv and make reorder.pdf: a one-page PDF report titled \"Reorder list\" with a table of the items whose qty is below min_qty (columns Item, Qty, Missing = min_qty minus qty).",
+        "code_never": ["%PDF", "/Type /Catalog", "endobj"],
+        "check": """
+import pymupdf
+doc = pymupdf.open("/workspace/reorder.pdf")
+assert doc.page_count == 1, doc.page_count
+words = doc[0].get_text().split()
+for w in ["Reorder", "nuts", "washers", "rivets", "60", "45", "20"]:
+    assert w in words, (w, words)
+assert "bolts" not in words and "screws" not in words, words
+print("CHECK OK")
+""",
+    },
+    {
         "name": "markdown report",
         "files": {"inventory.csv": INVENTORY_CSV},
         "prompt": "Read inventory.csv and write reorder.md: a Markdown table of the items whose qty is below min_qty, with the columns Item, Qty and Missing (min_qty minus qty), sorted by Missing from highest to lowest.",
@@ -447,6 +465,13 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
         out = ev(page, "async (c) => { const r = await runInWorker(c, { timeoutMs: 120000 }); return r.output; }", code)
         if "CHECK OK" not in out:
             problems.append("check: " + out[-500:])
+    if task.get("code_never"):
+        # Everything the agent ran or wrote as Python: step code and workspace .py files.
+        code = ev(page, """() => [...S.timeline.filter(t => t.type === 'step').map(t => t.ranCode || t.proposedCode || ''),
+            ...[...WS.files].filter(([p]) => p.endsWith('.py')).map(([p, f]) => new TextDecoder().decode(WS.blobs.get(f.hash)))].join('\\n')""")
+        hits = [w for w in task["code_never"] if w in code]
+        if hits:
+            problems.append(f"built by hand: the code contains {hits}")
     if task.get("needs_approval") and not any(any("your file" in r for r in a) for a in approvals):
         problems.append("no step was held for changing your file")
     if task.get("figure_shown"):

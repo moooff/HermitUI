@@ -734,7 +734,10 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
 *As built (Phase 2a):*
 - **Loading is its own phase.** Before a step runs, the worker reports what the code
   imports (`find_imports`) and what is loaded; the main thread maps imports to packages
-  with the lock file. If anything has to be downloaded, the status bar says "loading
+  with the lock file. The workspace `.py` files the step uses count too
+  (`referencedPythonFiles`: modules it imports, files it names, e.g. for
+  `runpy.run_path("make_report.py")`, and in turn the ones those use): a step that only
+  runs a script imports nothing itself, and its packages used to stay unloaded. If anything has to be downloaded, the status bar says "loading
   numpy, pandas…", the debug console logs it, and a separate `load` call fetches them
   with the network limited to the pinned CDN (`cdn` mode, §10) and its own 2-minute time
   limit, so a slow CDN doesn't eat the step's timeout. The code then runs with the
@@ -745,7 +748,17 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   adds that the standard library and packages loaded earlier still work.
 - **An import nothing can provide** (`ModuleNotFoundError` for a name that isn't in the
   distribution) gets a note: there is no pip; use the standard library or a listed
-  package.
+  package. A package that exists but wasn't loaded (an import built at run time) gets
+  "add `import x` to the step's own code", and Pyodide's own advice in the traceback,
+  "await micropip.install(…)", is replaced in the output: agent code can't download.
+- **Libraries for common jobs** (in the system prompt, both protocols): pandas for
+  tables, pymupdf for creating and reading PDFs (`insert_htmlbox` lays out HTML), matplotlib
+  for charts, Pillow, jinja2, beautifulsoup4/lxml, python-dateutil, pyyaml, sqlite3. The
+  distribution has nothing that writes `.xlsx`, `.docx` or `.pptx`, and no reportlab or
+  fpdf: the agent is told to write CSV, Markdown or HTML instead and say so. Without this
+  the agent was seen assembling a PDF by hand. This is a stopgap: the common libraries
+  for those formats are pure-Python, which Pyodide leaves to micropip from PyPI, so they
+  need a load mechanism first (ROADMAP, Phase 3.5).
 - **Offline: decided, no offline pack for now.** Inlining even numpy + pandas would
   roughly double the 9 MB file, and a curated set would still miss what a given task
   needs. Packages load from the CDN on first import and stay in memory for the tab's

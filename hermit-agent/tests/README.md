@@ -189,6 +189,9 @@ it stall, on cue; see its docstring):
     is, the file list follows step 5's observation (and no other), the cards show the
     images (figures first) and they load, the viewer shows a summary, a changed PNG opens
     on both versions, a zip's entries are listed, and figures survive export → import.
+16b. **Packages through a script** (in the packages scenario): a package imported only by
+    a workspace script that the step runs with `runpy` is loaded before the step, and
+    `import micropip` gets "nothing needs installing" instead of Pyodide's micropip advice.
 17. **Native tool calls** (Phase 3; `native`, `native_fallback`), against the mock's
     `/tools/v1`, whose `/props` reports tool support, and `/notools/v1`, which refuses
     `tools` like llama.cpp without `--jinja`. The mock checks every request's history like
@@ -217,13 +220,14 @@ Waits poll `page.evaluate()` instead, which goes through the browser protocol.
 ## Real model — `e2e_reference.py`
 
 The success measurement (Phase 2a; its first three tasks are the Phase 1 exit
-criterion). A real model does 18 tasks in the built app under risk-based supervision:
+criterion). A real model does 19 tasks in the built app under risk-based supervision:
 data processing, code plus tests, calculation, fixing a bug in an uploaded file, a JSON
 transform, word frequencies, log analysis, code from a spec, a matplotlib chart, a
 pandas pivot, renaming a setting across two uploaded files, SQLite, counting, dates and
 a Markdown report, plus Phase 2b's three: a chart it must *show* (the figure has to be
 captured and shown inline on its card), a Pillow image, and a question about an
-uploaded SQLite file. `--runs N` repeats the suite; the result is one pass rate, plus a
+uploaded SQLite file, and a PDF report that must come from a library (its text is
+checked with pymupdf, and no step's code or workspace script may hold raw PDF syntax). `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks
 the results inside the same interpreter, or against the final answer. The two tasks

@@ -3376,6 +3376,7 @@ Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the u
 - The standard library is available. ${pkgs} Don't install anything: there is no pip or micropip and no network access, so nothing else can be installed. input() does not work.
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
+- Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables); matplotlib for charts, also as PDF pages; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Nothing here writes .xlsx, .docx or .pptx (no openpyxl, xlsxwriter or python-docx; for PDFs no reportlab or fpdf either, use pymupdf): write CSV, Markdown or HTML instead and tell the user, rather than assembling those formats yourself.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
 - matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
 - Each step has a time limit. A step that runs too long is killed.
@@ -4427,13 +4428,67 @@ function packageFailureMessage(r, online, cdn) {
     return `Couldn't load ${what}: ${first} Nothing ran.${still}`;
 }
 
+// The workspace .py files a step's code uses, so the packages they import are loaded too
+// (a step that runs `runpy.run_path("make_report.py")` imports nothing itself). A file
+// counts when the code imports its module (`import pkg.mod`, `from mod import x`) or
+// names the file ("mod.py", e.g. for runpy or exec); files it uses count in turn.
+// paths: workspace paths; read(path) -> text or null. Returns the paths, at most `max`.
+function referencedPythonFiles(code, paths, read, max = 50) {
+    const mods = new Map();
+    for (const p of paths || []) {
+        if (!/\.py$/.test(p)) continue;
+        const mod = p.slice(0, -3).replace(/\/__init__$/, "").split("/").join(".");
+        mods.set(p, { mod, base: p.split("/").pop() });
+    }
+    const out = [], seen = new Set();
+    const queue = [String(code || "")];
+    while (queue.length && out.length < max) {
+        const text = queue.shift();
+        const imported = new Set();
+        for (const m of text.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import\b/gm)) imported.add(m[1]);
+        for (const m of text.matchAll(/^[ \t]*import[ \t]+([\w., \t]+)/gm)) {
+            for (const part of m[1].split(",")) { const name = part.trim().split(/\s+/)[0]; if (name) imported.add(name); }
+        }
+        for (const [p, { mod, base }] of mods) {
+            if (seen.has(p) || out.length >= max) continue;
+            const named = [...imported].some(i => i === mod || i.startsWith(mod + ".") || mod.startsWith(i + "."));
+            if (!named && !text.includes(base)) continue;
+            seen.add(p);
+            const t = read(p);
+            if (typeof t !== "string") continue;
+            out.push(p);
+            queue.push(t);
+        }
+    }
+    return out;
+}
+
+// Pyodide's note on a package it has but didn't load says to call micropip.install or
+// loadPackage, neither of which agent code can do (no network). Replace it with what
+// works here: an import in the step's own code, which the harness loads first.
+// The advice names the module as imported (PIL), not the package (pillow): an
+// "import pillow" would fail.
+function rewritePyodideInstallAdvice(output) {
+    const out = String(output || "");
+    const mod = (out.match(/No module named '([\w.]+)'/) || [])[1];
+    return out.replace(/\nYou can install it by calling:\n[ \t]*await micropip\.install\("([^"]+)"\) in Python, or\n[ \t]*await pyodide\.loadPackage\("[^"]+"\) in JavaScript/g,
+        (all, pkg) => HARNESS_ONLY_PACKAGES.includes(pkg)
+            ? `\n[HermitUI: ${pkg} isn't available to agent code, and nothing needs installing: packages load by themselves when the step's code imports them.]`
+            : `\n[HermitUI: no micropip here. ${pkg} loads by itself when the step's code, or a workspace .py file it imports or runs, has "import ${mod ? mod.split(".")[0] : pkg}".]`);
+}
+
 // A note for a step that failed on an import nothing can provide: Pyodide has no pip.
+// For a package it has but that wasn't loaded (an import the harness couldn't see, such
+// as one built at run time), how to get it loaded instead.
 function moduleNotFoundHint(output, available) {
     const m = String(output || "").match(/ModuleNotFoundError: No module named '([\w.]+)'/);
     if (!m) return "";
     const top = m[1].split(".")[0];
-    if ((available || []).includes(top)) return "";
     if (top === "micropip" || top === "pip") return `There is no ${top} here, and nothing needs installing: a package from the list in your instructions loads by itself when you import it. Just import it.`;
+    if (/is included in the Pyodide distribution, but it is not installed|is unvendored from the Python standard library/.test(output)) {
+        return `${top} is available but wasn't loaded: packages are loaded before a step, from the imports in its code and in the workspace .py files it imports or runs by name. Add "import ${top}" at the top of the step's code and run it again. Don't use micropip or loadPackage.`;
+    }
+    if ((available || []).includes(top)) return "";
     return `${top} isn't part of the Pyodide distribution and can't be installed here (no pip, no network). Use the standard library or one of the packages listed in your instructions, or write the code yourself.`;
 }
 
@@ -5285,11 +5340,25 @@ function validateRunResult(r) {
 const PKG_NAME = /^[A-Za-z0-9_.-]{1,100}$/;
 
 // The packages a step's imports need that aren't loaded yet (by package name).
+// The packages a step needs that aren't loaded yet, from the imports in its code and in
+// the workspace .py files it uses (referencedPythonFiles). Returns { packages, imports }:
+// imports holds one import name per package, for the load op.
 async function packagesToLoad(code) {
-    const r = await workerCall("imports", { code }, 30000);
+    const read = (p) => { const f = WS.files.get(p); return f ? decodeTextFile(WS.blobs.get(f.hash)) : null; };
+    const files = referencedPythonFiles(code, [...WS.files.keys()], read);
     const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === "string" && PKG_NAME.test(x)).slice(0, 500) : []);
-    const loaded = new Set(list(r && r.loaded));
-    return [...new Set(list(r && r.imports).map(i => PKG.byImport.get(i)).filter(p => p && !loaded.has(p)))];
+    const packages = [], imports = [];
+    let loaded = new Set();
+    for (const text of [code, ...files.map(read)]) {
+        const r = await workerCall("imports", { code: text }, 30000);
+        loaded = new Set(list(r && r.loaded));
+        for (const i of list(r && r.imports)) {
+            const p = PKG.byImport.get(i);
+            if (p && !loaded.has(p) && !packages.includes(p) && /^[A-Za-z_]\w*$/.test(i)) { packages.push(p); imports.push(i); }
+        }
+    }
+    if (files.length && packages.length) debugLog("tool", `imports read from the step's code and ${files.join(", ")}`);
+    return { packages, imports };
 }
 
 function validateLoadResult(r) {
@@ -5311,12 +5380,14 @@ async function runInWorker(code, opts) {
     const gen = PY.gen;
     let phase = "packages", pkgNotes = [], pkgAttempts = [];
     try {
-        const need = await packagesToLoad(code);
+        const { packages: need, imports: needImports } = await packagesToLoad(code);
         if (need.length) {
             PKG.loading = need;
             if (typeof setActivity === "function" && RUN.active) setActivity("packages");
             debugLog("tool", `loading packages: ${need.join(", ")}`);
-            const lr = validateLoadResult(await workerCall("load", { code }, LIMITS.packageTimeoutMs));
+            // The load op reads imports from code: give it one line per needed package, which
+            // also covers packages that only the step's workspace modules import.
+            const lr = validateLoadResult(await workerCall("load", { code: needImports.map(i => "import " + i).join("\n") }, LIMITS.packageTimeoutMs));
             PKG.loading = [];
             pkgAttempts = lr.netAttempts;
             if (lr.failed.length) {
@@ -5335,6 +5406,7 @@ async function runInWorker(code, opts) {
         }
         phase = "run";
         const r = validateRunResult(await workerCall("run", { code, allowNetwork: !!o.allowNetwork, step: o.step }, o.timeoutMs));
+        r.output = rewritePyodideInstallAdvice(r.output);
         r.notes = [...pkgNotes, ...r.notes];
         r.netAttempts = [...pkgAttempts, ...r.netAttempts];
         setInterpreterState("idle");

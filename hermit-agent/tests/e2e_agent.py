@@ -187,6 +187,11 @@ print(len(rows), total)
         ],
         "E2E-PKG": [py("import six\nprint('six', six.__version__)"), py("import requests_oauthlib\nprint('x')"),
                     py("import micropip\nawait micropip.install('six')"), final("Packages done.")],
+        "E2E-RUNPY": [
+            py('open("helper.py", "w").write("import six\\nprint(\'helper\', six.__version__)\\n")\nprint("written")'),
+            py('import runpy\nrunpy.run_path("helper.py")'),
+            final("Ran the helper."),
+        ],
         "E2E-OFFLINE": [py("import attrs\nprint('attrs ok')"), final("Offline handled.")],
         "E2E-ELIDE": [py(f"print('{i}' * 3000)") for i in range(1, 10)] + [final("Long outputs done.")],
         "E2E-UPLOAD": [py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'), final("Listed uploads.")],
@@ -1094,6 +1099,16 @@ def packages_scenario(browser, port, state):
     page.click("#debugBtn")
     check("the debug console logs the package load", "loading packages: six" in page.inner_text("#debugLog"))
     page.keyboard.press("Escape")
+    page.context.close()
+
+    # A package only a workspace script imports, run with runpy: loaded before the step.
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.fill("#taskInput", "E2E-RUNPY: run a helper")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 120, "helper task")
+    st = steps(page)
+    check("a package imported only by a script the step runs is loaded first", st[1]["output"].startswith("helper 1.") and any("Loaded six" in n for n in st[1]["notes"]), st[1])
     page.context.close()
 
     page = open_app(browser)
