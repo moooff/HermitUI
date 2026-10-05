@@ -1,6 +1,7 @@
 # HermitUI Agent — Design
 
-Status: **Phase 1 (MVP) implemented** in `src/` (see [ROADMAP.md](ROADMAP.md)). Where
+Status: **Phase 1 (MVP) and Phase 2a (reliability) implemented** in `src/` (see
+[ROADMAP.md](ROADMAP.md)). Where
 the build deviated from the original plan, the section says so; decisions taken
 during the unattended MVP build that still need an owner's call are collected in
 [REVIEW_NOTES.md](REVIEW_NOTES.md). Statements still marked *(verify in spike)* are
@@ -12,7 +13,7 @@ Decisions taken so far:
 |---|---|
 | Task scope | General assistant, data/file processing, writing & testing code, research/reasoning |
 | Default supervision | **Risk-based**: harmless steps auto-run, risky steps ask |
-| Backend | Remote OpenAI-compatible endpoint first; in-browser wllama later |
+| Backend | External OpenAI-compatible endpoint first; in-browser wllama later |
 | Session persistence | **Required:** import/export of a whole session to one file |
 | Project layout | Own folder (`hermit-agent/`) in the HermitUI repo; merge later is possible |
 
@@ -49,6 +50,11 @@ This is the core of the product. Everything else serves it.
   3. **Output:** stdout and stderr. Tracebacks are trimmed for display, with the full
      text on expand. Generated images (matplotlib figures) appear inline.
   4. **Effect:** files created, modified or deleted, with a per-file diff on click.
+     *As built:* the chip of a modified text file counts its changed lines (`+3 −1`,
+     while both versions are held and under 512 KB together) and opens the viewer on a
+     unified line diff (Myers, `lineDiff` / `diffHunks`, 3 lines of context), with tabs
+     for the version after and before the step. Added files open as they are, deleted
+     ones as they were. A diff is drawn as text, never HTML, and stops at 4,000 lines.
   5. **Verdict:** a badge showing auto-committed, approved, edited & approved, or
      rejected, plus who decided.
   6. **Model stats:** a footer row for that step's model request: generation speed
@@ -65,10 +71,19 @@ This is the core of the product. Everything else serves it.
   uploaded by drag-drop and downloaded individually or as a zip.
 - **Status bar.** The step being worked on and the step the run pauses at (each
   instruction or follow-up moves that point on by the step limit; Continue at the
-  limit by 10, and never lowers it), what the agent is doing right now (model
-  thinking / writing, running Python, file actions), elapsed time, tokens, and the
-  interpreter state (booting / idle / running / failed). The interpreter is idle
-  while the model thinks, which is most of the time.
+  limit by as many steps as the limit note's field says, 10 by default, and never
+  lowers it), what the agent is doing right now (model thinking / writing, loading
+  packages, running Python, file actions, compacting, or a countdown to the next retry
+  while the endpoint is unreachable), elapsed time, tokens, the interpreter state
+  (booting / idle / running / failed), the checkpoints held, and a **context gauge**:
+  the next request's estimated size against the context size, with a tick where
+  auto-compaction starts (§5.4); without a known size it shows just the estimate. A
+  "⚠️ not exported" flag (and a dot on 💾 Export) shows while the session has changes
+  that no export holds (§3). The interpreter is idle while the model thinks, which is
+  most of the time.
+- **Header.** The model and endpoint, and where content goes: a 🏠 *local* badge for
+  an endpoint on this machine or the local network (`isLocalEndpoint`), or the ☁️
+  "sent to …" note for anything else.
 - **Debug console.** A 🐛 header button drops down a log of every tool call (python,
   `read_file` / `write_file` / `edit_file`, final answer, ask) with its arguments and
   result, the gate decisions, and optionally the model requests and interpreter
@@ -86,15 +101,21 @@ This is the core of the product. Everything else serves it.
 
 - **Edit before run:** change the agent's code and run your version. The model is
   told the code was edited and sees the edited version, so it doesn't get confused
-  about what actually ran.
+  about what actually ran. *As built:* in the editor Tab indents (Shift+Tab leaves the
+  field) and Ctrl/Cmd+Enter runs; ↺ Reset brings the agent's code back; once it ran, the
+  card offers the diff between the agent's code and yours.
 - **Reject with a reason.** The reason goes back to the model as the step's
   observation.
 - **Inject guidance:** type a note at any time. It is appended to the next request
-  ("use pandas, not csv", "skip the archive folder").
+  ("use pandas, not csv", "skip the archive folder"). *As built:* the note's card says
+  *queued* until it goes out. While the model's reply is still streaming, **⚡ Send now**
+  aborts that request and asks again with the note included; the aborted reply is
+  discarded and doesn't count as a step.
 - **Stop** finishes the current step, then ends the loop.
 - **Kill** terminates the Python worker immediately (infinite loop, runaway memory).
   The workspace survives (see §4.3); interpreter variables don't.
-- **Step limit and per-step timeout**, set in the settings.
+- **Step limit and per-step timeout**, set in the settings. At the limit, the note
+  offers *Run [N] more steps* with ⏯ Continue (N defaults to 10 and is remembered).
 
 ### 2.3 Effect-based risk gating (the key idea)
 
@@ -149,8 +170,19 @@ workspace; otherwise the next python step re-seeds it.
 ### 2.4 Checkpoints & rewind
 
 - A checkpoint is taken after every committed step. Storage is content-addressed (a
-  map from hash to bytes), so unchanged files are shared between checkpoints and a
-  long session doesn't multiply memory.
+  map from hash to bytes), so unchanged files are shared between checkpoints. Changed
+  files are not: every version a checkpoint references stays in memory, and the
+  workspace limit (256 MB) only bounds the current files.
+- **Budget** (as built): between turns, once the versions that only checkpoints hold
+  (not the workspace) pass 512 MB, the oldest checkpoints are dropped until they fit,
+  never the newest 3. A dropped checkpoint becomes `null`, so timeline links keep their
+  index; its card says rewind is unavailable, a note names what went, and its versions
+  are freed (file chips then say the version is no longer held). Exports keep the gaps
+  as `null` in `checkpoints/index.json`. The status bar shows the checkpoints left and
+  the file contents held (workspace plus older versions), flagged from 75 % of the
+  budget. A step's written versions are protected from garbage collection only until
+  it is decided; before this they were protected for the whole session, so nothing
+  was ever freed.
 - **Rewind to step N** restores that workspace, truncates the timeline and the model
   history after N, and restarts the interpreter. The user can then retry, edit the
   task, or inject guidance.
@@ -207,6 +239,14 @@ hermit-agent-session-2026-10-03-14-30.zip
 
 **Workspace-only export** is a second option: a plain zip of the files, with no
 session metadata.
+
+**Nothing is lost by accident** *(as built)*. The session exists only in the tab, so
+closing or reloading it asks first (`beforeunload`) while there is work no export holds:
+a fingerprint of the session (timeline, history, compactions, checkpoints, workspace
+version) is recorded at each session export or import and compared. A running agent
+always counts; a workspace of uploads alone doesn't (you have those files). The status
+bar's "⚠️ not exported" flag opens the export dialog. A workspace-only export clears the
+flag only when there is no timeline.
 
 ### 3.2 Zip implementation
 
@@ -308,8 +348,25 @@ Firefox; GitHub Pages is still unchecked. So:
 ### 4.4 Workspace in/out
 - Upload with the file picker or drag-drop onto the workspace panel, including
   folders via `webkitdirectory` and `DataTransferItem.webkitGetAsEntry`. Uploaded
-  files get origin `user`.
+  files get origin `user`. *As built:* sizes are checked before anything is read: 50 MB
+  in one go, one file of 25 MB or 500 files ask first (`uploadWarning`), saying that
+  everything lives in tab memory, that changed versions are kept for rewinding, and
+  whether it would exceed the workspace limit. A zip import asks the same way.
 - Download a single file, or the whole workspace via the §3.2 zip writer.
+- **Import a zip into the workspace** (📦 Import zip, or a plain zip given to the
+  header 📂 Import): a workspace zip contributes all its files, and a session export
+  only its `workspace/` folder. OS archive junk (`__MACOSX/`, `.DS_Store`) is
+  skipped. It is read with the same untrusted `zipRead` as a session import, and the
+  files go through the upload path, so the limits apply and they get origin `user`.
+  If the workspace already has files, the user picks **Replace** or **Merge**.
+  Merge overwrites files with the same name. The session itself is left alone.
+- **Delete** a file or a whole folder from the tree, after a confirm. The worker is
+  re-seeded before the next step. Checkpoints keep their blobs, so a rewind brings
+  the files back. If a task is running, the model is told what was deleted with its
+  next request.
+- Deleting and replacing are refused while a step runs or waits for approval: a
+  held step's commit was computed against the current files and could bring a
+  deleted file back.
 
 ---
 
@@ -335,6 +392,10 @@ Parsing rules:
   are prose, and the system prompt tells the model to show output that way. In the
   spike, an optional tag made the loop execute a bare fence the model used to quote a
   timestamp, which failed as a syntax error.
+- *Added in Phase 2a:* `<python>…</python>` at the start of a line runs like a fence
+  (a fence inside the tags is the code). Qwen3.8, trained on tool-call formats, answered
+  with exactly that, and the reply used to count as a final answer that ended the task.
+  A `<tool_call>` runs nothing; the model is told there are no tool calls here.
 
 **File actions** *(added after the MVP)*. Writing a file from Python means escaping its
 source inside a string, changing one line means rewriting the file, and printing a file
@@ -400,6 +461,12 @@ The system prompt describes:
 
 The user's custom instructions are appended after it, like HermitUI personas.
 
+*As built:* the prompt lists every package Pyodide can load, by import name (about 300
+names, ~1k tokens, read from the inlined `pyodide-lock.json`: real packages only, no
+shared libraries, `*-tests` or `_private` names). Before the core is read it names a
+few examples instead. It costs a fixed prefix the server caches, and it stops the model
+from reaching for `requests` or `pip`.
+
 ### 5.4 Context management
 - Older observations are progressively elided ("[step 3 output elided; see
   workspace]") while the last *K* stay in full.
@@ -408,15 +475,49 @@ The user's custom instructions are appended after it, like HermitUI personas.
 - The current file listing is re-sent in compact form every few steps so the model
   doesn't rely on stale memory of the workspace.
 
-*As built (auto-compaction; elision and the periodic listing are still open):*
+*As built: elision.* `elideHistory` shortens what is *sent*, never the history: in steps
+older than the kept tail, an observation body over 2,000 characters keeps its first and
+last 600 (its envelope, the files-changed line and the notes sit at the end, so they
+survive) with a note that says how much of which step was elided, and a `<write_file>`
+body over 2,000 characters becomes a one-line placeholder (the file is in /workspace).
+The last 4–7 steps are sent in full: the boundary moves in blocks of 4 steps, so for
+4 requests in a row the prompt prefix is byte-identical and llama.cpp can reuse its
+prompt cache (a boundary that moved every step would make it re-read the tail every
+time). The token estimate, the compaction trigger and the context gauge all measure
+the elided request; the summariser reads the full history. The periodic file listing
+is still open (Phase 2b).
+
+*As built (auto-compaction):*
 - **Setting:** *Auto-compact at (%)*, default 85, 0 = off, and *Context size*, default
-  0 = the server's `n_ctx` from llama.cpp's `/props`. Both are exported with the session.
+  0 = what the server reports. Both are exported with the session. The reported size is
+  probed in this order: llama.cpp's `/props` (`n_ctx`), Ollama's `/api/show` (`num_ctx`,
+  only when the model sets one: Ollama doesn't report its default), then the model list,
+  `/v1/models` and LM Studio's `/api/v0/models`, read for the configured model:
+  vLLM's `max_model_len`, LM Studio's `loaded_context_length` (not its
+  `max_context_length`, the model's maximum), or `context_length` / `context_window`
+  (OpenRouter, Together, Groq). llama.cpp's `meta.n_ctx_train` is the trained size, not
+  the server's, and is ignored. Test Connection shows the size and where it came from,
+  or says to set it.
+- **Compact button** (🗜️, in the composer, between runs once there are at least two
+  steps): compacts now (reason `manual`), as far as needed like the fallbacks, and
+  returns to the status it had. Stop aborts it.
 - **Trigger:** before each request, the prompt is estimated as characters times the
   tokens per character the previous request measured (`prompt_tokens` / characters
   sent, or 1/3.5 before the first). It compacts at the threshold if at least 2 steps lie
-  outside the kept tail, so it can't fire every turn. With no known context size,
-  only the fallback applies: a context-overflow error compacts once, as far as needed
-  (down to keeping one step), and retries the request.
+  outside the kept tail, so it can't fire every turn. It also compacts once the
+  estimate leaves less room than *Max tokens / reply* (capped at half the context):
+  llama.cpp (context shift off, its default) silently ends a reply when prompt plus
+  reply reach `n_ctx`, so without this reserve the reply budget shrank with every step
+  — at 85 % of a 50k context only ~7.5k tokens were left, less than the 8k default.
+  With no known context size, only the fallbacks apply: a context-overflow error
+  compacts once, as far as needed (down to keeping one step), and retries the request.
+- **Context-cut replies:** that silent end is reported as `finish_reason: "length"`,
+  exactly like `max_tokens` (verified against llama.cpp: `max_tokens` 8192, reply
+  stopped at 770 with prompt + reply = `n_ctx` − 2). A "length" reply whose prompt plus
+  completion reached the server's `n_ctx` (or, with `n_ctx` unknown, that stayed under
+  `max_tokens`) is a context cut: the step says so, the model is told the context ran
+  out rather than to reason less, and the next turn compacts first, as far as needed
+  (reason `context`), regardless of the threshold.
 - **Mechanism:** one extra request to the same endpoint, with a fixed summariser prompt.
   The headings are Task, Done so far, Files, Interpreter state, Errors and dead ends, and
   Next. Observations in it are clipped to 1.5 + 1.5 KB. The history becomes the system
@@ -432,7 +533,29 @@ The user's custom instructions are appended after it, like HermitUI personas.
   replaced, and a checkpoint records its `epoch` (the number of compactions so far).
   Rewinding to an earlier epoch restores that history first, then truncates it as usual.
 
-### 5.5 Later: native tool calls
+### 5.5 Endpoint failures: retry, then pause *(added in Phase 2a)*
+- **What is retried** (`isRetryableError`): a network error (the server is down or
+  restarting), a 408, 429 or 5xx other than 501/505, a stream that ends without a
+  `finish_reason` or `[DONE]` (the connection dropped mid-reply), an empty answer, and a
+  stream that goes silent for 3 minutes *after* data started flowing (before the first
+  token, prompt processing can legitimately take that long, so there is no watchdog
+  then). Not retried: other 4xx, a prompt too long for the context (that compacts
+  instead), and a non-JSON answer.
+- **How:** `requestWithRetry` waits 2, 4, 8, 16, then 30 s between attempts, for up to
+  2 minutes in all. The step card says it is retrying, the status bar counts down, and
+  Stop ends the wait at once. A retry starts the reply over: what streamed before the
+  drop is discarded. A step that needed retries says so on its card ("answered again
+  after 3 retries"), and that note is exported. The compaction request retries the
+  same way.
+- **Then pause, not end:** when the window is used up, an error card explains, with
+  agent wording (`chatErrorHint` with `retriedMs`), that the run is paused and nothing
+  is lost, and the run is `paused`: Retry on the card or ⏯ Continue resumes it exactly
+  where it stopped, with the history unchanged. Probing the endpoint (`/props` & co.)
+  while it is down isn't cached, so the context size is found again once it is back.
+- **Context overflow** that compaction can't fix, or with auto-compaction off, gets its
+  own advice (lower Max tokens / reply, or press 🗜️ Compact / turn it on).
+
+### 5.6 Later: native tool calls
 When the endpoint supports OpenAI `tools`, offer `run_python(code)`,
 `ask_user(question)` and `finish(answer)` as tools. The executor, gating and timeline
 are identical; only the parsing layer changes. Auto-detect support (as HermitUI
@@ -452,7 +575,7 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
 
 ## 6. Model guidance
 
-- **Remote first.** Agent loops need a model that recovers from its own errors.
+- **External endpoint first.** Agent loops need a model that recovers from its own errors.
   Practical options are a local llama.cpp server (`--jinja`) or Ollama with a capable
   coder or instruct model, or any cloud OpenAI-compatible API. Model-specific advice
   goes in the README once real tasks have been tried. No claims before then.
@@ -490,9 +613,10 @@ These are non-negotiable. See the root [`AGENTS.md`](../AGENTS.md).
 Pyodide normally fetches several files relative to its `indexURL`: the loader JS, the
 `.wasm`, the stdlib zip and the lock file.
 
-Verified in the spike (ROADMAP Phase 0, "Offline boot findings"). This works from
-`file://` in Chromium and Firefox with **Pyodide 0.29.x**, because 0.29.x still runs in
-a *classic* worker and Chromium won't start a Blob *module* worker on `file://`.
+Verified in the spike ([PHASE0_FINDINGS.md](PHASE0_FINDINGS.md), "Offline boot
+findings"). This works from `file://` in Chromium and Firefox with **Pyodide 0.29.x**,
+because 0.29.x still runs in a *classic* worker and Chromium won't start a Blob
+*module* worker on `file://`.
 Pyodide 314+ is module-worker-only, so moving to it requires patching that check.
 - `build.py` downloads a **pinned** Pyodide release and inlines the core files as
   gzip + base64. This is the same technique HermitUI uses for Mermaid
@@ -522,6 +646,28 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   larger file size.
 - If packages can't load (offline), the step fails with a clear observation, and the
   model is told which packages are available.
+
+*As built (Phase 2a):*
+- **Loading is its own phase.** Before a step runs, the worker reports what the code
+  imports (`find_imports`) and what is loaded; the main thread maps imports to packages
+  with the lock file. If anything has to be downloaded, the status bar says "loading
+  numpy, pandas…", the debug console logs it, and a separate `load` call fetches them
+  with the network limited to the pinned CDN (`cdn` mode, §10) and its own 2-minute time
+  limit, so a slow CDN doesn't eat the step's timeout. The code then runs with the
+  network closed. The step notes "Loaded numpy, pandas from the Pyodide CDN (1.2 s)".
+- **When a package fails, the code doesn't run.** The step fails with a message that
+  says why: the browser is offline; the CDN couldn't be reached; the download was
+  redirected outside the CDN (a tampered registry, §10); or the loader's own error. It
+  adds that the standard library and packages loaded earlier still work.
+- **An import nothing can provide** (`ModuleNotFoundError` for a name that isn't in the
+  distribution) gets a note: there is no pip; use the standard library or a listed
+  package.
+- **Offline: decided, no offline pack for now.** Inlining even numpy + pandas would
+  roughly double the 9 MB file, and a curated set would still miss what a given task
+  needs. Packages load from the CDN on first import and stay in memory for the tab's
+  life (§7: never a persistent cache); offline, the failure is explicit and the model
+  is steered to the standard library. Revisit with Phase 4 (fully offline wllama),
+  where an "offline pack" build flavor would pay off.
 
 **matplotlib:** force the `Agg` backend. `plt.show()` is patched to save to
 `/workspace/figures/step-N-k.png` and render it inline in the timeline.
@@ -592,7 +738,8 @@ is the second.
      is user-configured.
   3. Network modes: `closed` while agent code runs; `cdn` while the harness loads
      packages, where only URLs under the pinned Pyodide CDN pass; `open` only for
-     a step the user re-ran with "Allow network". The `cdn` mode closes a real
+     a step the user re-ran with "Allow network". (Since Phase 2a the packages load
+     in a worker call of their own before the step, §8; the modes are unchanged.) The `cdn` mode closes a real
      hole. Agent code can rewrite Pyodide's package registry
      (`pyodide_js._api.lockfile_packages[...].file_name`), and Pyodide then
      fetches an absolute URL as-is the next time that package is imported, with
@@ -624,7 +771,7 @@ Future layout of this folder:
 
 ```
 hermit-agent/
-├── README.md  DESIGN.md  ROADMAP.md  AGENTS.md
+├── README.md  DESIGN.md  ROADMAP.md  PHASE0_FINDINGS.md  AGENTS.md
 ├── src/          index.html, style.css, script.js, worker.js (inlined at build)
 ├── build.py      own build; may import helpers from ../build.py later
 ├── tests/        run.mjs + unit tests, e2e tests
@@ -653,9 +800,10 @@ See [ROADMAP.md](ROADMAP.md) for checklists and exit criteria.
 
 0. **Spike:** Pyodide from `file://` in a Blob worker, kill & re-seed, network
    blocking, size and boot time.
-1. **MVP:** remote backend, code-as-action loop, timeline, workspace panel,
+1. **MVP:** external-endpoint backend, code-as-action loop, timeline, workspace panel,
    effect-based gating, checkpoints & rewind, **session import/export**.
-2. **Polish:** diffs, plots, package UX, context management, mobile.
+2. **Polish:** diffs, plots, package UX, context management. (Mobile moved to a later
+   phase, see ROADMAP.md.)
 3. **Native tool calls.**
 4. **wllama flavor:** fully offline.
 5. **Merge decision.**
@@ -664,8 +812,8 @@ See [ROADMAP.md](ROADMAP.md) for checklists and exit criteria.
 
 ## 13. Open questions
 
-- Which packages, if any, to inline for offline use, and what file size is
-  acceptable?
+- ~~Which packages, if any, to inline for offline use, and what file size is
+  acceptable?~~ *Decided in Phase 2a: none for now (§8); revisit with Phase 4.*
 - Workspace limits: max total size and max file count. Browser tab memory is the real
   ceiling. *(MVP: 5,000 files / 256 MB; an import is capped at 20,000 entries /
   512 MB unpacked. Not yet measured against real tab memory.)*

@@ -18,7 +18,7 @@ const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 const SESSION_FORMAT = "hermit-agent-session";
 const SESSION_FORMAT_VERSION = 1;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -221,28 +221,36 @@ function isBlockedMixedContent(rawUrl) {
 // One line of "what to do about it" shown under a failed request; the raw error stays
 // visible above it. Pure, so it is unit-tested. "" means the error says enough.
 // (HermitUI's wllama branch is dropped: the agent has no in-browser backend yet.)
+// Agent failures (opts.retriedMs: how long the request was retried; then the run is
+// paused, not ended) say so, and so does an overflow that auto-compaction (opts.autoCompact)
+// couldn't fix.
 function chatErrorHint(message, opts) {
-    const { apiUrl = "", mixedContent = false } = opts || {};
+    const { apiUrl = "", mixedContent = false, retriedMs = 0, autoCompact } = opts || {};
     const msg = String(message || "");
     const status = Number((msg.match(/^Server Error (\d{3})\b/) || [])[1] || 0);
+    const retried = retriedMs > 0 ? ` (retried for ${retriedMs >= 60000 ? Math.round(retriedMs / 60000) + " min" : Math.round(retriedMs / 1000) + " s"})` : "";
+    const resume = retriedMs > 0 ? " The run is paused and nothing is lost: press Retry once it answers again." : "";
     if (status === 401 || status === 403) return "The server rejected the request's credentials — check the API key in Settings.";
     if (status === 404) return "Nothing answered at that address — check the API Base URL and the model name in Settings.";
-    if (status === 429) return "Rate-limited or out of quota — wait a moment, or check your provider account.";
-    if (status >= 500) return "The server failed while handling the request — its own logs will say why.";
+    if (status === 429) return `Rate-limited or out of quota${retried} — wait a moment, or check your provider account.` + resume;
+    if (status >= 500) return `The server failed while handling the request${retried} — its own logs will say why.` + resume;
     if (!status && /is not valid JSON|JSON\.parse|Unexpected token/i.test(msg)) {
         return "The server answered, but not with JSON — the API Base URL probably points at a web page instead of the API (it usually ends in /v1).";
     }
     if (isContextOverflowError(msg)) {
+        if (autoCompact === false) return "The task history no longer fits the model's context — press 🗜️ Compact, turn on Auto-compact in Settings, or rewind to an earlier step.";
+        if (autoCompact === true) return "The task history doesn't fit the model's context even after compacting — lower Max tokens / reply in Settings, rewind to an earlier step, or raise the server's context size.";
         return "The task history no longer fits the model's context — rewind to an earlier step, start a new session, or raise the server's context size.";
     }
     // Chrome says "Failed to fetch", Firefox "NetworkError when attempting to fetch
     // resource", Safari "Load failed" — all of them hide the actual reason.
     if (/Failed to fetch|NetworkError|^Load failed$/i.test(msg)) {
         if (mixedContent) return "This page is served over https, so the browser blocks plain-http servers on your network — use localhost, an https endpoint, or open the agent over http.";
-        return isLocalEndpoint(apiUrl)
-            ? `Couldn't reach ${apiUrl} — make sure the server is running and allows CORS from this page.`
-            : `Couldn't reach ${apiUrl} — check the URL and your connection; the provider must also allow requests from a browser (CORS).`;
+        return (isLocalEndpoint(apiUrl)
+            ? `Couldn't reach ${apiUrl}${retried} — make sure the server is running and allows CORS from this page.`
+            : `Couldn't reach ${apiUrl}${retried} — check the URL and your connection; the provider must also allow requests from a browser (CORS).`) + resume;
     }
+    if (retriedMs > 0 && isRetryableError(msg)) return `The connection to ${apiUrl} kept dropping mid-reply${retried}.` + resume;
     return "";
 }
 
@@ -297,13 +305,17 @@ function looksLikeReasoningRejection(detail) {
 }
 
 // ========== 3. Agent logic (pure) ==========
-// DESIGN §5.3. The user's custom instructions are appended after it.
-function buildSystemPrompt(instructions) {
+// DESIGN §5.3. The user's custom instructions are appended after it. packages: the import
+// names Pyodide can load (packageImportNames); without them a few examples are named.
+function buildSystemPrompt(instructions, packages) {
+    const pkgs = Array.isArray(packages) && packages.length
+        ? `Only these packages from the Pyodide distribution can be imported besides the standard library; each is loaded automatically on its first import: ${packages.join(", ")}.`
+        : "Packages from the Pyodide distribution (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, ...) are loaded automatically when you import them.";
     const base = `You are an agent that solves tasks by writing and running Python code. A human supervises you and may approve, edit or reject your steps.
 
 Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the user's browser.
 - The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
-- The standard library is available. Packages from the Pyodide distribution (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, ...) are loaded automatically when you import them. There is no pip and no network access. input() does not work.
+- The standard library is available. ${pkgs} There is no pip and no network access, so nothing else can be installed. input() does not work.
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
@@ -375,24 +387,38 @@ function splitReply(raw, isFinal) {
 
 // DESIGN §5.1. Only fences tagged python run (a bare fence the model used to show
 // output was once executed as code); the first block wins; an unclosed block means
-// the stream was cut. File actions and a python block in one reply are "mixed": nothing
-// runs. Returns { kind: code|files|mixed|ask|final|broken|cutoff|empty, ... }.
+// the stream was cut. Models trained on tool-call formats sometimes write
+// <python>…</python> (at the start of a line) instead of a fence: that runs the same way.
+// A <tool_call>, or an <observation> the model wrote itself, runs nothing and gets advice.
+// File actions and a python block in one reply are "mixed": nothing runs.
+// Returns { kind: code|files|mixed|ask|final|broken|cutoff|empty|toolcall|fakeobs, ... }.
 function parseReply(text, finishReason) {
     // File-action tags come out first, so fences inside a file's content aren't code.
     const fa = extractFileActions(text);
     const t = fa.rest;
     if (fa.unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim(), unclosed: fa.unclosed };
-    const re = /```(?:python3?|py)[ \t]*\r?\n([\s\S]*?)```/g;
-    const blocks = [...t.matchAll(re)];
+    const fences = [...t.matchAll(/```(?:python3?|py)[ \t]*\r?\n([\s\S]*?)```/g)];
+    const tags = [...t.matchAll(/^[ \t]*<python>[ \t]*(?:\r?\n)?([\s\S]*?)<\/python>/gm)];
+    const inTag = (m) => tags.some(g => m.index > g.index && m.index < g.index + g[0].length);
+    // A fence inside a <python> tag is the code itself.
+    const unfence = (c) => { const m = c.match(/^\s*```(?:python3?|py)?[ \t]*\r?\n([\s\S]*?)```\s*$/); return m ? m[1] : c.endsWith("\n") ? c : c + "\n"; };
+    const blocks = [...fences.filter(m => !inTag(m)).map(m => ({ index: m.index, code: m[1] })), ...tags.map(m => ({ index: m.index, code: unfence(m[1]) }))]
+        .sort((a, b) => a.index - b.index);
+    const openTags = (t.match(/^[ \t]*<python>/gm) || []).length;
+    const unclosed = /```(?:python3?|py)[ \t]*$/m.test(t) || openTags > tags.length;
     if (fa.actions.length) {
-        if (blocks.length || /```(?:python3?|py)[ \t]*$/m.test(t)) return { kind: "mixed", prose: t.trim(), actionCount: fa.actions.length };
+        if (blocks.length || unclosed) return { kind: "mixed", prose: t.trim(), actionCount: fa.actions.length };
         return { kind: "files", actions: fa.actions, prose: t.trim() };
     }
     if (blocks.length) {
-        return { kind: "code", code: blocks[0][1], blockCount: blocks.length, prose: t.slice(0, blocks[0].index).trim() };
+        return { kind: "code", code: blocks[0].code, blockCount: blocks.length, prose: t.slice(0, blocks[0].index).trim() };
     }
-    if (/```(?:python3?|py)[ \t]*$/m.test(t)) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim() };
+    if (unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim() };
     if (finishReason === "length") return { kind: "cutoff", prose: t.trim() };
+    if (/^[ \t]*<(?:tool_call|function_call|function=)/im.test(t)) return { kind: "toolcall", prose: t.trim() };
+    // Observations only ever come from the harness: a reply that writes one imitates a
+    // result instead of acting (seen with Qwen3.8: "<observation>Now let me run it.").
+    if (/^[ \t]*<\/?observation\b/im.test(t)) return { kind: "fakeobs", prose: t.trim() };
     const ask = t.match(/^[ \t]*\**ask:\**[ \t]*([\s\S]+)/im);
     if (ask) return { kind: "ask", question: ask[1].trim(), prose: t.slice(0, ask.index).trim() };
     if (!t.trim()) return { kind: "empty", prose: "" };
@@ -491,9 +517,24 @@ function contextLimit(setting, serverCtx) {
     return Number.isFinite(serverCtx) && serverCtx > 0 ? serverCtx : 0;
 }
 
-// Is the history at pct % of the context or beyond? pct 0 turns auto-compaction off.
-function compactionDue(estTokens, limit, pct) {
-    return pct > 0 && limit > 0 && estTokens >= limit * pct / 100;
+// Is the history at pct % of the context or beyond, or too close to its end for a full
+// reply? reserve: the reply budget (max_tokens; 0 = none), capped at half the context so
+// a large one can't make every step compact. pct 0 turns auto-compaction off.
+function compactionDue(estTokens, limit, pct, reserve) {
+    if (!(pct > 0 && limit > 0)) return false;
+    const room = Math.min(Number.isFinite(reserve) && reserve > 0 ? reserve : 0, limit / 2);
+    return estTokens >= Math.min(limit * pct / 100, limit - room);
+}
+
+// Did the context window end the reply rather than max_tokens? llama.cpp (context shift
+// off, its default) stops a reply at n_ctx and reports finish_reason "length", the same
+// as for max_tokens. usage: { prompt, completion }; serverCtx: the server's n_ctx, 0 when
+// unknown (then a "length" reply under max_tokens counts).
+function cutByContext(finishReason, usage, maxTokens, serverCtx) {
+    const u = usage || {};
+    if (finishReason !== "length" || !(u.completion > 0)) return false;
+    if (serverCtx > 0 && u.prompt > 0) return u.prompt + u.completion >= serverCtx - 16;
+    return maxTokens > 0 && u.completion < maxTokens;
 }
 
 // Where to cut the history. messages[0] is the system prompt, messages[1] the task, and
@@ -614,7 +655,7 @@ function missingMentionedFiles(answer, paths) {
 
 // File actions (DESIGN §5.1): read, write and edit text files without Python. The tag
 // names are also the tool names a native tool-call parser will feed into
-// applyFileActions (DESIGN §5.5), which knows nothing about the wire format.
+// applyFileActions (DESIGN §5.6), which knows nothing about the wire format.
 const FILE_TOOLS = ["read_file", "write_file", "edit_file"];
 
 // A path as models write it ("/workspace/x", "./x") made relative, or null if unsafe.
@@ -819,6 +860,229 @@ function formatFileResults(results, failed) {
     return out.join("\n");
 }
 
+// ---------- Line diffs (DESIGN §2.1, "Effect") ----------
+// Myers' O((N+M)·D) diff over lines, after trimming the common head and tail. Past
+// maxD differences it gives up on a minimal diff and reports the changed middle as
+// removed and re-added, which is still correct, just not minimal. Returns
+// [{ op: " " | "-" | "+", text }].
+function lineDiff(oldText, newText, maxD = 2000) {
+    const A = String(oldText ?? "").split("\n"), B = String(newText ?? "").split("\n");
+    // Both end with a newline: that isn't an empty last line worth showing.
+    if (A.length > 1 && B.length > 1 && A[A.length - 1] === "" && B[B.length - 1] === "") { A.pop(); B.pop(); }
+    let pre = 0;
+    while (pre < A.length && pre < B.length && A[pre] === B[pre]) pre++;
+    let suf = 0;
+    while (suf < A.length - pre && suf < B.length - pre && A[A.length - 1 - suf] === B[B.length - 1 - suf]) suf++;
+    const a = A.slice(pre, A.length - suf), b = B.slice(pre, B.length - suf);
+    const N = a.length, M = b.length, off = N + M + 1;
+    const V = new Int32Array(2 * off + 1);
+    const trace = [];
+    let solved = N === 0 && M === 0;
+    for (let d = 0; !solved && d <= Math.min(N + M, maxD); d++) {
+        // V before this round, for k in [-d-1, d+1]: what backtracking reads.
+        trace.push(V.slice(off - d - 1, off + d + 2));
+        for (let k = -d; k <= d; k += 2) {
+            let x = k === -d || (k !== d && V[off + k - 1] < V[off + k + 1]) ? V[off + k + 1] : V[off + k - 1] + 1;
+            let y = x - k;
+            while (x < N && y < M && a[x] === b[y]) { x++; y++; }
+            V[off + k] = x;
+            if (x >= N && y >= M) { solved = true; break; }
+        }
+    }
+    const mid = [];
+    if (!solved) {
+        for (const t of a) mid.push({ op: "-", text: t });
+        for (const t of b) mid.push({ op: "+", text: t });
+    } else {
+        let x = N, y = M;
+        for (let d = trace.length - 1; d >= 0 && (x > 0 || y > 0); d--) {
+            const v = trace[d], at = (k) => v[k + d + 1];
+            const k = x - y;
+            const prevK = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1;
+            const px = at(prevK), py = px - prevK;
+            while (x > px && y > py) { mid.push({ op: " ", text: a[x - 1] }); x--; y--; }
+            if (d > 0) mid.push(x === px ? { op: "+", text: b[py] } : { op: "-", text: a[px] });
+            x = px; y = py;
+        }
+        mid.reverse();
+    }
+    return [
+        ...A.slice(0, pre).map(text => ({ op: " ", text })),
+        ...mid,
+        ...A.slice(A.length - suf).map(text => ({ op: " ", text })),
+    ];
+}
+
+// Group a line diff into hunks with `context` unchanged lines around each change, like
+// `diff -u`. Each line carries its old and new line number (0 where it has none).
+// Returns { hunks: [{ oldStart, newStart, lines: [{ op, text, oldNo, newNo }] }], added, removed }.
+function diffHunks(ops, context = 3) {
+    const rows = [];
+    let o = 1, n = 1, added = 0, removed = 0;
+    for (const x of ops || []) {
+        rows.push({ op: x.op, text: x.text, oldNo: x.op === "+" ? 0 : o, newNo: x.op === "-" ? 0 : n });
+        if (x.op !== "+") o++;
+        if (x.op !== "-") n++;
+        if (x.op === "+") added++;
+        if (x.op === "-") removed++;
+    }
+    const hunks = [];
+    let cur = null, lastChange = -Infinity;
+    rows.forEach((r, i) => {
+        if (r.op === " ") return;
+        const from = Math.max(0, i - context);
+        if (cur && from <= lastChange + context + 1) {
+            for (let j = lastChange + 1; j <= i; j++) cur.lines.push(rows[j]);
+        } else {
+            if (cur) cur.lines.push(...rows.slice(lastChange + 1, Math.min(rows.length, lastChange + 1 + context)));
+            cur = { lines: rows.slice(from, i + 1) };
+            hunks.push(cur);
+        }
+        lastChange = i;
+    });
+    if (cur) cur.lines.push(...rows.slice(lastChange + 1, Math.min(rows.length, lastChange + 1 + context)));
+    for (const h of hunks) {
+        const first = h.lines[0];
+        h.oldStart = first.oldNo || (rows.slice(0, rows.indexOf(first)).filter(r => r.op !== "+").length + 1);
+        h.newStart = first.newNo || (rows.slice(0, rows.indexOf(first)).filter(r => r.op !== "-").length + 1);
+    }
+    return { hunks, added, removed };
+}
+
+// ---------- Observation elision (DESIGN §5.4) ----------
+// What the model is sent: the history with long observations and written file contents
+// of older steps shortened. The history itself keeps everything (summariser, rewind,
+// export). The last keepSteps to 2·keepSteps−1 steps stay in full: the boundary moves in
+// blocks of keepSteps, so the prompt prefix stays the same for several requests and the
+// server can keep reusing its prompt cache, instead of re-reading the tail every step.
+function elideHistory(messages, keepSteps, minChars) {
+    const keep = Math.max(1, keepSteps || 1), min = Math.max(200, minChars || 0);
+    const at = [];
+    for (let i = 2; i < messages.length; i++) if (messages[i].role === "assistant") at.push(i);
+    const elideSteps = Math.floor(Math.max(0, at.length - keep) / keep) * keep;
+    const out = messages.map(m => ({ role: m.role, content: m.content }));
+    if (!elideSteps) return out;
+    const end = at[elideSteps];   // messages[2..end) belong to the elided steps
+    const kb = (n) => (n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " characters");
+    for (let i = 2; i < end; i++) {
+        const m = out[i];
+        if (m.role === "assistant") {
+            m.content = m.content.replace(/^([ \t]*<write_file\b[^>\n]*>)([\s\S]*?)(<\/write_file>)/gm, (all, open, body, close) => {
+                if (body.length <= min) return all;
+                const lines = body.replace(/^\r?\n/, "").split("\n").length;
+                return `${open}\n[… ${lines} lines (${kb(body.length)}) elided from this old step; the file is in /workspace …]\n${close}`;
+            });
+        } else {
+            m.content = m.content.replace(/(<observation step="(\d+)"[^>\n]*>\n)([\s\S]*?)(\n<\/observation>)/g, (all, open, step, body, close) => {
+                if (body.length <= min) return all;
+                const head = 600, tail = 600;
+                return open + body.slice(0, head) + `\n[… ${kb(body.length - head - tail)} of step ${step}'s output elided to save context; read the file or re-run the code if you need it …]\n` + body.slice(-tail) + close;
+            });
+        }
+    }
+    return out;
+}
+
+// ---------- Endpoint errors: retry and resume ----------
+// Worth retrying: the endpoint is down, restarting or overloaded, or the connection
+// dropped mid-reply. Not: a bad request, credentials, a wrong URL, a prompt too long.
+function isRetryableError(message) {
+    const msg = String(message || "");
+    const status = Number((msg.match(/^Server Error (\d{3})\b/) || [])[1] || 0);
+    if (status) return status === 408 || status === 429 || (status >= 500 && status !== 501 && status !== 505);
+    if (isContextOverflowError(msg)) return false;
+    // Chrome: "Failed to fetch" / "network error"; Firefox: "NetworkError when attempting
+    // to fetch resource" / "Error in input stream"; Safari: "Load failed".
+    return /Failed to fetch|NetworkError|network error|^Load failed$|Error in (?:input|body) stream|ERR_|ECONNRESET|connection (?:was )?(?:reset|closed|dropped)|stream ended before|stream stalled/i.test(msg);
+}
+
+// The wait before retry `attempt` (1-based): doubling from the first delay, capped.
+function retryDelayMs(attempt, firstMs, maxMs) {
+    return Math.min(maxMs, firstMs * 2 ** Math.max(0, attempt - 1));
+}
+
+// ---------- Context gauge (status bar) ----------
+// The next request's estimated size against the context, and where auto-compaction
+// kicks in (compactionDue's threshold). limit 0 = unknown size.
+function contextGauge(estTokens, limit, pct, reserve) {
+    const k = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)));
+    if (!(limit > 0)) return { text: `~${k(estTokens)} tok`, frac: 0, compactAt: 0, level: "unknown" };
+    const frac = estTokens / limit;
+    const room = Math.min(Number.isFinite(reserve) && reserve > 0 ? reserve : 0, limit / 2);
+    const compactAt = pct > 0 ? Math.min(limit * pct / 100, limit - room) : 0;
+    const level = compactAt && estTokens >= compactAt ? "high" : frac >= 0.6 ? "mid" : "low";
+    return { text: `~${k(estTokens)} / ${k(limit)} · ${Math.round(frac * 100)}%`, frac: Math.min(1, frac), compactAt, level };
+}
+
+// ---------- Uploads ----------
+// A confirm text when files about to be added are large enough to strain the tab, or "".
+// files: [{ path, size }]; currentBytes: what the workspace already holds.
+function uploadWarning(files, currentBytes) {
+    const list = files || [];
+    const total = list.reduce((n, f) => n + (f.size || 0), 0);
+    const big = list.reduce((m, f) => (!m || f.size > m.size ? f : m), null);
+    const reasons = [];
+    if (total >= LIMITS.uploadWarnBytes) reasons.push(`${formatBytes(total)} in ${list.length} file${list.length === 1 ? "" : "s"}`);
+    else if (big && big.size >= LIMITS.uploadWarnFileBytes) reasons.push(`${big.path} is ${formatBytes(big.size)}`);
+    if (list.length >= LIMITS.uploadWarnFiles) reasons.push(`${list.length} files`);
+    if (!reasons.length) return "";
+    const after = (currentBytes || 0) + total;
+    return `You are adding ${reasons.join(" and ")}. Everything is held in this tab's memory (workspace limit ${formatBytes(LIMITS.maxWorkspaceBytes)}${after > LIMITS.maxWorkspaceBytes ? ": not all of it will fit" : ""}), each changed version is kept for rewinding, and large files make every step that scans the workspace slower. Add them anyway?`;
+}
+
+// ---------- Packages (DESIGN §8) ----------
+// The import names of the packages Pyodide can load on demand, from its lock file:
+// real packages only (no shared libraries, no *-tests), private names left out.
+function packageImportNames(lock) {
+    const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
+    const names = new Set();
+    for (const p of Object.values(pk)) {
+        if (!p || p.package_type !== "package" || /-tests$/.test(p.name || "")) continue;
+        for (const i of Array.isArray(p.imports) ? p.imports : []) {
+            if (typeof i === "string" && /^[A-Za-z][\w.-]*$/.test(i)) names.add(i);
+        }
+    }
+    return [...names].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
+
+// Import name -> package name for everything the lock file can load, stdlib modules
+// Pyodide ships separately (sqlite3, lzma, …) included.
+function importPackageIndex(lock) {
+    const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
+    const map = new Map();
+    for (const p of Object.values(pk)) {
+        if (!p || typeof p.name !== "string" || p.package_type === "shared_library" || p.package_type === "static_library") continue;
+        for (const i of Array.isArray(p.imports) ? p.imports : []) if (typeof i === "string" && !map.has(i)) map.set(i, p.name);
+    }
+    return map;
+}
+
+// Why a step's packages didn't load, for the step and the model. r: the worker's load
+// result { failed, errors, netAttempts }; online: navigator.onLine; cdn: the pinned
+// package URL. A blocked download outside the CDN means the registry was tampered with.
+function packageFailureMessage(r, online, cdn) {
+    const failed = (r && r.failed || []).filter(n => n !== "(packages)");
+    const what = failed.length ? failed.join(", ") : "the packages this code imports";
+    const outside = (r && r.netAttempts || []).find(a => !String(a).includes(cdn));
+    const first = (r && r.errors || []).find(e => !/^The following error occurred/.test(e)) || "";
+    const still = " The standard library and packages that loaded earlier still work.";
+    if (outside) return `Couldn't load ${what}: the download was redirected outside the pinned package CDN (${outside}), so it was blocked. Nothing ran.${still}`;
+    if (online === false) return `Couldn't load ${what}: this browser is offline, and packages are downloaded from the Pyodide CDN the first time they are imported. Nothing ran.${still}`;
+    if (!first || /request failed|Failed to fetch|NetworkError|network error|Load failed/i.test(first)) {
+        return `Couldn't load ${what}: the Pyodide package CDN (${cdn.replace(/^https?:\/\//, "").split("/")[0]}) couldn't be reached. Nothing ran.${still}`;
+    }
+    return `Couldn't load ${what}: ${first} Nothing ran.${still}`;
+}
+
+// A note for a step that failed on an import nothing can provide: Pyodide has no pip.
+function moduleNotFoundHint(output, available) {
+    const m = String(output || "").match(/ModuleNotFoundError: No module named '([\w.]+)'/);
+    if (!m) return "";
+    const top = m[1].split(".")[0];
+    if ((available || []).includes(top)) return "";
+    return `${top} isn't part of the Pyodide distribution and can't be installed here (no pip, no network). Use the standard library or one of the packages listed in your instructions, or write the code yourself.`;
+}
+
 // ========== 4. Zip + session archive (pure) ==========
 const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 
@@ -1013,6 +1277,7 @@ function transcriptMarkdown(session) {
         else if (item.type === "step") {
             const verdict = item.decision ? ` · ${item.decision}${item.decidedBy ? " by " + item.decidedBy : ""}` : "";
             md.push(`## Step ${item.n} — ${item.kind}${item.status ? " · " + item.status : ""}${verdict}`, ``);
+            if (item.retryNote) md.push(`> ${item.retryNote}`, ``);
             if (item.reasoning) md.push(`<details><summary>Reasoning</summary>`, ``, block("text", item.reasoning), ``, `</details>`, ``);
             if (item.kind === "final") md.push(item.content || "", ``);
             else if (item.kind === "ask") md.push(`**Question:** ${item.question || ""}`, ``);
@@ -1036,7 +1301,7 @@ function transcriptMarkdown(session) {
 }
 
 // state: { session, files: Map(path -> { hash, origin }), blobs: Map(hash -> bytes),
-// checkpoints: [{ timelineLength, msgCount, stepCount, epoch, label, files: { path: { hash, origin } } }] }
+// checkpoints: [{ timelineLength, msgCount, stepCount, epoch, label, files: { path: { hash, origin } } } | null] }
 // Returns zip entries (DESIGN §3.1). Checkpoint blobs already in workspace/ aren't repeated.
 function buildSessionArchive(state, opts) {
     const o = opts || {};
@@ -1058,9 +1323,11 @@ function buildSessionArchive(state, opts) {
         inWorkspace.add(f.hash);
     }
     if (o.includeCheckpoints && state.checkpoints && state.checkpoints.length) {
-        entries.push({ path: "checkpoints/index.json", data: json(state.checkpoints.map(cleanForExport)) });
+        // Checkpoints dropped to save memory stay null, so timeline links keep their index.
+        entries.push({ path: "checkpoints/index.json", data: json(state.checkpoints.map(cp => (cp ? cleanForExport(cp) : null))) });
         const written = new Set();
         for (const cp of state.checkpoints) {
+            if (!cp) continue;
             for (const f of Object.values(cp.files)) {
                 if (inWorkspace.has(f.hash) || written.has(f.hash)) continue;
                 const bytes = state.blobs.get(f.hash);
@@ -1106,7 +1373,7 @@ function validateSession(raw) {
         if (withPrev) r.prevHash = /^[0-9a-f]{64}$/.test(x.prevHash) ? x.prevHash : "";
         return r;
     });
-    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt"];
+    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt", "retryNote"];
     const timeline = raw.timeline.map((it, i) => {
         if (!it || typeof it !== "object") throw new Error(`session.json: timeline item ${i} is malformed.`);
         const ts = str(it.ts);
@@ -1115,7 +1382,7 @@ function validateSession(raw) {
             case "user": return { type: "user", text: str(it.text), kind: ["guidance", "answer", "followup"].includes(it.kind) ? it.kind : "guidance", ts };
             case "note": return { type: "note", text: str(it.text), tone: ["info", "warn", "error"].includes(it.tone) ? it.tone : "info", ts };
             case "error": return { type: "error", text: str(it.text), hint: str(it.hint), ts };
-            case "compaction": return { type: "compaction", reason: it.reason === "overflow" ? "overflow" : "threshold", fromStep: num(it.fromStep, 0), toStep: num(it.toStep, 0), summary: str(it.summary), tokensBefore: num(it.tokensBefore, 0), tokensAfter: num(it.tokensAfter, 0), ts };
+            case "compaction": return { type: "compaction", reason: ["overflow", "context", "manual"].includes(it.reason) ? it.reason : "threshold", fromStep: num(it.fromStep, 0), toStep: num(it.toStep, 0), summary: str(it.summary), tokensBefore: num(it.tokensBefore, 0), tokensAfter: num(it.tokensAfter, 0), ts };
             case "step": {
                 const s = { type: "step", n: num(it.n, 0), ts, checkpoint: Number.isInteger(it.checkpoint) ? it.checkpoint : undefined };
                 for (const k of STEP_STRINGS) s[k] = str(it[k]);
@@ -1209,6 +1476,7 @@ async function parseSessionArchive(entries) {
     if (rawCps !== undefined) {
         if (!Array.isArray(rawCps)) throw new Error("checkpoints/index.json is not a list.");
         checkpoints = rawCps.map((cp, i) => {
+            if (cp === null) return null;   // dropped to save memory
             const bad = (why) => new Error(`checkpoints/index.json: entry ${i} ${why}.`);
             if (!cp || typeof cp !== "object" || !cp.files || typeof cp.files !== "object") throw bad("is malformed");
             const ints = ["timelineLength", "msgCount", "stepCount"];
@@ -1230,12 +1498,38 @@ async function parseSessionArchive(entries) {
     return { session, files, blobs, checkpoints };
 }
 
+// The files a zip contributes to the workspace (DESIGN §4.4): a session export only its
+// workspace/ folder, any other zip all of its files. OS archive junk (__MACOSX/,
+// .DS_Store, Thumbs.db, desktop.ini) is skipped. The entries come from zipRead, so their
+// paths are already safe. Returns { files: [{ path, data }], fromSession }.
+function workspaceEntriesFromZip(entries) {
+    const manifest = entries.find(e => e.path === "manifest.json");
+    let fromSession = false;
+    if (manifest) {
+        try { fromSession = JSON.parse(new TextDecoder().decode(manifest.data)).format === SESSION_FORMAT; } catch (e) { fromSession = false; }
+    }
+    const isJunk = (p) => p.split("/")[0] === "__MACOSX" || /^(\.DS_Store|Thumbs\.db|desktop\.ini)$/i.test(p.split("/").pop());
+    const files = [];
+    for (const e of entries) {
+        let p = e.path;
+        if (fromSession) {
+            if (!p.startsWith("workspace/")) continue;
+            p = p.slice("workspace/".length);
+        }
+        if (p && !isJunk(p)) files.push({ path: p, data: e.data });
+    }
+    return { files, fromSession };
+}
+
 // ========== 5. Python worker client ==========
 // The main thread owns the canonical workspace; the worker is disposable (DESIGN §4.1).
 const PY = {
     worker: null, gen: 0, seq: 0, pending: new Map(), state: "off",
     corePromise: null, readyPromise: null, info: null, syncedVersion: -1,
 };
+// What Pyodide can load (from its lock file): import names for the system prompt, and
+// import name -> package for the "loading …" notice before a step runs.
+const PKG = { names: [], byImport: new Map(), loading: [] };
 
 // The Pyodide core: inlined by build.py (gzip + base64), or fetched from the pinned
 // CDN when running the unbuilt source.
@@ -1255,6 +1549,11 @@ function loadPyodideCore() {
                 }
                 core[key] = key === "loaderJs" || key === "asmJs" ? new TextDecoder().decode(bytes) : bytes.buffer;
             }
+            try {
+                const lock = JSON.parse(new TextDecoder().decode(core.lock));
+                PKG.names = packageImportNames(lock);
+                PKG.byImport = importPackageIndex(lock);
+            } catch (e) { console.error("pyodide-lock.json unreadable:", e); }
             return core;
         })();
         PY.corePromise.catch(() => { PY.corePromise = null; });
@@ -1384,23 +1683,71 @@ function validateRunResult(r) {
     return r;
 }
 
+const PKG_NAME = /^[A-Za-z0-9_.-]{1,100}$/;
+
+// The packages a step's imports need that aren't loaded yet (by package name).
+async function packagesToLoad(code) {
+    const r = await workerCall("imports", { code }, 30000);
+    const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === "string" && PKG_NAME.test(x)).slice(0, 500) : []);
+    const loaded = new Set(list(r && r.loaded));
+    return [...new Set(list(r && r.imports).map(i => PKG.byImport.get(i)).filter(p => p && !loaded.has(p)))];
+}
+
+function validateLoadResult(r) {
+    const strs = (v, max, len) => (Array.isArray(v) ? v.filter(x => typeof x === "string").slice(0, max).map(x => x.slice(0, len)) : []);
+    if (!r || typeof r !== "object") throw new Error("The worker sent an invalid result (load).");
+    return { loaded: strs(r.loaded, 200, 100), failed: strs(r.failed, 200, 100), errors: strs(r.errors, 20, 500), netAttempts: strs(r.netAttempts, 50, 300), ms: Number.isFinite(r.ms) ? r.ms : 0 };
+}
+
 // Run one step. Returns the validated result, or { status: "timeout" | "killed" |
 // "crashed" } after which the interpreter has been restarted from the canonical
-// workspace — i.e. the step's effects are already rolled back.
+// workspace — i.e. the step's effects are already rolled back. The packages the code
+// imports are loaded first (DESIGN §8), with their own time limit; if one fails, the
+// code doesn't run and the result says why.
 async function runInWorker(code, opts) {
     const o = opts || {};
     await ensureInterpreter();
     await syncWorkspaceToWorker();
     setInterpreterState("running");
     const gen = PY.gen;
+    let phase = "packages", pkgNotes = [], pkgAttempts = [];
     try {
+        const need = await packagesToLoad(code);
+        if (need.length) {
+            PKG.loading = need;
+            if (typeof setActivity === "function" && RUN.active) setActivity("packages");
+            debugLog("tool", `loading packages: ${need.join(", ")}`);
+            const lr = validateLoadResult(await workerCall("load", { code }, LIMITS.packageTimeoutMs));
+            PKG.loading = [];
+            pkgAttempts = lr.netAttempts;
+            if (lr.failed.length) {
+                const msg = packageFailureMessage(lr, typeof navigator !== "undefined" ? navigator.onLine : true, PYODIDE_CDN);
+                debugLog("error", "package load failed: " + lr.failed.join(", "), lr.errors.join("\n"));
+                setInterpreterState("idle");
+                const listing = {};
+                for (const [p, f] of WS.files) listing[p] = f.hash;
+                return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing, files: {}, packageError: true };
+            }
+            if (lr.loaded.length) {
+                pkgNotes = [`Loaded ${lr.loaded.join(", ")} from the Pyodide CDN (${(lr.ms / 1000).toFixed(1)} s).`];
+                debugLog("result", pkgNotes[0]);
+            }
+            if (typeof setActivity === "function" && RUN.active) setActivity("python");
+        }
+        phase = "run";
         const r = validateRunResult(await workerCall("run", { code, allowNetwork: !!o.allowNetwork }, o.timeoutMs));
+        r.notes = [...pkgNotes, ...r.notes];
+        r.netAttempts = [...pkgAttempts, ...r.netAttempts];
         setInterpreterState("idle");
         return r;
     } catch (e) {
+        PKG.loading = [];
         const status = e.message === "timeout" ? "timeout" : e.message === "killed" ? "killed" : "crashed";
         if (gen === PY.gen) restartInterpreter();
-        return { status, output: status === "crashed" ? e.message : "", notes: [], netAttempts: [], listing: null, files: {} };
+        const output = status === "crashed" ? e.message
+            : phase === "packages" && status === "timeout" ? `Loading the packages this code imports took longer than ${Math.round(LIMITS.packageTimeoutMs / 1000)} s, so it was stopped. The package CDN may be slow or unreachable.`
+            : "";
+        return { status, output, notes: [], netAttempts: [], listing: null, files: {}, packagePhase: phase === "packages" };
     }
 }
 
@@ -1410,15 +1757,27 @@ async function runInWorker(code, opts) {
 // AbortError. rawUsage/timings are the server's own objects (timings: llama.cpp only),
 // clock holds performance.now() stamps for the request, first token and end.
 async function streamChat(payload, signal, onDelta) {
-    let promptTokens = 0, completionTokens = 0, finishReason = null, sawStreamData = false;
+    let promptTokens = 0, completionTokens = 0, finishReason = null, sawStreamData = false, sawEvent = false, sawDone = false;
     let rawUsage = null, timings = null;
     const clock = { startMs: performance.now(), firstMs: 0, endMs: 0 };
     const chatUrl = apiEndpoint(SETTINGS.apiUrl, "/chat/completions");
+    // A stream that goes silent mid-reply (the server hung, or the connection died without
+    // a reset) is given up after LIMITS.streamStallMs, as an error worth retrying. Only
+    // once data flows: before the first token, prompt processing can legitimately take
+    // minutes.
+    const ctrl = new AbortController();
+    const forward = () => ctrl.abort();
+    if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener("abort", forward, { once: true }); }
+    let stallTimer = null, stalled = false;
+    const armStall = () => {
+        clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => { stalled = true; ctrl.abort(); }, LIMITS.streamStallMs);
+    };
     const postChat = (body) => fetch(chatUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (SETTINGS.apiKey || "none") },
         body: JSON.stringify(body),
-        signal,
+        signal: ctrl.signal,
     });
     const readDetail = async (res) => {
         let detail = res.statusText || "Unknown Error";
@@ -1463,9 +1822,11 @@ async function streamChat(payload, signal, onDelta) {
     const processLine = (line) => {
         if (!line.startsWith("data:")) return;
         const dataStr = line.slice(5).trim();
-        if (dataStr === "" || dataStr === "[DONE]") return;
+        if (dataStr === "[DONE]") { sawDone = sawEvent = true; return; }
+        if (dataStr === "") return;
         let data;
         try { data = JSON.parse(dataStr); } catch (e) { return; }
+        sawEvent = true;
         raiseIfError(data);
         const choice = data.choices && data.choices[0];
         if (choice && choice.finish_reason) finishReason = choice.finish_reason;
@@ -1477,6 +1838,7 @@ async function streamChat(payload, signal, onDelta) {
         for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
+            armStall();
             const text = decoder.decode(value, { stream: true });
             if (!sawStreamData && rawBody.length < 1048576) rawBody += text;
             buffer += text;
@@ -1487,8 +1849,17 @@ async function streamChat(payload, signal, onDelta) {
         if (buffer.trim()) processLine(buffer);
     } catch (streamErr) {
         reader.cancel().catch(() => {});
+        if (stalled) throw new Error(`The stream stalled: no data for ${Math.round(LIMITS.streamStallMs / 1000)} s in the middle of the reply.`);
         throw streamErr;
+    } finally {
+        clearTimeout(stallTimer);
+        if (signal) signal.removeEventListener("abort", forward);
     }
+    // A stream that just stops, with neither a finish_reason nor [DONE], was cut (the
+    // server died or the connection dropped): its reply is incomplete, so it's an error
+    // worth retrying rather than a reply.
+    if (sawEvent && !finishReason && !sawDone) throw new Error("The stream ended before the reply finished: the connection dropped.");
+    if (!sawEvent && !rawBody.trim()) throw new Error("The connection closed before the server replied.");
     // The server ignored `stream: true` and sent one JSON body.
     if (!sawStreamData) {
         const trimmed = rawBody.trim();
@@ -1577,25 +1948,81 @@ function formatStepStats(st) {
 // Reasoning support for the configured endpoint, read from llama.cpp's /props or
 // Ollama's /api/show. Never probed with a throwaway completion: permissive servers
 // answer 200 for parameters they ignore, so a non-error proves nothing.
-const REASONING = { key: "", state: "unknown", levels: ["low", "medium", "high"], rejected: false, nCtx: 0 };
+const REASONING = { key: "", state: "unknown", levels: ["low", "medium", "high"], rejected: false, nCtx: 0, ctxSource: "" };
 
-// Also returns llama.cpp's context size (nCtx, 0 when unknown) for the step stats.
+// The context size an OpenAI-style model list reports for `model`, or 0: vLLM's
+// max_model_len, LM Studio's loaded_context_length (in its /api/v0/models), or
+// context_length / context_window (OpenRouter, Together, Groq and others). Without an
+// exact id match, a list of one model counts as that model. llama.cpp's
+// meta.n_ctx_train is the trained size, not the server's, so it is left alone.
+function contextSizeFromModelList(data, model) {
+    const list = Array.isArray(data) ? data : (data && (data.data || data.models)) || [];
+    if (!Array.isArray(list) || !list.length) return 0;
+    const want = String(model || "");
+    const m = list.find(x => x && want && (x.id === want || x.name === want || x.model === want)) || (list.length === 1 ? list[0] : null);
+    if (!m || typeof m !== "object") return 0;
+    for (const k of ["max_model_len", "loaded_context_length", "context_length", "context_window"]) {
+        if (Number.isFinite(m[k]) && m[k] > 0) return m[k];
+    }
+    return 0;
+}
+
+// Ollama's context size from /api/show: num_ctx when the model sets one, else 0 (the
+// server's default then applies, which it doesn't report).
+function ollamaNumCtx(show) {
+    const m = String((show && show.parameters) || "").match(/^\s*num_ctx\s+(\d+)/m);
+    return m ? Number(m[1]) : 0;
+}
+
+// Reasoning support plus the context size (nCtx, 0 when unknown; ctxSource names where
+// it came from): llama.cpp's /props or Ollama's num_ctx, else the model list.
+// reached: whether any probe got an HTTP answer at all (an endpoint that is down proves
+// nothing, so its result isn't cached).
 async function probeReasoningSupport(url, key, model) {
+    const r = await probeTemplateCaps(url, key, model);
+    if (!r.nCtx) {
+        const reached = r.reached;
+        Object.assign(r, await probeModelListContext(url, key, model));
+        r.reached = r.reached || reached;
+    }
+    return r;
+}
+
+async function probeModelListContext(url, key, model) {
+    const headers = { "Authorization": "Bearer " + (key || "none") };
+    let reached = false;
+    const fromList = async (listUrl, source) => {
+        try {
+            const res = await fetch(listUrl, { headers });
+            reached = true;
+            if (!res.ok) return null;
+            const nCtx = contextSizeFromModelList(await res.json(), model);
+            return nCtx ? { nCtx, ctxSource: source, reached } : null;
+        } catch (e) { return null; }
+    };
+    return (await fromList(apiEndpoint(url, "/models"), "/v1/models"))
+        || (await fromList(apiRoot(url) + "/api/v0/models", "LM Studio /api/v0/models"))
+        || { nCtx: 0, ctxSource: "", reached };
+}
+
+async function probeTemplateCaps(url, key, model) {
     const root = apiRoot(url);
     const headers = { "Authorization": "Bearer " + (key || "none") };
-    let nCtx = 0;
+    let nCtx = 0, reached = false;
     try {
         const res = await fetch(root + "/props", { headers });
+        reached = true;
         if (res.ok) {
             const p = await res.json();
             const gen = p.default_generation_settings || {};
             nCtx = Number.isFinite(gen.n_ctx) && gen.n_ctx > 0 ? gen.n_ctx : Number.isFinite(p.n_ctx) && p.n_ctx > 0 ? p.n_ctx : 0;
+            const ctxSource = nCtx ? "llama.cpp /props" : "";
             const caps = p.chat_template_caps;
             const t = parseReasoningTemplateSupport(p.chat_template);
             if (caps && typeof caps.supports_reasoning_effort === "boolean") {
-                return { state: caps.supports_reasoning_effort || t.supported ? "supported" : "unsupported", levels: t.levels, source: "llama.cpp /props", nCtx };
+                return { state: caps.supports_reasoning_effort || t.supported ? "supported" : "unsupported", levels: t.levels, source: "llama.cpp /props", nCtx, ctxSource, reached };
             }
-            if (typeof p.chat_template === "string") return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "server chat template", nCtx };
+            if (typeof p.chat_template === "string") return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "server chat template", nCtx, ctxSource, reached };
         }
     } catch (e) { /* no /props here — try Ollama next */ }
     try {
@@ -1604,19 +2031,23 @@ async function probeReasoningSupport(url, key, model) {
             headers: Object.assign({ "Content-Type": "application/json" }, headers),
             body: JSON.stringify({ model }),
         });
+        reached = true;
         if (res.ok) {
-            const t = parseReasoningTemplateSupport((await res.json()).template);
-            return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "Ollama /api/show", nCtx };
+            const show = await res.json();
+            const t = parseReasoningTemplateSupport(show.template);
+            const numCtx = ollamaNumCtx(show);
+            return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "Ollama /api/show", nCtx: nCtx || numCtx, ctxSource: nCtx ? "llama.cpp /props" : numCtx ? "Ollama num_ctx" : "", reached };
         }
     } catch (e) { /* not Ollama either */ }
-    return { state: "unknown", levels: ["low", "medium", "high"], source: "endpoint exposes no capability data", nCtx };
+    return { state: "unknown", levels: ["low", "medium", "high"], source: "endpoint exposes no capability data", nCtx, ctxSource: nCtx ? "llama.cpp /props" : "", reached };
 }
 
 async function ensureReasoningProbe() {
     const key = SETTINGS.apiUrl + "|" + SETTINGS.model;
     if (REASONING.key === key) return;
     const r = await probeReasoningSupport(SETTINGS.apiUrl, SETTINGS.apiKey, SETTINGS.model);
-    Object.assign(REASONING, r, { key, rejected: false });
+    // Probed while the endpoint was down: try again before the next request.
+    Object.assign(REASONING, r, { key: r.reached ? key : "", rejected: false });
 }
 
 function currentReasoningParams() {
@@ -1653,8 +2084,12 @@ let S = freshSession();
 // step: the step being worked on; activity: what it's doing right now, for the status bar.
 // tokenRatio: prompt tokens per character on the last request (estimateTokens);
 // overflowRetried: this turn already compacted after a context-overflow error;
-// compactAfter: no threshold compaction before this step count (after a failed one).
-const RUN = { active: false, abort: null, stopRequested: false, decision: null, activeSince: 0, modelNotes: [], step: 0, activity: "", tokenRatio: 0, overflowRetried: false, compactAfter: 0 };
+// compactAfter: no threshold compaction before this step count (after a failed one);
+// compactNext: the last reply ran out of context, so compact before the next request.
+// retry: { n, at, error } while waiting to retry a failed request; restartTurn: abort the
+// model request and ask again (⚡ Send now); lastError: why the endpoint was given up on;
+// moreSteps: what ⏯ Continue at the step limit allows.
+const RUN = { active: false, abort: null, stopRequested: false, decision: null, activeSince: 0, modelNotes: [], step: 0, activity: "", tokenRatio: 0, overflowRetried: false, compactAfter: 0, compactNext: false, retry: null, restartTurn: false, requesting: false, lastError: null, moreSteps: LIMITS.stepLimitIncrement };
 
 function workspaceSize() {
     let total = 0;
@@ -1668,6 +2103,68 @@ function snapshotFiles() {
     return out;
 }
 
+// Which checkpoints to drop so that file versions only checkpoints hold (not the
+// workspace) fit the budget: the oldest first, never the newest `keep`. Dropped entries
+// are null. current: Set of the workspace's hashes; sizes: Map(hash -> bytes). Returns
+// { drop: [indices], olderBytes: what older versions hold afterwards }.
+function checkpointsToDrop(checkpoints, current, sizes, budget, keep) {
+    const refs = new Map();
+    const hashesOf = (cp) => new Set(Object.values(cp.files).map(f => f.hash));
+    const live = [];
+    checkpoints.forEach((cp, i) => {
+        if (!cp) return;
+        live.push(i);
+        for (const h of hashesOf(cp)) refs.set(h, (refs.get(h) || 0) + 1);
+    });
+    let olderBytes = 0;
+    for (const h of refs.keys()) if (!current.has(h)) olderBytes += sizes.get(h) || 0;
+    const drop = [];
+    for (const i of live.slice(0, Math.max(0, live.length - Math.max(1, keep)))) {
+        if (olderBytes <= budget) break;
+        for (const h of hashesOf(checkpoints[i])) {
+            const n = refs.get(h) - 1;
+            refs.set(h, n);
+            if (n === 0 && !current.has(h)) olderBytes -= sizes.get(h) || 0;
+        }
+        drop.push(i);
+    }
+    return { drop, olderBytes };
+}
+
+// What checkpoints cost, for the status bar: cached until the workspace or the
+// checkpoints change.
+let CP_GEN = 0, cpMemoCache = null;
+function checkpointMemory() {
+    const key = WS.version + "|" + CHECKPOINTS.length + "|" + CP_GEN;
+    if (cpMemoCache && cpMemoCache.key === key) return cpMemoCache;
+    const current = new Set([...WS.files.values()].map(f => f.hash));
+    const sizes = new Map([...WS.blobs].map(([h, b]) => [h, b.length]));
+    const kept = CHECKPOINTS.filter(Boolean).length;
+    cpMemoCache = {
+        key, kept, dropped: CHECKPOINTS.length - kept,
+        workspaceBytes: workspaceSize(),
+        olderBytes: checkpointsToDrop(CHECKPOINTS, current, sizes, Infinity, 1).olderBytes,
+    };
+    return cpMemoCache;
+}
+
+// Between turns: drop the oldest checkpoints once the file versions only they hold pass
+// the budget, so a long session that keeps rewriting big files can't exhaust the tab.
+function enforceCheckpointBudget() {
+    const current = new Set([...WS.files.values()].map(f => f.hash));
+    const sizes = new Map([...WS.blobs].map(([h, b]) => [h, b.length]));
+    const { drop, olderBytes } = checkpointsToDrop(CHECKPOINTS, current, sizes, LIMITS.checkpointBudgetBytes, LIMITS.checkpointKeepMin);
+    if (!drop.length) return;
+    const labels = drop.map(i => CHECKPOINTS[i].label);
+    for (const i of drop) CHECKPOINTS[i] = null;
+    CP_GEN++;
+    collectGarbage();
+    debugLog("result", `dropped ${drop.length} checkpoint(s): ${labels.join(", ")} · older versions now ${formatBytes(olderBytes)}`);
+    addNote(`🗂️ Dropped the oldest checkpoint${drop.length === 1 ? "" : "s"} (${labels.join(", ")}) to keep older file versions under ${formatBytes(LIMITS.checkpointBudgetBytes)}. You can no longer rewind to ${drop.length === 1 ? "it" : "them"}; the timeline is unchanged.`, "warn");
+    renderTimeline();
+    renderStatusBar();
+}
+
 function takeCheckpoint(label) {
     const cp = { timelineLength: S.timeline.length, msgCount: S.messages.length, stepCount: S.stepCount, epoch: S.compactions.length, label, files: snapshotFiles() };
     CHECKPOINTS.push(cp);
@@ -1678,7 +2175,7 @@ function takeCheckpoint(label) {
 function collectGarbage() {
     const live = new Set();
     for (const f of WS.files.values()) live.add(f.hash);
-    for (const cp of CHECKPOINTS) for (const f of Object.values(cp.files)) live.add(f.hash);
+    for (const cp of CHECKPOINTS) if (cp) for (const f of Object.values(cp.files)) live.add(f.hash);
     for (const item of S.timeline) {
         if (item.type === "step" && item._held) for (const h of item._held) live.add(h);
     }
@@ -1692,11 +2189,13 @@ async function addUserFiles(list) {
         const p = normalizeUploadPath(path);
         if (!p) { skipped.push(path + " (unsafe name)"); continue; }
         if (!WS.files.has(p) && WS.files.size >= LIMITS.maxFiles) { skipped.push(p + " (too many files)"); continue; }
-        if (total + bytes.length > LIMITS.maxWorkspaceBytes) { skipped.push(p + " (workspace size limit)"); continue; }
+        // A file of the same name is replaced, so its old size doesn't count.
+        const replaced = WS.files.has(p) ? (WS.blobs.get(WS.files.get(p).hash) || []).length : 0;
+        if (total - replaced + bytes.length > LIMITS.maxWorkspaceBytes) { skipped.push(p + " (workspace size limit)"); continue; }
         const hash = await sha256Hex(bytes);
         WS.blobs.set(hash, bytes);
         WS.files.set(p, { hash, origin: "user" });
-        total += bytes.length;
+        total += bytes.length - replaced;
         added.push({ path: p, size: bytes.length });
     }
     if (added.length) {
@@ -1709,6 +2208,34 @@ async function addUserFiles(list) {
     return { added, skipped };
 }
 
+// Why the user can't delete or replace workspace files right now, or "".
+function workspaceLockReason() {
+    if (PY.state === "running") return "Wait for the running step to finish before changing the workspace.";
+    // A held step's effect was computed against the current files: changing them under
+    // it would let its commit bring a deleted file back.
+    if (RUN.decision) return "Approve or reject the held step first.";
+    return "";
+}
+
+function deletedFilesNote(paths) {
+    const shown = paths.slice(0, 50).join(", ");
+    return "The user deleted from /workspace: " + shown + (paths.length > 50 ? ` and ${paths.length - 50} more` : "");
+}
+
+// Delete files by hand. The worker is re-seeded before the next step, and checkpoints
+// keep their blobs, so a rewind still brings the files back. Returns the removed paths.
+function removeWorkspacePaths(paths) {
+    const removed = paths.filter(p => WS.files.has(p));
+    if (!removed.length) return removed;
+    for (const p of removed) WS.files.delete(p);
+    WS.version++;
+    WS.lastChanged = new Set();
+    collectGarbage();
+    if (S.task) RUN.modelNotes.push(deletedFilesNote(removed));
+    renderWorkspace();
+    return removed;
+}
+
 // ========== 8. Agent loop ==========
 function nowIso() { return new Date().toISOString(); }
 
@@ -1716,6 +2243,7 @@ function addTimelineItem(item) {
     item.ts = item.ts || nowIso();
     S.timeline.push(item);
     renderTimelineItem(S.timeline.length - 1, true);
+    renderStatusBar();
     return item;
 }
 
@@ -1733,10 +2261,65 @@ function setActivity(activity) {
     renderStatusBar();
 }
 
+// Queued notes offer ⚡ Send now only while the agent's own model request runs.
+function setRequesting(on) {
+    RUN.requesting = on;
+    S.timeline.forEach((t, i) => { if (t._queued) renderTimelineItem(i); });
+}
+
+// Resolves after ms, or rejects with an AbortError when the signal fires (Stop).
+function abortableSleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+        const abort = () => { clearTimeout(t); reject(new DOMException("Aborted", "AbortError")); };
+        const t = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
+        if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+    });
+}
+
+// One model request, retried while the endpoint is down, restarting or overloaded, or
+// the connection drops mid-reply: waits grow from LIMITS.retryFirstMs to retryMaxMs, for
+// up to retryWindowMs in all. attempt(signal) makes the request; onRetry(err, n, delayMs)
+// fires before each wait. Errors not worth retrying, and Stop (AbortError, also during a
+// wait), are thrown at once; the last error after the window carries .retriedMs.
+// RUN.abort holds the current attempt's controller, so Stop reaches it.
+async function requestWithRetry(attempt, onRetry) {
+    const t0 = Date.now();
+    for (let n = 1; ; n++) {
+        RUN.abort = new AbortController();
+        const signal = RUN.abort.signal;
+        try {
+            return await attempt(signal);
+        } catch (e) {
+            if (e.name === "AbortError" || !isRetryableError(e.message)) throw e;
+            const waited = Date.now() - t0;
+            const delay = retryDelayMs(n, LIMITS.retryFirstMs, LIMITS.retryMaxMs);
+            if (waited + delay > LIMITS.retryWindowMs) { e.retriedMs = waited; throw e; }
+            debugLog("error", `request failed (${e.message || e}) · retry ${n} in ${Math.round(delay / 1000)} s`);
+            RUN.retry = { n, at: Date.now() + delay, error: String(e.message || e) };
+            if (onRetry) onRetry(e, n, delay);
+            renderStatusBar();
+            try { await abortableSleep(delay, signal); } finally { RUN.retry = null; }
+        }
+    }
+}
+
+// What the model is sent: the history with older long outputs elided (DESIGN §5.4).
+function requestMessages() {
+    return elideHistory(S.messages, LIMITS.elideKeepSteps, LIMITS.elideMinChars);
+}
+
 function flushModelNotes() {
     if (!RUN.modelNotes.length) return;
     appendToLastUserMessage(S.messages, RUN.modelNotes.map(n => "Note: " + n).join("\n"));
     RUN.modelNotes = [];
+    S.timeline.forEach((t, i) => { if (t._queued) { t._queued = false; renderTimelineItem(i); } });
+}
+
+// ⚡ Send now: abort the model request in flight; the turn starts over with the note.
+function sendNotesNow() {
+    if (!RUN.requesting || !RUN.abort || !RUN.modelNotes.length) return;
+    RUN.restartTurn = true;
+    RUN.abort.abort();
 }
 
 function waitForDecision(idx) {
@@ -1754,17 +2337,21 @@ function resolveDecision(decision) {
 }
 
 async function startTask(text) {
+    // The package list for the system prompt comes from the core's lock file (usually
+    // loaded long before; without it the prompt names a few examples).
+    await loadPyodideCore().catch(() => {});
     S = freshSession();
     CHECKPOINTS = [];
     S.task = text;
     S.createdAt = nowIso();
     const files = [...WS.files].map(([p, f]) => ({ path: p, size: (WS.blobs.get(f.hash) || []).length }));
     S.messages = [
-        { role: "system", content: buildSystemPrompt(SETTINGS.instructions) },
+        { role: "system", content: buildSystemPrompt(SETTINGS.instructions, PKG.names) },
         { role: "user", content: buildTaskMessage(text, files) },
     ];
     RUN.modelNotes = [];
     RUN.compactAfter = 0;
+    RUN.compactNext = false;
     renderTimeline();
     addTimelineItem({ type: "task", text, files: files.map(f => f.path) });
     S.timeline[S.timeline.length - 1].checkpoint = takeCheckpoint("start");
@@ -1777,7 +2364,9 @@ async function startTask(text) {
 // follow-up once the agent has finished or paused.
 function submitUserText(text) {
     if (RUN.active) {
-        addTimelineItem({ type: "user", kind: "guidance", text });
+        // Queued until the next request; ⚡ Send now on its card restarts a model request
+        // that is still running, so a long reasoning turn doesn't have to finish first.
+        addTimelineItem({ type: "user", kind: "guidance", text, _queued: true });
         RUN.modelNotes.push("Guidance from the user: " + text);
         showToast("📝 Note queued — it goes out with the next request.");
         return;
@@ -1802,9 +2391,35 @@ function atStepLimit() {
 }
 
 // Never lowers the budget: Continue after a Stop or an error mid-budget keeps what's left.
-function continueAfterLimit() {
-    S.stepBudget = Math.max(S.stepBudget, S.stepCount + LIMITS.stepLimitIncrement);
+// more: how many steps to allow (the step-limit note's field; RUN.moreSteps remembers it).
+function continueAfterLimit(more) {
+    const n = Number.isInteger(more) && more > 0 ? Math.min(500, more) : RUN.moreSteps;
+    RUN.moreSteps = n;
+    S.stepBudget = Math.max(S.stepBudget, S.stepCount + n);
     runLoop();
+}
+
+// The Compact button: summarise the older steps now, between runs. The status comes back
+// as it was; Stop aborts it.
+async function compactNow() {
+    if (RUN.active || !S.task) return;
+    const prev = S.status;
+    RUN.active = true;
+    RUN.stopRequested = false;
+    RUN.activeSince = Date.now();
+    setStatus("running");
+    try {
+        const r = await compactHistory("manual");
+        if (r === "stopped") addNote("⏹ Stopped while compacting the history.");   // a failure adds its own note
+        if (r === "unreachable") addNote(`⚠️ Couldn't compact the history: the endpoint didn't answer (${RUN.lastError && RUN.lastError.message}). Nothing changed.`, "warn");
+    } finally {
+        S.activeMs += Date.now() - RUN.activeSince;
+        RUN.active = false;
+        RUN.abort = null;
+        RUN.activity = "";
+        setStatus(prev);
+        renderTimeline();
+    }
 }
 
 async function runLoop() {
@@ -1823,12 +2438,13 @@ async function runLoop() {
         for (;;) {
             if (RUN.stopRequested) { addNote("⏹ Stopped by the user."); setStatus("stopped"); break; }
             if (S.stepCount >= S.stepBudget) {
-                addTimelineItem({ type: "note", tone: "warn", limit: true, text: `⏸ Step limit reached (${S.stepCount} steps). Press Continue to allow ${LIMITS.stepLimitIncrement} more, or send a follow-up.` });
+                addTimelineItem({ type: "note", tone: "warn", limit: true, text: `⏸ Step limit reached (${S.stepCount} steps). Continue for more steps, or send a follow-up.` });
                 setStatus("paused");
                 break;
             }
             flushModelNotes();
             const outcome = await agentTurn();
+            enforceCheckpointBudget();
             if (outcome === "done" || outcome === "ask" || outcome === "stopped" || outcome === "error") break;
         }
     } catch (e) {
@@ -1866,12 +2482,15 @@ async function runLoop() {
 async function agentTurn() {
     const n = S.stepCount + 1;
     RUN.step = n;
-    if (SETTINGS.autoCompactPct > 0 && S.stepCount >= RUN.compactAfter) {
+    if (SETTINGS.autoCompactPct > 0 && (RUN.compactNext || S.stepCount >= RUN.compactAfter)) {
         await ensureReasoningProbe().catch(() => {});   // n_ctx comes with the probe
         const limit = contextLimit(SETTINGS.contextSize, REASONING.nCtx);
-        if (compactionDue(estimateTokens(S.messages, RUN.tokenRatio), limit, SETTINGS.autoCompactPct)) {
-            const r = await compactHistory("threshold");
+        const forced = RUN.compactNext;
+        RUN.compactNext = false;
+        if (forced || compactionDue(estimateTokens(requestMessages(), RUN.tokenRatio), limit, SETTINGS.autoCompactPct, SETTINGS.maxTokens)) {
+            const r = await compactHistory(forced ? "context" : "threshold");
             if (r === "stopped") { addNote("⏹ Stopped while compacting the history."); setStatus("stopped"); return "stopped"; }
+            if (r === "unreachable") { RUN.compactNext = forced; return endpointDown(RUN.lastError); }
         }
     }
     setActivity("thinking");
@@ -1883,52 +2502,81 @@ async function agentTurn() {
     const idx = S.timeline.length - 1;
     const render = createThrottle(THROTTLE_MS);
     let rawContent = "", apiReasoning = "";
-    let result;
+    let result, sent = [];
+    const t0 = Date.now();
     try {
         await ensureReasoningProbe().catch(() => {});
+        sent = requestMessages();
         const payload = {
             model: SETTINGS.model || "local-model",
-            messages: S.messages.map(m => ({ role: m.role, content: m.content })),
+            messages: sent,
             stream: true,
             stream_options: { include_usage: true },
             ...currentReasoningParams(),
         };
         if (SETTINGS.maxTokens > 0) payload.max_tokens = SETTINGS.maxTokens;
-        RUN.abort = new AbortController();
-        result = await streamChat(payload, RUN.abort.signal, (r, c) => {
-            apiReasoning += r;
-            rawContent += c;
-            const split = splitReply(rawContent, false);
-            if (split.text && RUN.activity === "thinking") setActivity("writing");
-            step.reasoning = [apiReasoning, split.reasoning].filter(Boolean).join("\n\n");
-            step.content = split.text;
-            render(() => renderTimelineItem(idx));
+        setRequesting(true);
+        result = await requestWithRetry((signal) => {
+            // A retry starts the reply over: what streamed before the drop is discarded.
+            rawContent = ""; apiReasoning = "";
+            setActivity("thinking");
+            return streamChat(payload, signal, (r, c) => {
+                apiReasoning += r;
+                rawContent += c;
+                const split = splitReply(rawContent, false);
+                if (split.text && RUN.activity === "thinking") setActivity("writing");
+                if (step._retry) { step._retry = null; renderTimelineItem(idx); }
+                step.reasoning = [apiReasoning, split.reasoning].filter(Boolean).join("\n\n");
+                step.content = split.text;
+                render(() => renderTimelineItem(idx));
+            });
+        }, (e, attempt, delay) => {
+            render.cancel();
+            step.reasoning = ""; step.content = "";
+            step._retry = { n: attempt, error: String(e.message || e) };
+            step._retries = attempt;
+            setActivity("retrying");
+            renderTimelineItem(idx);
         });
     } catch (e) {
         render.cancel();
         S.timeline.splice(idx, 1);
         renderTimeline();
-        if (e.name === "AbortError") { debugLog("model", "request aborted"); addNote("⏹ Stopped the model request."); setStatus("stopped"); return "stopped"; }
+        if (e.name === "AbortError") {
+            // ⚡ Send now on a queued note: the turn starts over with the note included.
+            if (RUN.restartTurn && !RUN.stopRequested) { RUN.restartTurn = false; debugLog("model", "request restarted for your note"); return "continue"; }
+            debugLog("model", "request aborted"); addNote("⏹ Stopped the model request."); setStatus("stopped"); return "stopped";
+        }
         debugLog("error", "model request failed: " + (e.message || e));
         // The prompt no longer fits: compact once (as far as it takes) and ask again.
         if (isContextOverflowError(e.message) && SETTINGS.autoCompactPct > 0 && !RUN.overflowRetried) {
             RUN.overflowRetried = true;
             const r = await compactHistory("overflow");
             if (r === "stopped") { addNote("⏹ Stopped while compacting the history."); setStatus("stopped"); return "stopped"; }
+            if (r === "unreachable") return endpointDown(RUN.lastError);
             if (r === "compacted") return "continue";
         }
-        const hint = chatErrorHint(e.message, { apiUrl: SETTINGS.apiUrl, mixedContent: isBlockedMixedContent(SETTINGS.apiUrl) });
+        if (e.retriedMs) return endpointDown(e);
+        const hint = chatErrorHint(e.message, { apiUrl: SETTINGS.apiUrl, mixedContent: isBlockedMixedContent(SETTINGS.apiUrl), autoCompact: isContextOverflowError(e.message) ? SETTINGS.autoCompactPct > 0 : undefined });
         addTimelineItem({ type: "error", text: e.message || String(e), hint });
         setStatus("error");
         return "error";
     } finally {
         RUN.abort = null;
+        RUN.restartTurn = false;
+        setRequesting(false);
     }
     render.cancel();
+    if (step._retries) {
+        const secs = Math.round((Date.now() - t0 - (result.clock.endMs - result.clock.startMs)) / 1000);
+        step.retryNote = `🔌 The endpoint answered again after ${step._retries} retr${step._retries === 1 ? "y" : "ies"} (about ${secs} s without a reply).`;
+        step._retry = null;
+        debugLog("model", step.retryNote);
+    }
     RUN.overflowRetried = false;
     S.tokens.prompt += result.usage.prompt;
     S.tokens.completion += result.usage.completion;
-    if (result.usage.prompt > 0) RUN.tokenRatio = result.usage.prompt / Math.max(1, messageChars(S.messages));
+    if (result.usage.prompt > 0) RUN.tokenRatio = result.usage.prompt / Math.max(1, messageChars(sent));
     const split = splitReply(rawContent, true);
     step.reasoning = [apiReasoning, split.reasoning].filter(Boolean).join("\n\n");
     step.content = split.text;
@@ -1936,6 +2584,13 @@ async function agentTurn() {
     step.stats = buildStepStats(result.rawUsage, result.timings, result.clock, REASONING.nCtx);
     const parsed = parseReply(split.text, result.finishReason);
     step.kind = parsed.kind;
+    const ctxCut = cutByContext(result.finishReason, result.usage, SETTINGS.maxTokens, REASONING.nCtx);
+    if (ctxCut) {
+        RUN.compactNext = true;
+        const u = result.usage;
+        step.notes.push(`The context window ran out, not the reply budget: the prompt (${u.prompt.toLocaleString("en-US")} tokens) plus this reply (${u.completion.toLocaleString("en-US")}) filled it before ${SETTINGS.maxTokens > 0 ? `the ${SETTINGS.maxTokens.toLocaleString("en-US")} max tokens` : "the reply ended"}.` + (SETTINGS.autoCompactPct > 0 ? " The history is compacted before the next request." : " Auto-compaction is off."));
+        debugLog("error", `reply cut by the context window · prompt ${u.prompt} + reply ${u.completion} tok` + (REASONING.nCtx ? ` of n_ctx ${REASONING.nCtx}` : ""));
+    }
     debugLog("model", `← reply · finish ${result.finishReason || "?"} · ${result.usage.completion} tok · ${((result.clock.endMs - result.clock.startMs) / 1000).toFixed(1)} s → ${parsed.kind}`, clipForDebug(split.text, 4000));
     // The history keeps the visible reply only; reasoning isn't sent back.
     S.messages.push({ role: "assistant", content: split.text });
@@ -1979,15 +2634,20 @@ async function agentTurn() {
         return "ask";
     }
     if (parsed.kind !== "code" && parsed.kind !== "files") {
-        // Cut off, empty, an unclosed block or tag, or file actions mixed with code:
+        // Cut off, empty, an unclosed block or tag, file actions mixed with code, a
+        // <tool_call>, or a made-up <observation>:
         // nothing ran. Tell the model why.
         const why = {
-            cutoff: "Your reply was cut off at the token limit before it finished, so nothing ran. Reason less and reply with ONE ```python block, file actions, or the final answer.",
+            cutoff: ctxCut
+                ? "Your reply was cut off because the context window filled up before it finished, so nothing ran. Reply with ONE ```python block, file actions, or the final answer."
+                : "Your reply was cut off at the token limit before it finished, so nothing ran. Reason less and reply with ONE ```python block, file actions, or the final answer.",
             empty: "Your reply had no code block, no file actions and no answer, so nothing ran. Reply with ONE ```python block, file actions, the final answer, or an ask: line.",
             broken: parsed.unclosed
                 ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
                 : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.",
             mixed: "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.",
+            toolcall: "Your reply had a <tool_call>, but there are no tool calls here, so nothing ran. To run code, reply with ONE ```python block; to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).",
+            fakeobs: "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.",
         }[parsed.kind];
         debugLog("error", "no tool call (" + parsed.kind + ")", why);
         step.prose = parsed.prose || "";
@@ -2004,7 +2664,7 @@ async function agentTurn() {
     const notes = [];
     let outcome;
     if (parsed.kind === "files") {
-        if (result.finishReason === "length") notes.push("Your reply was cut off at the token limit after these file actions; anything after them was lost.");
+        if (result.finishReason === "length") notes.push(`Your reply was cut off at ${ctxCut ? "the end of the context window" : "the token limit"} after these file actions; anything after them was lost.`);
         outcome = await executeFileStep(step, idx, parsed.actions, notes);
     } else {
         step.proposedCode = parsed.code;
@@ -2017,6 +2677,9 @@ async function agentTurn() {
     step.endedAt = nowIso();
     S.messages.push({ role: "user", content: outcome.observation });
     step.checkpoint = takeCheckpoint("step " + n);
+    // Decided: the versions it wrote are now the workspace's (and the checkpoint's) or
+    // rolled back. Keeping them listed would hold every version ever written.
+    delete step._held;
     collectGarbage();
     renderTimelineItem(idx);
     renderWorkspace();
@@ -2024,19 +2687,32 @@ async function agentTurn() {
     return "continue";
 }
 
+// The endpoint stayed unreachable through every retry: the run pauses, resumable with
+// Retry or Continue, instead of ending. Returns the agentTurn outcome.
+function endpointDown(e) {
+    const err = e || new Error("The endpoint didn't answer.");
+    const hint = chatErrorHint(err.message, { apiUrl: SETTINGS.apiUrl, mixedContent: isBlockedMixedContent(SETTINGS.apiUrl), retriedMs: err.retriedMs || LIMITS.retryWindowMs });
+    debugLog("error", "endpoint unreachable, run paused: " + (err.message || err));
+    addTimelineItem({ type: "error", text: err.message || String(err), hint });
+    setStatus("paused");
+    return "error";
+}
+
 // DESIGN §5.4: summarise the older steps into the task message, keeping the last few
-// verbatim. reason: "threshold" (the history neared the context limit) or "overflow"
-// (the server refused it; then as many steps as it takes are summarised). Returns
+// verbatim. reason: "threshold" (the history neared the context limit), "overflow" (the
+// server refused it), "context" (a reply ran out of context) or "manual" (the Compact
+// button); for all but the first, as many steps as it takes are summarised. Returns
 // "compacted" | "skipped" (nothing to summarise, or it failed: the history is
-// unchanged) | "stopped".
+// unchanged) | "unreachable" (the endpoint stayed down through the retries; unchanged
+// too) | "stopped".
 async function compactHistory(reason) {
-    const force = reason === "overflow";
+    const force = reason !== "threshold";
     let plan = planCompaction(S.messages, LIMITS.compactKeepSteps, force ? 1 : LIMITS.compactMinSteps);
     for (let keep = LIMITS.compactKeepSteps - 1; !plan && force && keep >= 1; keep--) plan = planCompaction(S.messages, keep, 1);
     if (!plan) return "skipped";
     const prevTo = S.compactions.length ? S.compactions[S.compactions.length - 1].toStep : 0;
     const fromStep = prevTo + 1, toStep = prevTo + plan.steps;
-    const tokensBefore = estimateTokens(S.messages, RUN.tokenRatio);
+    const tokensBefore = estimateTokens(requestMessages(), RUN.tokenRatio);
     setActivity("compacting");
     debugLog("model", `→ compacting steps ${fromStep}–${toStep} (${reason}) · ~${tokensBefore} tokens`);
     const payload = {
@@ -2049,14 +2725,19 @@ async function compactHistory(reason) {
     if (SETTINGS.maxTokens > 0) payload.max_tokens = SETTINGS.maxTokens;
     let text = "";
     let result;
-    RUN.abort = new AbortController();
     try {
-        result = await streamChat(payload, RUN.abort.signal, (r, c) => { text += c; });
+        result = await requestWithRetry((signal) => {
+            text = "";
+            setActivity("compacting");
+            return streamChat(payload, signal, (r, c) => { text += c; });
+        }, () => setActivity("retrying"));
     } catch (e) {
         if (e.name === "AbortError") { debugLog("model", "compaction aborted"); return "stopped"; }
         debugLog("error", "compaction failed: " + (e.message || e));
+        // Down for good: say so once, from the caller, rather than also warning here.
+        if (e.retriedMs) { RUN.lastError = e; return "unreachable"; }
         RUN.compactAfter = S.stepCount + LIMITS.compactMinSteps;
-        if (!force) addNote(`⚠️ Couldn't compact the history (${e.message || e}). Continuing with the full history.`, "warn");
+        if (reason !== "overflow") addNote(`⚠️ Couldn't compact the history (${e.message || e}). Continuing with the full history.`, "warn");
         return "skipped";
     } finally {
         RUN.abort = null;
@@ -2073,7 +2754,7 @@ async function compactHistory(reason) {
     const files = [...WS.files].map(([p, f]) => ({ path: p, size: (WS.blobs.get(f.hash) || []).length }));
     S.compactions.push({ before: S.messages.map(m => ({ role: m.role, content: m.content })), fromStep, toStep });
     S.messages = buildCompactedMessages(S.messages, plan.cut, summary, toStep, files);
-    const tokensAfter = estimateTokens(S.messages, RUN.tokenRatio);
+    const tokensAfter = estimateTokens(requestMessages(), RUN.tokenRatio);
     debugLog("result", `history compacted · steps ${fromStep}–${toStep} · ~${tokensBefore} → ~${tokensAfter} tokens`, clipForDebug(summary, 4000));
     addTimelineItem({ type: "compaction", reason, fromStep, toStep, summary, tokensBefore, tokensAfter });
     renderStatusBar();
@@ -2114,7 +2795,7 @@ async function executeStep(step, idx, notes) {
         if (step.edited) step.notes.push("The user edited your code before it ran. The code that ran:\n```python\n" + code.replace(/\n$/, "") + "\n```");
         if (r.status === "timeout" || r.status === "killed" || r.status === "crashed") {
             const why = {
-                timeout: `The step exceeded the ${SETTINGS.stepTimeoutSec} s time limit and was killed.`,
+                timeout: r.packagePhase && r.output ? r.output : `The step exceeded the ${SETTINGS.stepTimeoutSec} s time limit and was killed.`,
                 killed: "The user killed the step.",
                 crashed: "The interpreter crashed: " + r.output,
             }[r.status];
@@ -2137,6 +2818,8 @@ async function executeStep(step, idx, notes) {
         if (step.netAttempts.length) step.notes.push("Network access is blocked; these attempts failed: " + step.netAttempts.join(", "));
         const fileHint = filenameCommentHint(code, Object.keys(r.listing));
         if (fileHint) step.notes.push(fileHint);
+        const modHint = moduleNotFoundHint(r.output, PKG.names);
+        if (modHint) step.notes.push(modHint);
 
         let decision = { action: "approve" };
         if (autonomy === "risk" && risk.verdict === "ask" && !allowNetwork) {
@@ -2369,6 +3052,7 @@ async function rewindTo(idx) {
     collectGarbage();
     RUN.modelNotes = ["The session was rewound to this point and the interpreter was restarted: variables are lost, files are as they were at this point."];
     RUN.compactAfter = 0;
+    RUN.compactNext = false;
     restartInterpreter();
     const last = S.messages[S.messages.length - 1];
     addNote(`⏪ Rewound to ${label}. ` + (last && last.role === "user" ? "Press Continue to resume, or send a note first." : "Send a follow-up to continue."));
@@ -2435,7 +3119,7 @@ function button(label, action, idx, cls, title) {
 }
 
 const VERDICT_LABELS = { auto: "✅ auto-committed", approved: "👍 approved", edited: "✏️ edited & approved", rejected: "↩️ rejected", "rolled back": "↩️ rolled back", "approved (network)": "🌐 approved with network" };
-const STATUS_LABELS = { unverified: "⚠️ files missing", ok: "ok", error: "error", timeout: "⏱ timeout", killed: "☠️ killed", crashed: "💥 crashed", rejected: "rejected", cutoff: "✂️ cut off", empty: "empty reply", broken: "unclosed code", mixed: "mixed reply", interrupted: "interrupted" };
+const STATUS_LABELS = { unverified: "⚠️ files missing", ok: "ok", error: "error", timeout: "⏱ timeout", killed: "☠️ killed", crashed: "💥 crashed", rejected: "rejected", cutoff: "✂️ cut off", empty: "empty reply", broken: "unclosed code", mixed: "mixed reply", toolcall: "tool call", fakeobs: "no action", interrupted: "interrupted" };
 
 function renderThink(item, card, streaming) {
     if (!item.reasoning) return;
@@ -2475,23 +3159,65 @@ function renderFileActions(actions) {
     return ul;
 }
 
+// "+3 −1" for a modified text file whose two versions are still held, else "". Cached:
+// cards re-render often and the versions never change.
+const DIFF_STAT_CACHE = new Map();
+function diffStatLabel(prevHash, hash) {
+    const key = prevHash + ">" + hash;
+    if (DIFF_STAT_CACHE.has(key)) return DIFF_STAT_CACHE.get(key);
+    const a = WS.blobs.get(prevHash), b = WS.blobs.get(hash);
+    if (!a || !b || a.length + b.length > 512 * 1024) return "";
+    const ta = decodeTextFile(a), tb = decodeTextFile(b);
+    const label = ta === null || tb === null ? "" : (({ added, removed }) => `+${added} −${removed}`)(diffHunks(lineDiff(ta, tb), 0));
+    DIFF_STAT_CACHE.set(key, label);
+    return label;
+}
+
 function renderFileChips(changes, idx) {
     const wrap = el("div", "effect");
     const list = [
-        ...(changes.added || []).map(f => ["+", "added", f.path, f.hash]),
-        ...(changes.modified || []).map(f => ["~", "modified", f.path, f.hash]),
-        ...(changes.deleted || []).map(f => ["−", "deleted", f.path, f.prevHash]),
+        ...(changes.added || []).map(f => ["+", "added", f.path, f.hash, ""]),
+        ...(changes.modified || []).map(f => ["~", "modified", f.path, f.hash, f.prevHash]),
+        ...(changes.deleted || []).map(f => ["−", "deleted", f.path, f.prevHash, ""]),
     ];
     wrap.appendChild(el("span", "effect-label", list.length ? "Files:" : "Files: no changes"));
-    for (const [sign, kind, path, hash] of list) {
+    for (const [sign, kind, path, hash, prevHash] of list) {
         const b = el("button", "file-chip " + kind, `${sign} ${path}`);
         b.type = "button";
         b.dataset.action = "view-file";
         b.dataset.path = path;
         b.dataset.hash = hash || "";
-        b.title = kind === "deleted" ? "View the version before this step" : "View this version";
+        if (prevHash) {
+            b.dataset.prev = prevHash;
+            const stat = diffStatLabel(prevHash, hash);
+            if (stat) b.appendChild(el("span", "chip-stat", stat));
+        }
+        b.title = kind === "deleted" ? "View the version before this step" : kind === "modified" ? "View the changes this step made" : "View this version";
         wrap.appendChild(b);
     }
+    return wrap;
+}
+
+// A unified line diff, as text in the DOM (never HTML). At most maxRows lines are drawn.
+function renderDiffView(oldText, newText, maxRows = 4000) {
+    const wrap = el("div", "diff-view");
+    const { hunks, added, removed } = diffHunks(lineDiff(oldText, newText), 3);
+    wrap.appendChild(el("p", "hint diff-stat", hunks.length ? `${added} line${added === 1 ? "" : "s"} added, ${removed} removed` : "No line differs: only invisible bytes (line endings, encoding marks) changed."));
+    if (!hunks.length) return wrap;
+    const pre = el("pre", "diff");
+    let rows = 0;
+    for (const h of hunks) {
+        if (rows >= maxRows) break;
+        pre.appendChild(el("span", "diff-line diff-hunk", `@@ line ${h.oldStart} → ${h.newStart} @@`));
+        for (const l of h.lines) {
+            if (rows++ >= maxRows) break;
+            const row = el("span", "diff-line diff-" + (l.op === "+" ? "add" : l.op === "-" ? "del" : "ctx"));
+            row.append(el("span", "diff-no", l.oldNo ? String(l.oldNo) : ""), el("span", "diff-no", l.newNo ? String(l.newNo) : ""), el("span", "diff-sign", l.op), el("span", "diff-text", l.text));
+            pre.appendChild(row);
+        }
+    }
+    wrap.appendChild(pre);
+    if (rows >= maxRows) wrap.appendChild(el("p", "hint", `Showing the first ${maxRows.toLocaleString("en-US")} diff lines.`));
     return wrap;
 }
 
@@ -2509,7 +3235,9 @@ function buildStepCard(item, idx, old) {
     const think = renderThink(item, old, item.phase === "thinking" && !item.content);
     if (think) card.appendChild(think);
 
+    card.dataset.retry = item._retry ? String(item._retry.n) : "";
     if (item.phase === "thinking") {
+        if (item._retry) card.appendChild(el("p", "hint retry-hint", `🔌 No answer from the endpoint (${item._retry.error}). Retrying automatically (attempt ${item._retry.n}); the status bar counts down, and Stop ends the wait.`));
         if (item.content) card.appendChild(renderMarkdown(item.content));
         return card;
     }
@@ -2528,16 +3256,16 @@ function buildStepCard(item, idx, old) {
     if (item.kind === "files") card.appendChild(renderFileActions(item.fileActions));
     if (item.proposedCode !== undefined && item.proposedCode !== "") {
         if (item.phase === "pending-run") {
-            card.appendChild(el("label", "field-label", "Proposed code — edit it before running if you like:"));
-            const ta = el("textarea", "code-edit");
-            ta.dataset.role = "code-edit";
-            ta.value = item._draft !== undefined ? item._draft : item.proposedCode;
-            ta.spellcheck = false;
-            ta.rows = Math.min(24, Math.max(4, ta.value.split("\n").length + 1));
-            card.appendChild(ta);
+            card.appendChild(el("label", "field-label", "Proposed code — edit it before running if you like (Tab indents, Ctrl+Enter runs):"));
+            card.appendChild(codeEditor(item, item.proposedCode));
         } else {
             card.appendChild(highlightedCode(item.edited && item.ranCode ? item.ranCode : item.proposedCode, "python"));
-            if (item.edited) card.appendChild(el("p", "hint", "✏️ Edited by you before it ran."));
+            if (item.edited) {
+                const d = el("details", "file-edits");
+                d.appendChild(el("summary", "", "✏️ Edited by you before it ran — show what you changed"));
+                d.appendChild(renderDiffView(item.proposedCode, item.ranCode || ""));
+                card.appendChild(d);
+            }
         }
     }
     if (item.kind === "code" && item.output !== undefined && item.phase !== "pending-run" && item.phase !== "running") {
@@ -2554,7 +3282,7 @@ function buildStepCard(item, idx, old) {
             card.appendChild(d);
         }
     } else if (item.kind !== "code" && item.status) {
-        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off at the token limit — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran." }[item.status] || ""));
+        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off before it finished — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran.", toolcall: "The reply used a <tool_call>, which isn't how actions work here — nothing ran.", fakeobs: "The reply wrote its own <observation> instead of acting — nothing ran." }[item.status] || ""));
     }
     if (item.changes) card.appendChild(renderFileChips(item.changes, idx));
     const shownNotes = (item.notes || []).filter(n => !n.startsWith("The user edited your code"));
@@ -2579,6 +3307,7 @@ function buildStepCard(item, idx, old) {
         const row = el("div", "decision-row");
         if (item.phase === "pending-run") {
             row.appendChild(button("▶ Run", "run", idx, "primary"));
+            if (item._draft !== undefined && item._draft !== item.proposedCode) row.appendChild(button("↺ Reset", "reset-code", idx, "", "Discard your edits and go back to the agent's code"));
         } else {
             row.appendChild(button("✅ Approve", "approve", idx, "primary"));
             // A file step has nothing to re-run: nothing has been applied yet.
@@ -2591,17 +3320,23 @@ function buildStepCard(item, idx, old) {
         box.appendChild(row);
         box.appendChild(reason);
         if (item.phase === "pending-approval" && item._editing) {
-            const ta = el("textarea", "code-edit");
-            ta.dataset.role = "code-edit";
-            ta.value = item._draft !== undefined ? item._draft : (item.ranCode || item.proposedCode);
-            ta.spellcheck = false;
-            ta.rows = Math.min(24, Math.max(4, ta.value.split("\n").length + 1));
-            box.appendChild(ta);
+            box.appendChild(codeEditor(item, item.ranCode || item.proposedCode));
             box.appendChild(button("▶ Run edited code", "edit", idx, "primary"));
         }
         card.appendChild(box);
     }
     return finishCard(card, item, idx);
+}
+
+// The editable code of a step waiting for you: your draft survives re-renders.
+function codeEditor(item, original) {
+    const ta = el("textarea", "code-edit");
+    ta.dataset.role = "code-edit";
+    ta.value = item._draft !== undefined ? item._draft : original;
+    ta.spellcheck = false;
+    ta.setAttribute("aria-label", "Code to run");
+    ta.rows = Math.min(24, Math.max(4, ta.value.split("\n").length + 1));
+    return ta;
 }
 
 function renderStepStats(stats) {
@@ -2628,12 +3363,14 @@ function renderStepStats(stats) {
 
 function finishCard(card, item, idx) {
     if (item.type === "step") {
+        if (item.retryNote) card.appendChild(el("p", "hint", item.retryNote));
         const stats = renderStepStats(item.stats);
         if (stats) card.appendChild(stats);
     }
     if (Number.isInteger(item.checkpoint) && (item.type !== "step" || item.phase === "done") && !RUN.active) {
         const foot = el("div", "card-foot");
-        foot.appendChild(button("⏪ Rewind to here", "rewind", idx, "ghost", "Restore the workspace and history as of this point"));
+        if (CHECKPOINTS[item.checkpoint]) foot.appendChild(button("⏪ Rewind to here", "rewind", idx, "ghost", "Restore the workspace and history as of this point"));
+        else foot.appendChild(el("span", "hint", "⏪ Rewind unavailable: this checkpoint was dropped to save memory."));
         card.appendChild(foot);
     }
     return card;
@@ -2655,15 +3392,23 @@ function buildCard(item, idx, old) {
     }
     if (item.type === "user") {
         const card = el("article", "card user-card");
-        card.appendChild(el("div", "card-head")).appendChild(el("span", "card-title", { answer: "💬 Your answer", followup: "💬 Follow-up", guidance: "📝 Your note" }[item.kind] || "💬 You"));
+        const head = card.appendChild(el("div", "card-head"));
+        head.appendChild(el("span", "card-title", { answer: "💬 Your answer", followup: "💬 Follow-up", guidance: "📝 Your note" }[item.kind] || "💬 You"));
+        if (item._queued) head.appendChild(el("span", "badge waiting", "queued"));
         card.appendChild(el("p", "task-text", item.text));
+        if (item._queued) {
+            const row = el("div", "card-foot");
+            row.appendChild(el("span", "hint", RUN.requesting ? "Goes out with the next request, once the model's current reply is done." : "Goes out with the next request."));
+            if (RUN.requesting) row.appendChild(button("⚡ Send now", "send-now", idx, "", "Abort the model's current reply and ask again with your note included"));
+            card.appendChild(row);
+        }
         return card;
     }
     if (item.type === "compaction") {
         const card = el("article", "card compaction-card");
         card.appendChild(el("div", "card-head")).appendChild(el("span", "card-title", "🗜️ History compacted"));
         const k = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(v));
-        const why = item.reason === "overflow" ? "after the server refused the prompt as too long" : "as it neared the context limit";
+        const why = { overflow: "after the server refused the prompt as too long", context: "after a reply ran out of context", manual: "on request" }[item.reason] || "as it neared the context limit";
         card.appendChild(el("p", "hint", `Steps ${item.fromStep}–${item.toStep} were summarised for the model ${why} (~${k(item.tokensBefore)} → ~${k(item.tokensAfter)} tokens). The timeline keeps the full record, and rewinding to an earlier step restores the full history.`));
         const d = el("details", "think-block");
         d.appendChild(el("summary", "", "📝 Summary the model continues from"));
@@ -2680,7 +3425,18 @@ function buildCard(item, idx, old) {
     }
     const card = el("article", "card note-card tone-" + (item.tone || "info"));
     card.appendChild(el("p", "", item.text));
-    if (item.limit && idx === S.timeline.length - 1 && atStepLimit()) card.appendChild(button("⏯ Continue", "continue", idx, "primary", `Allow ${LIMITS.stepLimitIncrement} more steps`));
+    if (item.limit && idx === S.timeline.length - 1 && atStepLimit()) {
+        const row = el("div", "more-steps");
+        const label = el("label", "more-steps-label", "Run ");
+        const input = el("input", "more-steps-input");
+        input.type = "number"; input.min = "1"; input.max = "500"; input.step = "1";
+        input.value = String(RUN.moreSteps);
+        input.dataset.role = "more-steps";
+        input.setAttribute("aria-label", "How many more steps to allow");
+        label.append(input, " more steps");
+        row.append(label, button("⏯ Continue", "continue", idx, "primary", "Allow this many more steps"));
+        card.appendChild(row);
+    }
     return card;
 }
 
@@ -2688,6 +3444,7 @@ function buildCard(item, idx, old) {
 // replayed its entry animation and reset the reasoning box's scroll position, which
 // made the timeline flicker.
 function patchStreamingCard(card, item) {
+    if ((card.dataset.retry || "") !== (item._retry ? String(item._retry.n) : "")) return false;
     const thinking = !item.content;
     const think = card.querySelector(":scope > details.think-block");
     if (item.reasoning) {
@@ -2762,14 +3519,29 @@ function buildTree(paths) {
     return root;
 }
 
-function renderTreeNode(node, ul) {
+function deleteButton(path, isDir) {
+    const d = el("button", "ws-del", "🗑");
+    d.type = "button";
+    d.dataset.action = "delete-path";
+    d.dataset.path = path;
+    if (isDir) d.dataset.dir = "1";
+    d.title = `Delete ${isDir ? "the folder " : ""}${path}`;
+    d.setAttribute("aria-label", d.title);
+    return d;
+}
+
+function renderTreeNode(node, ul, prefix) {
     for (const [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
         const li = el("li", "ws-dir");
         const det = el("details");
         det.open = true;
-        det.appendChild(el("summary", "", "📁 " + name));
+        const sum = el("summary");
+        const label = el("span", "ws-dir-label", "📁 " + name);
+        label.appendChild(deleteButton((prefix || "") + name, true));
+        sum.appendChild(label);
+        det.appendChild(sum);
         const sub = el("ul");
-        renderTreeNode(child, sub);
+        renderTreeNode(child, sub, (prefix || "") + name + "/");
         det.appendChild(sub);
         li.appendChild(det);
         ul.appendChild(li);
@@ -2787,6 +3559,7 @@ function renderTreeNode(node, ul) {
         b.appendChild(el("span", "origin origin-" + f.origin, f.origin === "user" ? "yours" : "agent"));
         b.title = `${p} — ${f.origin === "user" ? "your file (changes to it need approval)" : "created by the agent"}`;
         li.appendChild(b);
+        li.appendChild(deleteButton(p, false));
         ul.appendChild(li);
     }
 }
@@ -2794,6 +3567,7 @@ function renderTreeNode(node, ul) {
 function renderWorkspace() {
     const tree = $("wsTree");
     if (!tree) return;
+    renderStatusBar();
     tree.innerHTML = "";
     if (!WS.files.size) {
         tree.appendChild(el("p", "hint ws-empty", "Empty. Drop files or folders here, or use the buttons above."));
@@ -2810,11 +3584,16 @@ const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", g
 const HL_LANGS = { py: "python", js: "javascript", mjs: "javascript", ts: "typescript", json: "json", md: "markdown", html: "xml", xml: "xml", css: "css", csv: "plaintext", sh: "bash", yml: "yaml", yaml: "yaml", java: "java", c: "c", h: "c", cpp: "cpp", rs: "rust", go: "go", sql: "sql", toml: "ini", ini: "ini", txt: "plaintext" };
 let viewerUrl = null;
 
-function openViewer(path, hash) {
+// prevHash: the version before a step changed the file; when both versions are held text,
+// the viewer opens on their diff, with tabs for either version.
+function openViewer(path, hash, prevHash) {
     const bytes = WS.blobs.get(hash);
     const body = $("viewerBody");
     body.innerHTML = "";
     $("viewerTitle").textContent = path;
+    const tabs = $("viewerTabs");
+    tabs.replaceChildren();
+    tabs.hidden = true;
     if (viewerUrl) { URL.revokeObjectURL(viewerUrl); viewerUrl = null; }
     if (!bytes) {
         $("viewerMeta").textContent = "This version is no longer held in memory (it was rolled back or rewound away).";
@@ -2824,11 +3603,44 @@ function openViewer(path, hash) {
     }
     $("viewerDownload").disabled = false;
     $("viewerDownload").onclick = () => downloadBytes(bytes, path.split("/").pop());
-    const ext = (path.split(".").pop() || "").toLowerCase();
     const f = WS.files.get(path);
-    $("viewerMeta").textContent = `${formatBytes(bytes.length)}${f && f.hash === hash ? " · " + (f.origin === "user" ? "your file" : "created by the agent") : " · an earlier version"}`;
+    const meta = `${formatBytes(bytes.length)}${f && f.hash === hash ? " · " + (f.origin === "user" ? "your file" : "created by the agent") : " · an earlier version"}`;
+    $("viewerMeta").textContent = meta;
+    const prev = prevHash ? WS.blobs.get(prevHash) : null;
+    const oldText = prev ? decodeTextFile(prev) : null, newText = decodeTextFile(bytes);
+    if (prevHash && !prev) $("viewerMeta").textContent = meta + " · the version before this step is no longer held, so there is no diff";
+    if (oldText !== null && newText !== null) {
+        const views = [["changes", "± Changes"], ["after", "This version"], ["before", "Before"]];
+        const show = (which) => {
+            for (const b of tabs.children) b.setAttribute("aria-selected", b.dataset.view === which ? "true" : "false");
+            body.innerHTML = "";
+            if (which === "changes") body.appendChild(renderDiffView(oldText, newText));
+            else renderFileBody(body, path, which === "after" ? bytes : prev);
+            $("viewerDownload").onclick = () => downloadBytes(which === "before" ? prev : bytes, path.split("/").pop());
+        };
+        for (const [view, label] of views) {
+            const b = el("button", "viewer-tab", label);
+            b.type = "button";
+            b.setAttribute("role", "tab");
+            b.dataset.view = view;
+            b.onclick = () => show(view);
+            tabs.appendChild(b);
+        }
+        tabs.hidden = false;
+        show("changes");
+        openModal("viewerModal");
+        return;
+    }
+    renderFileBody(body, path, bytes);
+    openModal("viewerModal");
+}
+
+// One file version in the viewer: image, highlighted text, or a hex dump.
+function renderFileBody(body, path, bytes) {
+    const ext = (path.split(".").pop() || "").toLowerCase();
     if (IMAGE_TYPES[ext]) {
         // An <img> never runs scripts, SVG included.
+        if (viewerUrl) URL.revokeObjectURL(viewerUrl);
         viewerUrl = URL.createObjectURL(new Blob([bytes], { type: IMAGE_TYPES[ext] }));
         const img = el("img", "viewer-img");
         img.src = viewerUrl;
@@ -2855,7 +3667,6 @@ function openViewer(path, hash) {
             body.appendChild(pre);
         }
     }
-    openModal("viewerModal");
 }
 
 function downloadBytes(bytes, name, type) {
@@ -2964,7 +3775,41 @@ function formatDuration(ms) {
     return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-const ACTIVITY_LABELS = { thinking: "model thinking…", writing: "model writing…", python: "running Python", files: "file actions", compacting: "compacting history…" };
+const ACTIVITY_LABELS = { thinking: "model thinking…", writing: "model writing…", python: "running Python", files: "file actions", compacting: "compacting history…", packages: "loading packages…", retrying: "endpoint unreachable, retrying…" };
+
+// The session lives only in this tab (DESIGN §3). A fingerprint of what an export holds:
+// it changes with every step, note, file change, rewind and dropped checkpoint, and an
+// export (or an import) records it.
+let EXPORTED_FP = "";
+function sessionFingerprint() {
+    return [S.createdAt, S.timeline.length, S.stepCount, S.messages.length, S.compactions.length, WS.version, CHECKPOINTS.length, CP_GEN].join("|");
+}
+
+// Would closing the tab lose something? Only uploads (the user has those) don't count.
+function hasUnexportedWork() {
+    if (RUN.active) return true;
+    if (!S.timeline.length && ![...WS.files.values()].some(f => f.origin === "agent")) return false;
+    return sessionFingerprint() !== EXPORTED_FP;
+}
+
+function markExported() {
+    EXPORTED_FP = sessionFingerprint();
+    renderStatusBar();
+}
+
+// The next request's estimated size, cached while the history doesn't change.
+let ctxEstCache = null;
+function nextRequestTokens() {
+    const last = S.messages[S.messages.length - 1];
+    const key = [S.messages.length, last ? last.content.length : 0, S.compactions.length, RUN.tokenRatio].join("|");
+    if (!ctxEstCache || ctxEstCache.key !== key) ctxEstCache = { key, tokens: estimateTokens(requestMessages(), RUN.tokenRatio) };
+    return ctxEstCache.tokens;
+}
+
+// The context size for the current endpoint: the setting, else what its probe found.
+function currentContextLimit() {
+    return contextLimit(SETTINGS.contextSize, REASONING.key === SETTINGS.apiUrl + "|" + SETTINGS.model ? REASONING.nCtx : 0);
+}
 const STATE_LABELS = { idle: "ready", running: "working", "awaiting-approval": "waiting for you", "awaiting-user": "question for you", done: "done", stopped: "stopped", paused: "paused", error: "error" };
 const INTERP_LABELS = { off: "not started", booting: "booting…", idle: "idle", running: "running", failed: "failed" };
 
@@ -2975,7 +3820,7 @@ function renderStatusBar() {
     const cur = RUN.active && RUN.step ? RUN.step : S.stepCount;
     $("statStep").textContent = `Step ${cur}${S.stepBudget ? " · pauses at " + S.stepBudget : ""}`;
     $("statStep").title = S.stepBudget
-        ? `The agent pauses after step ${S.stepBudget}. Each new instruction or follow-up allows ${SETTINGS.stepLimit} more steps (Settings → Step limit); Continue at the limit allows ${LIMITS.stepLimitIncrement} more.`
+        ? `The agent pauses after step ${S.stepBudget}. Each new instruction or follow-up allows ${SETTINGS.stepLimit} more steps (Settings → Step limit); Continue at the limit allows as many as you choose there (${RUN.moreSteps} last time).`
         : "";
     const active = S.activeMs + (RUN.active ? Date.now() - RUN.activeSince : 0);
     $("statTime").textContent = "⏱ " + formatDuration(active);
@@ -2984,9 +3829,40 @@ function renderStatusBar() {
     $("statInterp").textContent = "🐍 Python " + (INTERP_LABELS[PY.state] || PY.state);
     $("statInterp").title = "The Python interpreter. It is idle while the model thinks and busy only while a code step runs, which usually takes well under a second.";
     $("statInterp").dataset.state = PY.state;
+    const mem = checkpointMemory();
+    $("statMemory").textContent = `🗂️ ${mem.kept} checkpoint${mem.kept === 1 ? "" : "s"} · ${formatBytes(mem.workspaceBytes + mem.olderBytes)}`;
+    $("statMemory").title = `File contents held in this tab: the workspace (${formatBytes(mem.workspaceBytes)}) plus older versions kept for rewinding (${formatBytes(mem.olderBytes)} of ${formatBytes(LIMITS.checkpointBudgetBytes)}). Past that, the oldest checkpoints are dropped; the last ${LIMITS.checkpointKeepMin} are always kept.` + (mem.dropped ? ` ${mem.dropped} dropped so far.` : "");
+    $("statMemory").dataset.warn = mem.olderBytes > LIMITS.checkpointBudgetBytes * 0.75 || mem.dropped ? "1" : "";
     const label = STATE_LABELS[S.status] || S.status;
-    $("statState").textContent = S.status === "running" && RUN.active && ACTIVITY_LABELS[RUN.activity] ? `${label} · ${ACTIVITY_LABELS[RUN.activity]}` : label;
-    $("statState").dataset.state = S.status;
+    let activity = ACTIVITY_LABELS[RUN.activity] || "";
+    if (RUN.retry) activity = `🔌 endpoint unreachable · retry ${RUN.retry.n} in ${Math.max(0, Math.ceil((RUN.retry.at - Date.now()) / 1000))} s`;
+    else if (RUN.activity === "packages" && PKG.loading.length) activity = `loading ${PKG.loading.slice(0, 4).join(", ")}${PKG.loading.length > 4 ? " …" : ""}…`;
+    $("statState").textContent = S.status === "running" && RUN.active && activity ? `${label} · ${activity}` : label;
+    $("statState").title = RUN.retry ? `The last request failed: ${RUN.retry.error}. It is retried automatically for up to ${Math.round(LIMITS.retryWindowMs / 60000)} min; Stop ends the wait.` : "";
+    $("statState").dataset.state = RUN.retry ? "retrying" : S.status;
+
+    // Context: the next request's estimated size against the context, and where
+    // auto-compaction kicks in.
+    const ctx = $("statContext");
+    ctx.hidden = !S.task || !S.messages.length;
+    if (!ctx.hidden) {
+        const limit = currentContextLimit();
+        const est = nextRequestTokens();
+        const g = contextGauge(est, limit, SETTINGS.autoCompactPct, SETTINGS.maxTokens);
+        $("statContextText").textContent = "📏 Context " + g.text;
+        $("statContextFill").style.width = (g.frac * 100).toFixed(1) + "%";
+        $("statContextMark").hidden = !g.compactAt;
+        if (g.compactAt) $("statContextMark").style.left = (g.compactAt / limit * 100).toFixed(1) + "%";
+        ctx.dataset.level = g.level;
+        ctx.title = limit
+            ? `The next request is about ${est.toLocaleString("en-US")} tokens of the ${limit.toLocaleString("en-US")}-token context (estimated from the last request's tokens per character). ` + (g.compactAt ? `Older steps are summarised at ~${Math.round(g.compactAt).toLocaleString("en-US")} tokens (the marker): Auto-compact at ${SETTINGS.autoCompactPct} %, keeping room for a ${Math.min(SETTINGS.maxTokens, limit / 2).toLocaleString("en-US")}-token reply.` : "Auto-compaction is off.")
+            : `The next request is about ${est.toLocaleString("en-US")} tokens. The endpoint hasn't reported its context size: set Context size in Settings for a gauge and for auto-compaction before the server refuses a prompt.`;
+    }
+
+    const unsaved = hasUnexportedWork() && !RUN.active;
+    $("statUnsaved").hidden = !unsaved;
+    $("unsavedDot").hidden = !unsaved;
+    $("exportBtn").title = unsaved ? "Export the session or the workspace — this session has changes that aren't exported yet" : "Export the session or the workspace";
 }
 
 function renderHeader() {
@@ -2998,6 +3874,9 @@ function renderHeader() {
     const warn = $("cloudWarning");
     warn.hidden = !remote;
     if (remote) warn.textContent = `☁️ Task text, files the agent prints and its outputs are sent to ${remote}.`;
+    const local = $("localBadge");
+    local.hidden = !!remote || !SETTINGS.apiUrl;
+    local.title = "The endpoint is on this machine or your local network, so the task, file contents the agent reads and its outputs go only there.";
 }
 
 function updateComposer() {
@@ -3005,6 +3884,7 @@ function updateComposer() {
     const send = $("sendBtn");
     const hasSession = !!S.task;
     $("stopBtn").hidden = !RUN.active;
+    $("compactBtn").hidden = RUN.active || !hasSession || !planCompaction(S.messages, 1, 1);
     $("continueBtn").hidden = RUN.active || !hasSession || !["paused", "stopped", "error"].includes(S.status) || (S.messages.length && S.messages[S.messages.length - 1].role !== "user");
     if (!hasSession) { input.placeholder = "Describe a task… (Ctrl+Enter to start)"; send.textContent = "▶ Start"; }
     else if (RUN.active) { input.placeholder = "Add a note for the agent — it goes out with the next request"; send.textContent = "📝 Add note"; }
@@ -3050,7 +3930,7 @@ function saveSettings() {
     SETTINGS.autoCompactPct = int("settingAutoCompact", 0, 95, 85);
     SETTINGS.contextSize = int("settingContextSize", 0, 10000000, 0);
     RUN.compactAfter = 0;
-    if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = buildSystemPrompt(SETTINGS.instructions);
+    if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = buildSystemPrompt(SETTINGS.instructions, PKG.names);
     renderHeader();
     return true;
 }
@@ -3090,7 +3970,7 @@ async function testConnection() {
         select.hidden = false;
         $("settingModelInput").hidden = true;
         const r = await probeReasoningSupport(url, key, currentSettingsModel());
-        $("reasoningStatus").textContent = `Reasoning control: ${r.state} (${r.source})` + (r.nCtx ? ` · context ${r.nCtx.toLocaleString("en-US")} tokens` : "");
+        $("reasoningStatus").textContent = `Reasoning control: ${r.state} (${r.source}) · ` + (r.nCtx ? `context ${r.nCtx.toLocaleString("en-US")} tokens (${r.ctxSource})` : "context size not reported: set it below for auto-compaction");
         showToast(`✅ Connection successful! Found ${models.length} model${models.length === 1 ? "" : "s"}.`);
     } catch (error) {
         const baseUrl = $("settingUrl").value.trim();
@@ -3127,6 +4007,7 @@ async function exportSession(includeCheckpoints) {
         const entries = buildSessionArchive(sessionSnapshot(), { includeCheckpoints });
         const zip = await zipWrite(entries);
         downloadBytes(zip, `hermit-agent-session-${stampForFile()}.zip`, "application/zip");
+        markExported();
         showToast(`💾 Session exported (${formatBytes(zip.length)}).`);
     } catch (e) {
         showToast("❌ Export failed: " + e.message, { error: true });
@@ -3138,17 +4019,22 @@ async function exportWorkspace() {
         const entries = [...WS.files].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([p, f]) => ({ path: p, data: WS.blobs.get(f.hash) }));
         const zip = await zipWrite(entries);
         downloadBytes(zip, `hermit-agent-workspace-${stampForFile()}.zip`, "application/zip");
+        // Without a timeline, the files are all there is to keep.
+        if (!S.timeline.length) markExported();
     } catch (e) {
         showToast("❌ Export failed: " + e.message, { error: true });
     }
 }
 
 async function importSessionFile(file) {
-    if (RUN.active) { showToast("Stop the agent before importing a session."); return; }
     let parsed;
     try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        parsed = await parseSessionArchive(await zipRead(bytes));
+        const entries = await zipRead(new Uint8Array(await file.arrayBuffer()));
+        // A zip without a session manifest is a plain workspace zip: import its files.
+        const picked = workspaceEntriesFromZip(entries);
+        if (!picked.fromSession) { await importWorkspaceEntries(picked, file.name); return; }
+        if (RUN.active) { showToast("Stop the agent before importing a session."); return; }
+        parsed = await parseSessionArchive(entries);
     } catch (e) {
         showToast("❌ Import failed: " + e.message, { error: true });
         return;
@@ -3179,6 +4065,7 @@ async function importSessionFile(file) {
     SETTINGS.autoCompactPct = s.settings.autoCompactPct;
     SETTINGS.contextSize = s.settings.contextSize;
     RUN.compactAfter = 0;
+    RUN.compactNext = false;
     $("autonomySelect").value = SETTINGS.autonomy;
     RUN.modelNotes = ["This session was restored from an export into a fresh interpreter: variables are lost, files are intact."];
     restartInterpreter();
@@ -3188,13 +4075,73 @@ async function importSessionFile(file) {
     const conn = s.settings.apiUrl && s.settings.apiUrl !== SETTINGS.apiUrl ? ` It was recorded against ${s.settings.model || "a model"} at ${s.settings.apiUrl}; the current connection settings were kept.` : "";
     addNote(`📂 Session imported, paused. Nothing has run.${conn} ` + (last && last.role === "user" ? "Press Continue to resume." : "Send a follow-up to continue."));
     setStatus("paused");
+    markExported();   // it is in a file already
+}
+
+// ---------- Workspace import & delete ----------
+async function importWorkspaceZip(file) {
+    let picked;
+    try {
+        picked = workspaceEntriesFromZip(await zipRead(new Uint8Array(await file.arrayBuffer())));
+    } catch (e) {
+        showToast("❌ Import failed: " + e.message, { error: true });
+        return;
+    }
+    await importWorkspaceEntries(picked, file.name);
+}
+
+// picked: from workspaceEntriesFromZip. Asks Replace or Merge when the workspace has files.
+async function importWorkspaceEntries({ files, fromSession }, name) {
+    const busy = workspaceLockReason();
+    if (busy) { showToast(busy); return; }
+    const source = fromSession ? `the workspace of the session in ${name}` : name;
+    if (!files.length) { showToast(`No files to import from ${source}.`, { error: true }); return; }
+    const count = `${files.length} file${files.length === 1 ? "" : "s"}`;
+    let replace = false;
+    if (WS.files.size) {
+        const choice = await confirmDialog(`Import ${count} from ${source}. Replace the current workspace, or merge into it? Merging overwrites files with the same name.`, "♻️ Replace", "➕ Merge");
+        if (!choice) return;
+        replace = choice === true;
+        const nowBusy = workspaceLockReason();
+        if (nowBusy) { showToast(nowBusy); return; }
+    }
+    const warn = uploadWarning(files.map(f => ({ path: f.path, size: f.data.length })), replace ? 0 : workspaceSize());
+    if (warn && (await confirmDialog(warn, "📎 Add them")) !== true) return;
+    if (workspaceLockReason()) { showToast(workspaceLockReason()); return; }
+    if (replace) {
+        const incoming = new Set(files.map(f => normalizeUploadPath(f.path)));
+        const gone = [...WS.files.keys()].filter(p => !incoming.has(p));
+        WS.files = new Map();
+        WS.version++;
+        WS.lastChanged = new Set();
+        if (S.task && gone.length) RUN.modelNotes.push(deletedFilesNote(gone));
+    }
+    const result = await addUserFiles(files.map(f => ({ path: f.path, bytes: f.data })));
+    if (replace) collectGarbage();
+    reportUpload(result);
+}
+
+async function confirmDeletePath(path, isDir) {
+    const busy = workspaceLockReason();
+    if (busy) { showToast(busy); return; }
+    const paths = isDir ? [...WS.files.keys()].filter(p => p.startsWith(path + "/")) : [path];
+    if (!paths.length) return;
+    const what = isDir ? `the folder ${path} (${paths.length} file${paths.length === 1 ? "" : "s"})` : path;
+    if (!(await confirmDialog(`Delete ${what} from the workspace? Only the copy in this tab is removed; your original on disk isn't touched.`, "🗑️ Delete"))) return;
+    const nowBusy = workspaceLockReason();
+    if (nowBusy) { showToast(nowBusy); return; }
+    const removed = removeWorkspacePaths(paths);
+    if (removed.length) showToast(`🗑️ Deleted ${removed.length === 1 ? removed[0] : removed.length + " files"}.`);
 }
 
 // ---------- Uploads ----------
+// Walk a dropped FileSystemEntry (a file, or a folder and everything in it) into
+// [{ path, file }]. A folder's reader hands out its entries in batches, so it is read
+// until it returns an empty one. No file is read yet: the sizes come first.
 async function readEntry(entry, prefix, out) {
     if (entry.isFile) {
         const file = await new Promise((res, rej) => entry.file(res, rej));
-        out.push({ path: prefix + file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+        out.push({ path: prefix + file.name, file });
     } else if (entry.isDirectory) {
         const reader = entry.createReader();
         for (;;) {
@@ -3205,11 +4152,22 @@ async function readEntry(entry, prefix, out) {
     }
 }
 
+const RUNNING_UPLOAD = "Wait for the running step to finish before adding files.";
+
+// list: [{ path, file }]. Large additions are confirmed before anything is read.
+async function addFileObjects(list) {
+    if (PY.state === "running") { showToast(RUNNING_UPLOAD); return; }
+    if (!list.length) return;
+    const warn = uploadWarning(list.map(x => ({ path: x.path, size: x.file.size })), workspaceSize());
+    if (warn && (await confirmDialog(warn, "📎 Add them")) !== true) return;
+    if (PY.state === "running") { showToast(RUNNING_UPLOAD); return; }
+    const withBytes = [];
+    for (const x of list) withBytes.push({ path: x.path, bytes: new Uint8Array(await x.file.arrayBuffer()) });
+    reportUpload(await addUserFiles(withBytes));
+}
+
 async function uploadFileList(files) {
-    if (PY.state === "running") { showToast("Wait for the running step to finish before adding files."); return; }
-    const list = [];
-    for (const f of files) list.push({ path: f.webkitRelativePath || f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
-    reportUpload(await addUserFiles(list));
+    await addFileObjects([...files].map(f => ({ path: f.webkitRelativePath || f.name, file: f })));
 }
 
 function reportUpload({ added, skipped }) {
@@ -3227,10 +4185,15 @@ function handleTimelineClick(e) {
     const card = b.closest(".card");
     const reason = card && card.querySelector("[data-role=reason]") ? card.querySelector("[data-role=reason]").value.trim() : "";
     const code = card && card.querySelector("[data-role=code-edit]") ? card.querySelector("[data-role=code-edit]").value : null;
-    if (action === "view-file") { openViewer(b.dataset.path, b.dataset.hash); return; }
+    if (action === "view-file") { openViewer(b.dataset.path, b.dataset.hash, b.dataset.prev); return; }
     if (action === "rewind") { rewindTo(idx); return; }
     if (action === "retry") { S.timeline.splice(idx, 1); renderTimeline(); runLoop(); return; }
-    if (action === "continue") { if (atStepLimit()) continueAfterLimit(); return; }
+    if (action === "continue") {
+        const more = card && card.querySelector("[data-role=more-steps]") ? parseInt(card.querySelector("[data-role=more-steps]").value, 10) : NaN;
+        if (atStepLimit()) continueAfterLimit(more);
+        return;
+    }
+    if (action === "send-now") { sendNotesNow(); return; }
     if (!RUN.decision || RUN.decision.idx !== idx) return;
     if (action === "run") resolveDecision({ action: "run", code: code !== null ? code : item.proposedCode });
     else if (action === "approve") resolveDecision({ action: "approve" });
@@ -3242,17 +4205,61 @@ function handleTimelineClick(e) {
         document.querySelector(`[data-idx="${idx}"] [data-role=code-edit]`)?.focus();
     }
     else if (action === "edit") resolveDecision({ action: "edit", code: code !== null ? code : item.ranCode });
+    else if (action === "reset-code") {
+        delete item._draft;
+        renderTimelineItem(idx);
+        document.querySelector(`[data-idx="${idx}"] [data-role=code-edit]`)?.focus();
+    }
+}
+
+// Keys in the timeline's fields. A step's code editor: Tab indents (Shift+Tab leaves the
+// field), Ctrl/Cmd+Enter runs.
+function handleCodeEditKey(e) {
+    const ta = e.target;
+    // Enter in the step-limit note's "Run N more steps" field presses its Continue.
+    if (ta.dataset.role === "more-steps" && e.key === "Enter") {
+        e.preventDefault();
+        ta.closest(".card")?.querySelector("[data-action=continue]")?.click();
+        return;
+    }
+    if (ta.dataset.role !== "code-edit") return;
+    if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        ta.setRangeText("    ", ta.selectionStart, ta.selectionEnd, "end");
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        ta.closest(".card")?.querySelector("[data-action=run], [data-action=edit]")?.click();
+    }
 }
 
 function wireEvents() {
     $("timeline").addEventListener("click", handleTimelineClick);
+    $("timeline").addEventListener("keydown", handleCodeEditKey);
     $("timeline").addEventListener("input", (e) => {
+        if (e.target.dataset.role === "more-steps") {
+            const v = parseInt(e.target.value, 10);
+            if (Number.isInteger(v) && v > 0) RUN.moreSteps = Math.min(500, v);
+            return;
+        }
         if (e.target.dataset.role !== "code-edit") return;
         const card = e.target.closest("[data-idx]");
         const item = card && S.timeline[Number(card.dataset.idx)];
-        if (item) item._draft = e.target.value;
+        if (!item) return;
+        const first = item._draft === undefined || item._draft === item.proposedCode;
+        item._draft = e.target.value;
+        // The ↺ Reset button appears with the first change: re-render, keeping the caret.
+        if (first !== (item._draft === item.proposedCode) && item.phase === "pending-run") {
+            const pos = e.target.selectionStart;
+            renderTimelineItem(Number(card.dataset.idx));
+            const ta = document.querySelector(`[data-idx="${card.dataset.idx}"] [data-role=code-edit]`);
+            if (ta) { ta.focus(); ta.setSelectionRange(pos, pos); }
+        }
     });
     $("wsTree").addEventListener("click", (e) => {
+        const d = e.target.closest("[data-action=delete-path]");
+        // preventDefault: a folder's button sits in its <summary>, which would toggle.
+        if (d) { e.preventDefault(); confirmDeletePath(d.dataset.path, d.dataset.dir === "1"); return; }
         const b = e.target.closest("[data-action=view-file]");
         if (b) openViewer(b.dataset.path, b.dataset.hash);
     });
@@ -3273,6 +4280,7 @@ function wireEvents() {
     });
     $("stopBtn").addEventListener("click", stopRun);
     $("killBtn").addEventListener("click", killInterpreter);
+    $("compactBtn").addEventListener("click", compactNow);
     $("continueBtn").addEventListener("click", () => {
         if (atStepLimit()) continueAfterLimit();
         else submitUserText("");
@@ -3318,6 +4326,8 @@ function wireEvents() {
     $("wsUploadBtn").addEventListener("click", () => $("wsFileInput").click());
     $("wsFolderBtn").addEventListener("click", () => $("wsFolderInput").click());
     $("wsDownloadBtn").addEventListener("click", exportWorkspace);
+    $("wsImportZipBtn").addEventListener("click", () => $("wsZipInput").click());
+    $("wsZipInput").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) importWorkspaceZip(f); });
     for (const id of ["wsFileInput", "wsFolderInput"]) {
         $(id).addEventListener("change", async (e) => { const files = [...e.target.files]; e.target.value = ""; await uploadFileList(files); });
     }
@@ -3327,13 +4337,13 @@ function wireEvents() {
     pane.addEventListener("drop", async (e) => {
         e.preventDefault();
         pane.classList.remove("drag-over");
-        if (PY.state === "running") { showToast("Wait for the running step to finish before adding files."); return; }
+        if (PY.state === "running") { showToast(RUNNING_UPLOAD); return; }
         const items = [...(e.dataTransfer.items || [])];
         const entries = items.map(i => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null)).filter(Boolean);
         if (entries.length) {
             const out = [];
             for (const en of entries) await readEntry(en, "", out);
-            reportUpload(await addUserFiles(out));
+            await addFileObjects(out);
         } else {
             await uploadFileList([...e.dataTransfer.files]);
         }
@@ -3355,11 +4365,13 @@ function wireEvents() {
     $("debugClose").addEventListener("click", () => setDebugConsole(false));
     $("debugClear").addEventListener("click", () => { DEBUG.entries = []; renderDebugLog(); });
     $("debugFilter").addEventListener("change", (e) => { DEBUG.filter = e.target.value; renderDebugLog(); });
+    // The session lives only in this tab: closing it with unexported work asks first.
     window.addEventListener("beforeunload", (e) => {
-        if (!S.timeline.length && !WS.files.size) return;
+        if (!hasUnexportedWork()) return;
         e.preventDefault();
         e.returnValue = "";
     });
+    $("statUnsaved").addEventListener("click", () => openModal("exportModal"));
     setInterval(() => { if (RUN.active) renderStatusBar(); }, 1000);
 }
 

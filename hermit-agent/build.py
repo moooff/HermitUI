@@ -34,7 +34,7 @@ REFRESH = "--refresh" in sys.argv
 # The Pyodide version pin lives in src/script.js (PYODIDE_VERSION / PYODIDE_CDN); these
 # hashes pin the exact core files of that release. Bumping Pyodide means updating both.
 # Pyodide 0.29.x is deliberate: 314+ refuses classic workers, and Chromium won't start
-# a Blob *module* worker on file:// (ROADMAP Phase 0, "Offline boot findings").
+# a Blob *module* worker on file:// (PHASE0_FINDINGS.md, "Offline boot findings").
 PYODIDE_SHA256 = {
     "pyodide.js": "7f832a350240263d9946a9c3c877f7bcdab6c37d6dc65f72cd3be5905dca62dd",
     "pyodide.asm.js": "356c42f69e1695397e9d8670bd3c2e678248cde76e18bdae1731e848537b47d7",

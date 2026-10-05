@@ -207,6 +207,13 @@ section("6. Compactions survive export and keep rewind possible");
     const old = await tamperCp(cps => { delete cps[0].epoch; delete cps[1].epoch; });
     check("an export without epochs counts as the latest epoch", old.checkpoints[0].epoch === 1);
 
+    // A checkpoint dropped to save memory exports as null and comes back as null.
+    const gap = X.buildSessionArchive({ session, files, blobs: new Map([[h, bytes]]), checkpoints: [null, checkpoints[1]] }, { includeCheckpoints: true });
+    const gapBack = await X.parseSessionArchive(await X.zipRead(await X.zipWrite(gap)));
+    check("dropped checkpoints round-trip as gaps", gapBack.checkpoints.length === 2 && gapBack.checkpoints[0] === null && gapBack.checkpoints[1].label === "step 2");
+    check("…and the timeline link keeps its index", gapBack.session.timeline[0].checkpoint === 0);
+    await rejects("a non-null bad entry is still rejected", tamperCp(cps => { cps[0] = "x"; }), "malformed");
+
     const bad = (name, v, frag) => { try { X.validateSession(v); check(name, false, "accepted"); } catch (e) { check(name, e.message.includes(frag), e.message); } };
     bad("compactions not a list", { task: "t", messages: [], timeline: [], compactions: {} }, "'compactions'");
     bad("compaction with a bad message", { task: "t", messages: [], timeline: [], compactions: [{ before: [{ role: "tool", content: "x" }], fromStep: 1, toStep: 1 }] }, "compaction 0 message 0");
@@ -214,6 +221,34 @@ section("6. Compactions survive export and keep rewind possible");
     const v = X.validateSession({ task: "t", messages: [], timeline: [] });
     check("older sessions: no compactions, defaults", v.compactions.length === 0 && v.settings.autoCompactPct === 85 && v.settings.contextSize === 0);
     check("compaction threshold clamped", X.validateSession({ task: "t", messages: [], timeline: [], settings: { autoCompactPct: 500 } }).settings.autoCompactPct === 95);
+}
+
+section("7. workspaceEntriesFromZip — importing a workspace from a zip");
+{
+    const pick = async (entries) => X.workspaceEntriesFromZip(await X.zipRead(await X.zipWrite(entries)));
+    // A workspace zip, as the ⬇️ Zip button writes it.
+    let r = await pick([{ path: "data.csv", data: enc.encode("a\n") }, { path: "out/report.md", data: enc.encode("# r") }]);
+    check("plain zip: every file, paths kept", !r.fromSession && r.files.map(f => f.path).join() === "data.csv,out/report.md" && dec.decode(r.files[1].data) === "# r", JSON.stringify(r.files.map(f => f.path)));
+
+    r = await pick([{ path: "a.txt", data: enc.encode("x") }, { path: "__MACOSX/._a.txt", data: enc.encode("junk") }, { path: "sub/.DS_Store", data: enc.encode("junk") }, { path: "Thumbs.db", data: enc.encode("junk") }]);
+    check("OS archive junk skipped", r.files.map(f => f.path).join() === "a.txt", JSON.stringify(r.files.map(f => f.path)));
+
+    // A session export: only workspace/, prefix stripped.
+    const data = enc.encode("a,b\n");
+    const h = await X.sha256Hex(data);
+    const session = { task: "t", createdAt: "2026-10-05T00:00:00.000Z", status: "done", messages: [], timeline: [], stepCount: 0, tokens: { prompt: 0, completion: 0 }, activeMs: 0, settings: {} };
+    const entries = X.buildSessionArchive({ session, files: new Map([["in/data.csv", { hash: h, origin: "user" }]]), blobs: new Map([[h, data]]), checkpoints: [] }, {});
+    r = await pick(entries);
+    check("session export: only its workspace files", r.fromSession && r.files.map(f => f.path).join() === "in/data.csv" && dec.decode(r.files[0].data) === "a,b\n", JSON.stringify(r.files.map(f => f.path)));
+
+    // A user's own manifest.json is just a file.
+    r = await pick([{ path: "manifest.json", data: enc.encode('{"name":"mine"}') }, { path: "workspace/x.txt", data: enc.encode("x") }]);
+    check("foreign manifest.json: a plain zip", !r.fromSession && r.files.length === 2);
+    r = await pick([{ path: "manifest.json", data: enc.encode("not json") }]);
+    check("broken manifest.json: a plain zip", !r.fromSession && r.files.length === 1);
+
+    r = await pick([{ path: "manifest.json", data: enc.encode(JSON.stringify({ format: X.SESSION_FORMAT, formatVersion: 1 })) }, { path: "session.json", data: enc.encode("{}") }]);
+    check("session without workspace files: nothing to import", r.fromSession && r.files.length === 0);
 }
 
 report();

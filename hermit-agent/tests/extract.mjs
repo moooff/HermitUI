@@ -40,10 +40,12 @@ const FUNCS = [
     "isSafeRelPath", "normalizeUploadPath", "makeFence", "filenameCommentHint", "missingMentionedFiles",
     "normalizeActionPath", "parseTagAttrs", "extractFileActions", "decodeTextFile", "countOccurrences", "applyFileActions", "formatFileResults",
     "buildStepStats", "cleanStepStats", "formatStepStats",
-    "formatFileList", "isContextOverflowError", "messageChars", "estimateTokens", "contextLimit", "compactionDue",
+    "formatFileList", "isContextOverflowError", "messageChars", "estimateTokens", "contextLimit", "compactionDue", "cutByContext", "contextSizeFromModelList", "ollamaNumCtx", "checkpointsToDrop",
     "planCompaction", "taskMessageBase", "buildCompactionRequest", "buildCompactedMessages",
     "crc32", "streamThrough", "sha256Hex", "sha256HexJs", "zipWrite", "zipRead", "cleanForExport",
-    "transcriptMarkdown", "buildSessionArchive", "validateManifest", "validateSession", "parseSessionArchive",
+    "transcriptMarkdown", "buildSessionArchive", "validateManifest", "validateSession", "parseSessionArchive", "workspaceEntriesFromZip",
+    "lineDiff", "diffHunks", "elideHistory", "isRetryableError", "retryDelayMs", "contextGauge", "uploadWarning",
+    "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "readEntry",
 ];
 
 const mod = `

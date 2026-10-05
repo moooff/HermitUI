@@ -10,7 +10,9 @@ waits poll page.evaluate() instead, which goes through the browser protocol.
 """
 import io
 import json
+import os
 import pathlib
+import re
 import sys
 import tempfile
 import time
@@ -146,7 +148,42 @@ print(len(rows), total)
             final("Done: **hello.py** greets."),
         ],
         "E2E-COMPACT": [py(f"print('out {i}')") for i in range(1, 9)] + [final("Compacted and done.")],
+        "E2E-BUDGET": [py(f"open('big.txt', 'w').write('{i}' * 1000)\nprint('wrote {i}')") for i in range(1, 6)] + [final("Five versions written.")],
+        "E2E-MANUAL": [py(f"print('out {i}')") for i in range(1, 4)] + [final("Three done."), final("Follow-up after the compaction.")],
+        "E2E-CTXCUT": [py("print('out 1')"), py("print('out 2')"),
+                       {"content": "Let me think this through at length", "finish": "length", "usage": {"prompt_tokens": 4000, "completion_tokens": 90}},
+                       final("Room again.")],
         "E2E-OVERFLOW": [py(f"print('out {i}')") for i in range(1, 4)] + [dict(final("Fits now."), overflow_unless_compacted=True)],
+        "E2E-WS": [
+            py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'),
+            final("Listed."),
+            py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'),
+            final("Listed again."),
+            py('print("held")'),
+            final("Fine, not running it."),
+        ],
+        "E2E-OUTAGE": [py("print('one')"), py("print('two')"), dict(py("print('three')"), then_down="refuse"), py("print('four')"), final("Survived.")],
+        "E2E-NOW": [
+            {"reasoning": "".join(f"Pondering option {i} at length. " for i in range(150)), "content": "Slow.\n```python\nprint('slow')\n```", "delay": 0.1,
+             "alt": ["Guidance from the user: use the fast path", py("print('fast')")]},
+            final("Done with the note."),
+        ],
+        "E2E-DIFF": [py('open("notes.txt", "w").write("line 1\\nline TWO\\nline 3\\n")\nprint("rewrote")'), final("Rewrote your notes.")],
+        "E2E-EDIT": [py('print("a")'), final("Edited run done.")],
+        "E2E-MODULE": [
+            final('<write_file path="mod.py">\nV = 1\n</write_file>'),
+            py("import mod\nprint(mod.V)"),
+            final('<edit_file path="mod.py">\n<old>V = 1</old>\n<new>V = 2</new>\n</edit_file>'),
+            py("import mod\nprint(mod.V)"),
+            py('open("pmod.py", "w").write("W = 1\\n")\nimport pmod\nprint(pmod.W)'),
+            py('open("pmod.py", "w").write("W = 2\\n")\nprint("rewrote")'),
+            py("import pmod\nprint(pmod.W)"),
+            final("Modules reloaded."),
+        ],
+        "E2E-PKG": [py("import six\nprint('six', six.__version__)"), py("import requests_oauthlib\nprint('x')"), final("Packages done.")],
+        "E2E-OFFLINE": [py("import attrs\nprint('attrs ok')"), final("Offline handled.")],
+        "E2E-ELIDE": [py(f"print('{i}' * 3000)") for i in range(1, 10)] + [final("Long outputs done.")],
+        "E2E-UPLOAD": [py('import os\nprint(sorted(os.path.join(d, f)[2:] for d, _, fs in os.walk(".") for f in fs))'), final("Listed uploads.")],
         "E2E-APPROVE": [
             py('print("original")'),
             py("while True:\n    pass"),
@@ -167,7 +204,8 @@ def wait_until(page, js, timeout=60, what=""):
     state = page.evaluate("""() => JSON.stringify({ status: S.status, steps: S.stepCount, interp: PY.state,
         last: S.timeline.slice(-2).map(t => ({ type: t.type, kind: t.kind, phase: t.phase, status: t.status, decision: t.decision, text: t.text,
             output: (t.output || '').slice(-300), notes: t.notes, net: t.netAttempts, risk: t.risk })) })""")
-    raise AssertionError(f"timed out after {timeout}s waiting for {what or js}\n        app state: {state}")
+    log = page.evaluate("() => DEBUG.entries.slice(-8).map(e => e.ts.toISOString().slice(11, 23) + ' ' + e.kind + ' ' + e.text).join('\\n        ')")
+    raise AssertionError(f"timed out after {timeout}s waiting for {what or js}\n        app state: {state}\n        debug log:\n        {log}")
 
 
 def configure(page, port, timeout_s):
@@ -194,7 +232,8 @@ def on_pageerror(e):
     # Expected under stock Firefox (BiDi reports worker-side log entries as page errors):
     # the CSP blocking the probes' eval/import, and the forced stop of a killed worker,
     # which the page itself never sees (verified with page-level error listeners).
-    if "blocked a JavaScript eval" in msg or "blocked a script (script-src-elem)" in msg or msg == "undefined":
+    # The outage scenario's refused connections are logged by Firefox as a failed CORS request.
+    if "blocked a JavaScript eval" in msg or "blocked a script (script-src-elem)" in msg or msg == "undefined" or "CORS request did not succeed" in msg:
         return
     FAILS.append("pageerror: " + msg)
     print("  [pageerror]", msg)
@@ -245,6 +284,8 @@ def risk_scenario(browser, port, state, downloads=True):
     card.locator("[data-action=approve]").click()
     wait_until(page, "() => S.status === 'done'", 60, "final answer")
     time.sleep(1.5)   # anything that slipped out would reach the mock by now
+    check("a local endpoint gets the 🏠 badge, not the cloud note", page.is_visible("#localBadge") and not page.is_visible("#cloudWarning"))
+    check("the finished session is flagged as not exported", page.is_visible("#statUnsaved") and page.is_visible("#unsavedDot"))
 
     st = steps(page)
     check("six model turns", [s["kind"] for s in st] == ["code", "code", "code", "code", "code", "final"], [s["kind"] for s in st])
@@ -280,7 +321,7 @@ def risk_scenario(browser, port, state, downloads=True):
         return None
 
     # The file viewer and the workspace-only zip.
-    page.locator('#wsTree [data-path="out/summary.txt"]').click()
+    page.locator('#wsTree [data-action=view-file][data-path="out/summary.txt"]').click()
     wait_until(page, "() => document.getElementById('viewerModal').classList.contains('active')", 10, "viewer")
     check("viewer shows the file", "rows=3 total=300.0" in page.locator("#viewerBody").inner_text())
     page.click("#viewerClose")
@@ -304,6 +345,7 @@ def risk_scenario(browser, port, state, downloads=True):
     check("export layout", {"manifest.json", "session.json", "transcript.md", "workspace/data.csv", "workspace/out/summary.txt", "checkpoints/index.json"} <= names, names)
     blob = raw + b"".join(z.read(n) for n in names)
     check("API key never exported", API_KEY.encode() not in blob)
+    check("the export clears the not-exported flag", not page.is_visible("#statUnsaved") and not page.is_visible("#unsavedDot"))
     check("transcript readable", "## Step 2" in z.read("transcript.md").decode())
     snapshot = page.evaluate("() => JSON.stringify(S.timeline.map(t => [t.type, t.n, t.kind, t.status, t.decision, t.output, t.text].map(v => v ?? '')))")
     files_before = workspace(page)
@@ -326,9 +368,12 @@ def import_scenario(browser, port, state, zpath, snapshot, files_before):
     page.fill("#taskInput", "follow-up please")
     page.click("#sendBtn")
     wait_until(page, "() => S.status === 'done' && S.stepCount === 7", 60, "follow-up answer")
-    msg = state.requests[n_req]["messages"][-1]["content"]
+    # The mock's 4096-token n_ctx leaves less room than the 8192 max tokens, so the
+    # history may be compacted first: skip the summariser's request.
+    follow = next(r for r in state.requests[n_req:] if SUMMARISER_MARK not in r["messages"][0]["content"])
+    msg = follow["messages"][-1]["content"]
     check("follow-up reaches the model with the restart note", "follow-up please" in msg and "restored from an export" in msg, msg)
-    check("no extra user message in a row", state.requests[n_req]["messages"][-2]["role"] == "assistant")
+    check("no extra user message in a row", follow["messages"][-2]["role"] == "assistant")
 
     # Rewind to step 1: its workspace, a fresh interpreter seeded with it.
     page.locator('[data-idx="1"] [data-action=rewind]').click()
@@ -537,6 +582,95 @@ def files_scenario(browser, port, state, downloads=True):
     page.context.close()
 
 
+def zip_payload(name, files):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path, data in files.items():
+            z.writestr(path, data)
+    return {"name": name, "mimeType": "application/zip", "buffer": buf.getvalue()}
+
+
+def ws_contents(page):
+    return page.evaluate("() => Object.fromEntries([...WS.files].map(([p, f]) => [p, new TextDecoder().decode(WS.blobs.get(f.hash))]))")
+
+
+def delete_in_tree(page, path, is_dir=False, ok=True):
+    sel = f'#wsTree [data-action=delete-path][data-path="{path}"]' + ("[data-dir='1']" if is_dir else ":not([data-dir])")
+    page.locator(sel).click()
+    page.click("#confirmOk" if ok else "#confirmCancel")
+
+
+def workspace_scenario(browser, port, state):
+    print("— workspace: import a zip, delete files and folders, merge, replace, a session export's files")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.set_input_files("#wsZipInput", files=[zip_payload("old-workspace.zip", {
+        "a.txt": "a", "keep.txt": "v1", "sub/b.txt": "b", "sub/deep/c.txt": "c",
+        "__MACOSX/._a.txt": "junk", "sub/.DS_Store": "junk"})])
+    wait_until(page, "() => WS.files.size === 4", 10, "zip import into an empty workspace")
+    check("zip import: files and folders, junk skipped, all yours",
+          workspace(page) and {p: o for p, h, o in workspace(page)} == {"a.txt": "user", "keep.txt": "user", "sub/b.txt": "user", "sub/deep/c.txt": "user"}, workspace(page))
+    check("…with their content", ws_contents(page)["sub/deep/c.txt"] == "c")
+
+    delete_in_tree(page, "a.txt", ok=False)
+    check("cancelled delete keeps the file", "a.txt" in ws_contents(page))
+    page.fill("#taskInput", "E2E-WS: list the files")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "first listing")
+    check("the interpreter sees the imported files", steps(page)[0]["output"] == "['a.txt', 'keep.txt', 'sub/b.txt', 'sub/deep/c.txt']\n", steps(page)[0])
+
+    delete_in_tree(page, "a.txt")
+    wait_until(page, "() => !WS.files.has('a.txt')", 10, "file delete")
+    delete_in_tree(page, "sub", is_dir=True)
+    wait_until(page, "() => !WS.files.has('sub/b.txt')", 10, "folder delete")
+    check("file and folder deleted, the rest kept", sorted(ws_contents(page)) == ["keep.txt"], sorted(ws_contents(page)))
+    check("the tree has no row for them", page.locator('#wsTree [data-path="a.txt"], #wsTree [data-path^="sub"]').count() == 0)
+
+    page.fill("#taskInput", "list again")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' && S.stepCount === 4", 60, "second listing")
+    check("the interpreter no longer has them", steps(page)[2]["output"] == "['keep.txt']\n", steps(page)[2])
+    m = [r["messages"][-1]["content"] for r in state.requests if "E2E-WS" in r["messages"][1]["content"]]
+    check("model told what the user deleted", "The user deleted from /workspace: a.txt" in m[2] and "sub/b.txt, sub/deep/c.txt" in m[2], m[2])
+
+    # A held step locks deletes: its commit was computed against the current files.
+    page.select_option("#autonomySelect", "approve")
+    page.fill("#taskInput", "and once more")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "held step")
+    page.locator('#wsTree [data-action=delete-path][data-path="keep.txt"]').click()
+    check("no delete while a step waits for approval", "keep.txt" in ws_contents(page) and not page.evaluate("() => $('confirmModal').classList.contains('active')"))
+    page.locator(".step-card.phase-pending-run [data-action=reject]").click()
+    wait_until(page, "() => S.status === 'done' && !RUN.active", 60, "final after the reject")
+
+    page.set_input_files("#wsZipInput", files=[zip_payload("more.zip", {"keep.txt": "v2", "new.txt": "n"})])
+    page.wait_for_selector("#confirmModal.active")
+    page.click("#confirmAlt")   # Merge
+    wait_until(page, "() => WS.files.has('new.txt')", 10, "merge")
+    check("merge: added and overwritten", ws_contents(page) == {"keep.txt": "v2", "new.txt": "n"}, ws_contents(page))
+
+    page.set_input_files("#importInput", files=[zip_payload("plain.zip", {"only.txt": "o", "keep.txt": "v3"})])
+    page.wait_for_selector("#confirmModal.active")
+    check("the header Import offers a plain zip to the workspace", "Replace the current workspace" in page.inner_text("#confirmText"))
+    page.click("#confirmOk")   # Replace
+    wait_until(page, "() => WS.files.has('only.txt')", 10, "replace")
+    check("replace: exactly the zip's files", ws_contents(page) == {"keep.txt": "v3", "only.txt": "o"}, ws_contents(page))
+    check("…and the session was left alone", page.evaluate("() => S.task.startsWith('E2E-WS')"))
+
+    session_zip = zip_payload("old-session.zip", {
+        "manifest.json": json.dumps({"format": "hermit-agent-session", "formatVersion": 1}),
+        "session.json": "{}", "transcript.md": "# t",
+        "workspace/report.md": "# r", "workspace/data/x.csv": "1,2"})
+    page.set_input_files("#wsZipInput", files=[session_zip])
+    page.wait_for_selector("#confirmModal.active")
+    check("a session export offers its workspace", "workspace of the session" in page.inner_text("#confirmText"), page.inner_text("#confirmText"))
+    page.click("#confirmOk")
+    wait_until(page, "() => WS.files.has('report.md')", 10, "session workspace import")
+    check("session export: only its workspace files", ws_contents(page) == {"report.md": "# r", "data/x.csv": "1,2"}, ws_contents(page))
+    check("no page errors so far", not [f for f in FAILS if f.startswith("pageerror")])
+    page.context.close()
+
+
 def autopilot_scenario(browser, port, state):
     print("— autopilot: even a delete of a user file commits without a hold")
     page = open_app(browser)
@@ -572,8 +706,17 @@ def step_limit_scenario(browser, port, state):
     inline = page.locator(".note-card [data-action=continue]")
     check("the step-limit note shows a Continue button", inline.count() == 1 and step_count(page) == 2, (inline.count(), step_count(page)))
     check("…next to the composer's", page.is_visible("#continueBtn"))
+    more = page.locator(".note-card [data-role=more-steps]")
+    check("…and how many more steps to run (10 by default)", more.input_value() == "10", more.input_value())
+    more.fill("1")
+    note_idx = page.evaluate("() => S.timeline.length - 1")
     inline.click()
-    check("…which goes away as soon as the run resumes", inline.count() == 0)
+    # With one more step the run can pause again at once (a new note), so look at this one.
+    check("…which goes away as soon as the run resumes", page.locator(f'[data-idx="{note_idx}"] [data-action=continue]').count() == 0)
+    wait_until(page, "() => S.status === 'paused' && !RUN.active && S.stepCount === 3", 60, "one more step")
+    check("Run 1 more step: exactly one ran, then it paused again", step_count(page) == 3 and inline.count() == 1, step_count(page))
+    check("…and the field remembers the choice", page.locator(".note-card [data-role=more-steps]").input_value() == "1")
+    page.click("#continueBtn")
     wait_until(page, "() => S.status === 'done'", 60, "final after continue")
     check("Continue allowed more steps and the task finished", step_count(page) == 4 and inline.count() == 0, step_count(page))
     page.context.close()
@@ -583,8 +726,319 @@ def step_count(page):
     return page.evaluate("() => S.stepCount")
 
 
+def checkpoint_budget_scenario(browser, port, state):
+    print("— checkpoint budget: the oldest checkpoints are dropped, the newest stay rewindable")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.select_option("#autonomySelect", "autopilot")
+    # Shrink the budget so 1 KB versions trip it: three older versions (3 KB) exceed 2.5 KB.
+    page.evaluate("() => { LIMITS.checkpointBudgetBytes = 2500; LIMITS.checkpointKeepMin = 2; }")
+    page.fill("#taskInput", "E2E-BUDGET: write versions")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 90, "budget task done")
+    cps = page.evaluate("() => CHECKPOINTS.map(c => c && c.label)")
+    check("the oldest checkpoints were dropped, the newer kept",
+          cps[:3] == [None, None, None] and all(cps[3:]) and cps[-1] == "step 6", cps)
+    older = page.evaluate("() => checkpointMemory().olderBytes")
+    check("older versions back under the budget", older <= 2500, older)
+    check("dropped versions are freed", page.evaluate("() => [...WS.blobs.values()].filter(b => b.length === 1000).length") == 3)
+    notes = page.evaluate("() => S.timeline.filter(t => t.type === 'note').map(t => t.text)")
+    check("a note says which checkpoints went", sum("Dropped the oldest checkpoint" in n for n in notes) == 2, notes)
+    check("the task card can no longer rewind", "Rewind unavailable" in page.inner_text('[data-idx="0"]'))
+    idx = page.evaluate("() => S.timeline.findIndex(t => t.type === 'step' && t.n === 4)")
+    check("a kept step still can", page.locator(f'[data-idx="{idx}"] [data-action=rewind]').count() == 1)
+    mem = page.locator("#statMemory")
+    check("the status bar shows checkpoints and memory, flagged", "checkpoints ·" in mem.inner_text() and mem.get_attribute("data-warn") == "1", mem.inner_text())
+    page.locator(f'[data-idx="{idx}"] [data-action=rewind]').click()
+    page.click("#confirmOk")
+    wait_until(page, "() => S.status === 'paused' && PY.state === 'idle'", 60, "rewind to a kept checkpoint")
+    big = page.evaluate("() => new TextDecoder().decode(WS.blobs.get(WS.files.get('big.txt').hash)).slice(0, 3)")
+    check("rewinding to a kept checkpoint restores its version", page.evaluate("() => S.stepCount") == 4 and big == "444", big)
+    page.context.close()
+
+
+def outage_scenario(browser, port, state):
+    print("— endpoint outage: retries, a dropped stream, a long outage pauses the run, Retry resumes")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.evaluate("() => { LIMITS.retryFirstMs = 300; LIMITS.retryMaxMs = 600; LIMITS.retryWindowMs = 4000; LIMITS.streamStallMs = 1000; }")
+    state.fail_next = ["refuse", "503", "drop", "stall"]
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-OUTAGE: keep going")
+    page.click("#sendBtn")
+    # Step 3's reply takes the endpoint down for good: the step-4 request retries, then pauses.
+    wait_until(page, "() => !!RUN.retry && S.stepCount === 3", 60, "retrying after the outage")
+    check("the status bar counts down to the next retry", "endpoint unreachable · retry" in page.inner_text("#statState"), page.inner_text("#statState"))
+    check("…and the step card says it is retrying", "Retrying automatically" in page.inner_text(".step-card.phase-thinking"))
+    wait_until(page, "() => S.status === 'paused' && !RUN.active", 30, "paused after the retry window")
+    err = page.locator(".error-card").last
+    check("a long outage pauses the run instead of ending it", "paused and nothing is lost" in err.inner_text() and "retried for" in err.inner_text(), err.inner_text())
+    check("…with Retry and Continue offered", err.locator("[data-action=retry]").count() == 1 and page.is_visible("#continueBtn"))
+    st = steps(page)
+    check("the first step survived a refused, a 503, a dropped and a stalled request", st[0]["output"] == "one\n", st[0])
+    first = page.evaluate("() => S.timeline.find(t => t.type === 'step' && t.n === 1)")
+    check("…without keeping the half reply of the dropped stream", first["content"] == "Next step.\n```python\nprint('one')\n```", first["content"])
+    # Chrome itself re-sends a request once when a reused keep-alive connection closes
+    # without an answer, so the refused attempt may never reach the page: 3 or 4 retries.
+    check("…and the card notes the retries", re.search(r"answered again after [34] retries", first.get("retryNote") or ""), first.get("retryNote"))
+    state.down = None
+    err.locator("[data-action=retry]").click()
+    wait_until(page, "() => S.status === 'done'", 60, "finished after the endpoint came back")
+    st = steps(page)
+    check("the run resumed where it stopped: no step lost or repeated", [s["output"] for s in st[:4]] == ["one\n", "two\n", "three\n", "four\n"] and len(st) == 5, [s["output"] for s in st])
+    last = state.requests[-1]["messages"]
+    roles = [m["role"] for m in last]
+    check("the history stayed well-formed", len(last) == 10 and all(r == ("user" if i % 2 == 0 else "assistant") for i, r in enumerate(roles[1:])), roles)
+    page.context.close()
+
+
+def send_now_scenario(browser, port, state):
+    print("— a note during a long reply: queued, then ⚡ Send now restarts the request with it")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.fill("#taskInput", "E2E-NOW: think hard")
+    page.click("#sendBtn")
+    wait_until(page, "() => !!document.querySelector('.step-card .think-content')", 30, "the slow reply streams")
+    page.fill("#taskInput", "use the fast path")
+    page.click("#sendBtn")
+    note = page.locator(".user-card").last
+    check("the note is queued while the model replies", "queued" in note.inner_text() and note.locator("[data-action=send-now]").count() == 1, note.inner_text())
+    note.locator("[data-action=send-now]").click()
+    wait_until(page, "() => S.status === 'done'", 60, "final after the restart")
+    st = steps(page)
+    check("the restarted turn is still step 1 and used the note", [s["output"] for s in st if s["kind"] == "code"] == ["fast\n"] and len(st) == 2, st)
+    m = [r for r in state.requests if "E2E-NOW" in r["messages"][1]["content"]]
+    check("the restarted request carries the note", "Guidance from the user: use the fast path" in m[1]["messages"][-1]["content"], m[1]["messages"][-1]["content"][-200:])
+    check("…the note card is no longer queued", "queued" not in page.locator(".user-card").last.inner_text())
+    check("…and no 'stopped' note was left", page.evaluate("() => !S.timeline.some(t => t.type === 'note' && t.text.includes('Stopped'))"))
+    page.context.close()
+
+
+def diff_edit_scenario(browser, port, state):
+    print("— per-file diffs on a held overwrite; edit-before-run: Tab, Reset, Ctrl+Enter, the edit's diff")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.set_input_files("#wsFileInput", files=[{"name": "notes.txt", "mimeType": "text/plain", "buffer": b"line 1\nline 2\nline 3\n"}])
+    wait_until(page, "() => WS.files.has('notes.txt')", 10, "upload")
+    page.fill("#taskInput", "E2E-DIFF: rewrite my notes")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "held overwrite")
+    chip = page.locator('.step-card.phase-pending-approval .file-chip.modified[data-path="notes.txt"]')
+    check("the held step's chip counts the changed lines", "+1 −1" in chip.inner_text(), chip.inner_text())
+    chip.click()
+    wait_until(page, "() => $('viewerModal').classList.contains('active')", 10, "viewer")
+    check("the viewer opens on the diff, with tabs for both versions",
+          page.locator("#viewerTabs .viewer-tab").count() == 3 and page.locator("#viewerTabs [aria-selected=true]").inner_text() == "± Changes")
+    check("…removed and added lines", page.locator("#viewerBody .diff-del .diff-text").all_inner_texts() == ["line 2"] and page.locator("#viewerBody .diff-add .diff-text").all_inner_texts() == ["line TWO"])
+    page.locator("#viewerTabs [data-view=before]").click()
+    check("…and the version before the step", "line 2" in page.inner_text("#viewerBody") and "TWO" not in page.inner_text("#viewerBody"))
+    page.click("#viewerClose")
+    page.locator(".step-card.phase-pending-approval [data-action=approve]").click()
+    wait_until(page, "() => S.status === 'done'", 60, "approved")
+
+    page.select_option("#autonomySelect", "approve")
+    page.click("#newSessionBtn")
+    page.click("#confirmOk")
+    page.fill("#taskInput", "E2E-EDIT: print a letter")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "pending run")
+    card = page.locator(".step-card.phase-pending-run")
+    ta = card.locator("[data-role=code-edit]")
+    check("no Reset before an edit", card.locator("[data-action=reset-code]").count() == 0)
+    ta.click()
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Tab")
+    check("Tab indents instead of leaving the field", ta.input_value().endswith("\n    ") and page.evaluate("() => document.activeElement.dataset.role") == "code-edit", repr(ta.input_value()))
+    check("…and the first change offers Reset", card.locator("[data-action=reset-code]").count() == 1)
+    card.locator("[data-action=reset-code]").click()
+    check("Reset brings back the agent's code", card.locator("[data-role=code-edit]").input_value() == 'print("a")\n' and card.locator("[data-action=reset-code]").count() == 0)
+    card.locator("[data-role=code-edit]").fill('print("b")\n')
+    card.locator("[data-role=code-edit]").press("Control+Enter")
+    wait_until(page, "() => S.status === 'done'", 60, "edited run")
+    st = steps(page)
+    check("Ctrl+Enter ran the edited code", st[0]["output"] == "b\n" and st[0]["decision"] == "edited", st[0])
+    d = page.locator(".step-card details.file-edits").first
+    check("the card offers the edit's diff", "show what you changed" in d.inner_text())
+    d.locator("summary").click()
+    check("…which shows the agent's line and yours", d.locator(".diff-del .diff-text").all_inner_texts() == ['print("a")'] and d.locator(".diff-add .diff-text").all_inner_texts() == ['print("b")'])
+    page.context.close()
+
+
+def module_scenario(browser, port, state, downloads=True):
+    print("— edited workspace modules are imported fresh; the not-exported warning on close")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.fill("#taskInput", "E2E-MODULE: reload modules")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "modules task")
+    out = [s["output"] for s in steps(page) if s["kind"] == "code"]
+    check("a module edited with edit_file is re-imported (1 → 2)", out[0] == "1\n" and out[1] == "2\n", out)
+    check("…and one rewritten by python in an earlier step (1 → 2)", out[2] == "1\n" and out[4] == "2\n", out)
+    check("no bytecode caches in the workspace", not any("__pycache__" in p for p, h, o in workspace(page)), workspace(page))
+    check("the status bar shows the context gauge against /props' 4,096", "/ 4.1k" in page.inner_text("#statContext") and page.is_visible("#statContextMark"), page.inner_text("#statContext"))
+    # Sync Playwright only dispatches events inside its own calls, so wait with expect_event.
+    with page.expect_event("dialog", timeout=10000) as dlg:
+        page.close(run_before_unload=True)
+    check("closing with unexported work asks first", dlg.value.type == "beforeunload", dlg.value.type)
+    dlg.value.dismiss()
+    if downloads:
+        with page.expect_download():
+            page.click("#exportBtn")
+            page.click("#exportSessionBtn")
+        try:
+            with page.expect_event("close", timeout=10000):
+                page.close(run_before_unload=True)
+            closed = True
+        except Exception:
+            closed = False
+        check("…and doesn't once it is exported", closed)
+    if not page.is_closed():
+        page.context.close()
+
+
+def packages_scenario(browser, port, state):
+    print("— packages: the list in the system prompt, a real load from the CDN, an unknown module, offline")
+    page = open_app(browser)
+    configure(page, port, 10)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-PKG: use packages")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 120, "packages task")
+    system = state.requests[n0]["messages"][0]["content"]
+    check("the system prompt lists the loadable packages", "Only these packages from the Pyodide distribution" in system and "numpy" in system and "sklearn" in system)
+    st = steps(page)
+    check("six loaded from the CDN and ran", st[0]["output"].startswith("six 1."), st[0])
+    check("…and the step says what was loaded", any("Loaded six from the Pyodide CDN" in n for n in st[0]["notes"]), st[0]["notes"])
+    check("an unknown module gets a 'no pip here' note", any("isn't part of the Pyodide distribution" in n for n in st[1]["notes"]), st[1]["notes"])
+    m = [r["messages"][-1]["content"] for r in state.requests[n0:] if "E2E-PKG" in r["messages"][1]["content"]]
+    check("…which the model is told", "isn't part of the Pyodide distribution" in m[2], m[2][-400:])
+    page.click("#debugBtn")
+    check("the debug console logs the package load", "loading packages: six" in page.inner_text("#debugLog"))
+    page.keyboard.press("Escape")
+    page.context.close()
+
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.evaluate("() => { LIMITS.retryFirstMs = 300; LIMITS.retryMaxMs = 600; LIMITS.retryWindowMs = 60000; }")
+    page.select_option("#autonomySelect", "approve")
+    page.fill("#taskInput", "E2E-OFFLINE: import attrs")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "pending run")
+    # Chromium goes offline for real: the package load fails, then the model request fails
+    # at once and is retried until the browser is back. Playwright's Firefox holds requests
+    # made offline forever, even after going back online, so there only the CDN is blocked.
+    offline = browser.browser_type.name == "chromium"
+    if offline:
+        page.context.set_offline(True)
+    else:
+        page.context.route("https://cdn.jsdelivr.net/**", lambda r: r.abort())
+    page.locator(".step-card.phase-pending-run [data-action=run]").click()
+    wait_until(page, "() => S.timeline.some(t => t.type === 'step' && t.n === 1 && t.phase === 'done')", 60, "the step fails offline")
+    st = steps(page)
+    why = "this browser is offline" if offline else "couldn't be reached"
+    check(f"the package load fails with a clear message ({why}), nothing ran", why in st[0]["output"] and "Nothing ran" in st[0]["output"] and st[0]["status"] == "error", st[0])
+    if offline:
+        wait_until(page, "() => !!RUN.retry", 30, "the next request retries while offline")
+        page.context.set_offline(False)
+    wait_until(page, "() => S.status === 'done'", 60, "back online")
+    m = [r["messages"][-1]["content"] for r in state.requests if "E2E-OFFLINE" in r["messages"][1]["content"]]
+    check("…the model is told, once the endpoint is reachable again", 'status="error"' in m[-1] and why in m[-1], m[-1][-300:])
+    page.context.close()
+
+
+def elide_scenario(browser, port, state):
+    print("— old long outputs are elided from requests, in blocks, while the history keeps them")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.select_option("#autonomySelect", "autopilot")
+    page.fill("#taskInput", "E2E-ELIDE: print a lot")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 90, "elide task")
+    reqs = [r for r in state.requests if "E2E-ELIDE" in r["messages"][1]["content"]]
+    elided = [sum("elided to save context" in m["content"] for m in r["messages"]) for r in reqs]
+    check("nothing elided until 8 steps, then the oldest 4 at once", elided == [0, 0, 0, 0, 0, 0, 0, 0, 4, 4], elided)
+    check("requests 5–8 share their prefix (the server's prompt cache stays valid)",
+          all(reqs[i]["messages"][3]["content"] == reqs[4]["messages"][3]["content"] for i in range(4, 8)))
+    full = page.evaluate("() => S.messages[3].content")
+    check("the history keeps the full output", "1" * 3000 in full and "elided" not in full)
+    page.context.close()
+
+
+def upload_scenario(browser, port, state, folders=True):
+    print("— uploads: a folder, a dropped file, the large-upload warning")
+    page = open_app(browser)
+    configure(page, port, 10)
+    if folders:   # Playwright can't upload a folder over WebDriver BiDi (stock Firefox)
+        root = pathlib.Path(tempfile.mkdtemp()) / "proj"
+        (root / "src").mkdir(parents=True)
+        (root / "readme.md").write_text("# p\n")
+        (root / "src" / "m.py").write_text("X = 1\n")
+        page.set_input_files("#wsFolderInput", str(root))
+        wait_until(page, "() => WS.files.size === 2", 15, "folder upload")
+        check("a folder upload keeps the folder structure", sorted(p for p, h, o in workspace(page)) == ["proj/readme.md", "proj/src/m.py"], workspace(page))
+    page.evaluate("""() => { const dt = new DataTransfer(); dt.items.add(new File(['dropped'], 'dropped.txt'));
+        $('workspacePane').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); }""")
+    wait_until(page, "() => WS.files.has('dropped.txt')", 15, "drop")
+    check("a dropped file lands in the workspace as yours", {p: o for p, h, o in workspace(page)}.get("dropped.txt") == "user")
+    page.evaluate("() => { LIMITS.uploadWarnFileBytes = 5; }")
+    big = [{"name": "big.bin", "mimeType": "application/octet-stream", "buffer": b"0123456789"}]
+    page.set_input_files("#wsFileInput", files=big)
+    page.wait_for_selector("#confirmModal.active")
+    check("a large file asks first", "big.bin is 10 B" in page.inner_text("#confirmText"), page.inner_text("#confirmText"))
+    page.click("#confirmCancel")
+    time.sleep(0.3)
+    check("…cancel adds nothing", not page.evaluate("() => WS.files.has('big.bin')"))
+    page.set_input_files("#wsFileInput", files=big)
+    page.wait_for_selector("#confirmModal.active")
+    page.click("#confirmOk")
+    wait_until(page, "() => WS.files.has('big.bin')", 10, "confirmed large upload")
+    page.evaluate("() => { LIMITS.uploadWarnFileBytes = 25 * 1024 * 1024; }")
+    page.fill("#taskInput", "E2E-UPLOAD: list")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "listing")
+    want = ['big.bin', 'dropped.txt'] + (['proj/readme.md', 'proj/src/m.py'] if folders else [])
+    check("the interpreter sees every upload", steps(page)[0]["output"] == repr(want) + "\n", steps(page)[0]["output"])
+    check("uploads alone don't count as unexported work", page.evaluate("() => { const s = S; S = freshSession(); const r = hasUnexportedWork(); S = s; return r; }") is False)
+    page.context.close()
+
+
+def vllm_compact_scenario(browser, port, state):
+    print("— context size from a vLLM-style model list, and the Compact button")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.click("#settingsBtn")
+    page.fill("#settingUrl", f"http://127.0.0.1:{port}/vllm/v1")
+    page.click("#testConnectionBtn")
+    wait_until(page, "() => document.getElementById('reasoningStatus').textContent.includes('context')", 15, "connection test")
+    status = page.inner_text("#reasoningStatus")
+    check("Test Connection shows the size from /v1/models", "context 2,048 tokens (/v1/models)" in status, status)
+    page.click("#settingSave")
+    check("no Compact button before a session", page.locator("#compactBtn").is_hidden())
+    page.fill("#taskInput", "E2E-MANUAL: print things")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "manual task done")
+    ctx = page.evaluate("() => [REASONING.nCtx, REASONING.ctxSource]")
+    check("the run knows the context size without /props", ctx == [2048, "/v1/models"], ctx)
+    check("…and the step stats show it", "/ 2,048" in page.text_content("#timeline"))
+    check("Compact button offered once there are steps to summarise", page.locator("#compactBtn").is_visible())
+    page.click("#compactBtn")
+    wait_until(page, "() => S.timeline.some(t => t.type === 'compaction') && !RUN.active", 30, "manual compaction")
+    comps = page.evaluate("() => S.timeline.filter(t => t.type === 'compaction').map(t => [t.fromStep, t.toStep, t.reason])")
+    check("Compact summarises the older steps on request", comps == [[1, 1, "manual"]], comps)
+    check("…the status comes back as it was", page.evaluate("() => S.status") == "done")
+    check("…the card says it was on request", "on request" in page.inner_text(".compaction-card"))
+    n0 = len(state.requests)
+    page.fill("#taskInput", "more please")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' && S.stepCount === 5", 60, "follow-up after compaction")
+    first = state.requests[n0]["messages"]
+    check("the follow-up goes out with the compacted history",
+          '<history_summary steps="1-1">' in first[1]["content"] and first[-1]["content"].endswith("more please"), [m["content"][:40] for m in first])
+    page.context.close()
+
+
 def compaction_scenario(browser, port, state):
-    print("— auto-compaction: threshold, a second pass, rewind across it, overflow retry")
+    print("— auto-compaction: threshold, a second pass, rewind across it, overflow retry, context cut")
     page = open_app(browser)
     configure(page, port, 10)
     page.click("#settingsBtn")
@@ -629,6 +1083,26 @@ def compaction_scenario(browser, port, state):
     check("…without leaving an error card", page.evaluate("() => S.timeline.some(t => t.type === 'error')") is False)
     page.context.close()
 
+    # A reply that llama.cpp ended at n_ctx (4096 here) looks like max_tokens; it must
+    # be told apart and compact before the next request, though no threshold was hit.
+    page = open_app(browser)
+    configure(page, port, 10)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-CTXCUT: print things")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' || S.status === 'error'", 60, "context-cut task")
+    reqs = state.requests[n0:]
+    comps = page.evaluate("() => S.timeline.filter(t => t.type === 'compaction').map(t => [t.fromStep, t.toStep, t.reason])")
+    cut = page.evaluate("() => S.timeline.find(t => t.type === 'step' && t.n === 3)")
+    check("a reply cut by the context compacts before the next request",
+          page.evaluate("() => S.status") == "done" and comps == [[1, 1, "context"]], comps)
+    check("…the step says the context ran out, not max tokens",
+          cut["status"] == "cutoff" and any("context window ran out" in n for n in cut["notes"]), cut["notes"])
+    check("…and so does the model's observation",
+          any("context window filled up" in m["content"] for m in reqs[-1]["messages"] if m["role"] == "user"))
+    check("…the card names the reason", "ran out of context" in page.inner_text(".compaction-card"))
+    page.context.close()
+
 
 def main():
     browsers = sys.argv[1:] or ["chromium", "firefox"]   # also: firefox=/path/to/stock/firefox
@@ -642,17 +1116,32 @@ def main():
             # Playwright's patched Firefox build alone isn't proof.
             name, _, exe = name.partition("=")
             browser = pw.firefox.launch(channel="moz-firefox", executable_path=exe) if exe else getattr(pw, name).launch()
+            # E2E_ONLY=outage,diff_edit runs just those scenarios (for quick iteration).
+            only = [x for x in os.environ.get("E2E_ONLY", "").split(",") if x]
+            want = lambda n: not only or n in only   # noqa: E731
             try:
-                exported = risk_scenario(browser, port, state, downloads=not exe)
-                if exported:
-                    import_scenario(browser, port, state, *exported)
-                approve_scenario(browser, port, state)
-                autopilot_scenario(browser, port, state)
-                step_limit_scenario(browser, port, state)
-                streaming_scenario(browser, port, state)
-                phantom_scenario(browser, port, state)
-                files_scenario(browser, port, state, downloads=not exe)
-                compaction_scenario(browser, port, state)
+                if want("risk"):
+                    exported = risk_scenario(browser, port, state, downloads=not exe)
+                    if exported:
+                        import_scenario(browser, port, state, *exported)
+                for n, fn in [("approve", approve_scenario), ("autopilot", autopilot_scenario), ("step_limit", step_limit_scenario),
+                              ("streaming", streaming_scenario), ("phantom", phantom_scenario)]:
+                    if want(n):
+                        fn(browser, port, state)
+                if want("files"):
+                    files_scenario(browser, port, state, downloads=not exe)
+                for n, fn in [("workspace", workspace_scenario), ("compaction", compaction_scenario), ("vllm_compact", vllm_compact_scenario),
+                              ("checkpoint_budget", checkpoint_budget_scenario), ("outage", outage_scenario), ("send_now", send_now_scenario),
+                              ("diff_edit", diff_edit_scenario)]:
+                    if want(n):
+                        fn(browser, port, state)
+                if want("module"):
+                    module_scenario(browser, port, state, downloads=not exe)
+                for n, fn in [("packages", packages_scenario), ("elide", elide_scenario)]:
+                    if want(n):
+                        fn(browser, port, state)
+                if want("upload"):
+                    upload_scenario(browser, port, state, folders=not exe)
             except AssertionError as e:
                 check(f"{name}: scenario completed", False, str(e))
             finally:

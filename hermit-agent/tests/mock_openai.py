@@ -9,7 +9,18 @@ History compaction: the summariser's request (recognised by its system prompt) g
 SUMMARY back, and a compacted history's `<history_summary steps="1-K">` adds K to the
 turn count, since those K assistant messages are gone. A reply marked
 `overflow_unless_compacted` answers a 400 context-size error until the history has
-been compacted.
+been compacted. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
+(the mock's /props reports n_ctx 4096). Under /vllm/v1 it acts like vLLM: no /props,
+and the context size (2048) only in the model list's `max_model_len`.
+
+Outages: `state.down = "refuse"` closes every connection without an answer (the page
+sees "Failed to fetch"), `"503"` answers chat requests with a 503; `state.fail_next` is a
+list of modes ("refuse", "503", "drop", "stall") consumed one per chat request, where
+"drop" streams part of the reply and then closes the connection without finishing it,
+and "stall" streams part of it and then goes silent for 3 s. A reply
+with `then_down` sets `state.down` to that mode once it has been sent. A reply with
+`alt: [substring, reply]` is replaced by that reply when the last user message contains
+the substring (a note sent with ⚡ Send now, say).
 """
 import json
 import re
@@ -28,6 +39,8 @@ class MockState:
         self.requests = []              # chat request bodies
         self.exfil = []                 # (method, path) of every /exfil hit
         self.lock = threading.Lock()
+        self.down = None                # None | "refuse" | "503"
+        self.fail_next = []             # one mode per chat request: "refuse" | "503" | "drop"
 
 
 def make_handler(state):
@@ -65,9 +78,23 @@ def make_handler(state):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        def refuse(self):
+            # Close without a byte of answer: the browser reports a network error.
+            self.close_connection = True
+            try:
+                self.connection.shutdown(2)
+            except OSError:
+                pass
+
         def do_GET(self):
+            if state.down == "refuse":
+                return self.refuse()
             if self.record_exfil():
                 return self.send_json(200, {"got": "it"})
+            if self.path.startswith("/vllm/"):   # vLLM: no /props, the size is in the model list
+                if self.path.endswith("/models"):
+                    return self.send_json(200, {"object": "list", "data": [{"id": "mock-model", "object": "model", "max_model_len": 2048}]})
+                return self.send_json(404, {"error": {"message": "not found"}})
             if self.path == "/props":   # llama.cpp's: context size only, no template
                 return self.send_json(200, {"default_generation_settings": {"n_ctx": 4096}})
             if self.path.endswith("/models"):
@@ -83,7 +110,13 @@ def make_handler(state):
                 return self.send_json(404, {"error": {"message": "not found"}})
             body = json.loads(raw or b"{}")
             with state.lock:
-                state.requests.append(body)
+                mode = state.fail_next.pop(0) if state.fail_next else state.down
+                if mode not in ("refuse", "503", "stall"):
+                    state.requests.append(body)
+            if mode == "refuse":
+                return self.refuse()
+            if mode == "503":
+                return self.send_json(503, {"error": {"message": "Loading model"}})
             msgs = body.get("messages", [])
             first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
             if msgs and SUMMARISER_MARK in msgs[0]["content"]:
@@ -95,6 +128,8 @@ def make_handler(state):
                 if script is None or turn >= len(script):
                     return self.send_json(500, {"error": {"message": f"mock has no reply for turn {turn}"}})
                 reply = script[turn]
+                if reply.get("alt") and reply["alt"][0] in msgs[-1]["content"]:
+                    reply = reply["alt"][1]
                 if reply.get("overflow_unless_compacted") and not compacted:
                     return self.send_json(400, {"error": {"message": "the request exceeds the available context size, try increasing it"}})
             self.send_response(200)
@@ -117,22 +152,41 @@ def make_handler(state):
 
             reasoning = reply.get("reasoning", "")
             content = reply.get("content", "")
-            for i in range(0, len(reasoning), 40):
-                chunk({"reasoning_content": reasoning[i:i + 40]})
-            for i in range(0, len(content), 40):
-                chunk({"content": content[i:i + 40]})
-            chunk({}, reply.get("finish", "stop"), {"prompt_tokens": 100, "completion_tokens": 20},
+            if mode == "drop":   # half a reply, then the connection just ends
+                chunk({"content": content[:max(1, len(content) // 2)]})
+                self.close_connection = True
+                return
+            if mode == "stall":  # half a reply, then silence (the page gives up on it)
+                chunk({"content": content[:max(1, len(content) // 2)]})
+                time.sleep(3)
+                self.close_connection = True
+                return
+            try:
+                for i in range(0, len(reasoning), 40):
+                    chunk({"reasoning_content": reasoning[i:i + 40]})
+                for i in range(0, len(content), 40):
+                    chunk({"content": content[i:i + 40]})
+            except (BrokenPipeError, ConnectionResetError):
+                return   # the page aborted the request (Stop, ⚡ Send now)
+            chunk({}, reply.get("finish", "stop"), reply.get("usage", {"prompt_tokens": 100, "completion_tokens": 20}),
                   {"cache_n": 60, "prompt_n": 40, "prompt_per_second": 500.0, "predicted_n": 20, "predicted_per_second": 33.3})
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
             self.close_connection = True
+            if reply.get("then_down"):
+                state.down = reply["then_down"]
 
     return Handler
+
+
+class QuietServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        pass   # refused and aborted connections are part of the tests
 
 
 def serve(scripts):
     """Start the mock on a free port; returns (server, port, state)."""
     state = MockState(scripts)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+    server = QuietServer(("127.0.0.1", 0), make_handler(state))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, server.server_address[1], state

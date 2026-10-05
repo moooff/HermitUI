@@ -2,7 +2,7 @@
 // Everything the worker runs lives inside hermitWorkerMain. script.js serialises it with
 // Function.prototype.toString() and starts it as a *classic* Blob-URL worker: Chromium
 // refuses Blob module workers on file://, and Pyodide 0.29.x is the last line that still
-// boots in a classic worker (ROADMAP Phase 0, "Offline boot findings"). On the main
+// boots in a classic worker (PHASE0_FINDINGS.md, "Offline boot findings"). On the main
 // thread this file only defines the function; it must not reference anything outside
 // its own body.
 //
@@ -255,6 +255,44 @@ def hermit_clear_workspace():
         return { count: paths.length };
     }
 
+    // What the code imports (top-level names) and which packages are loaded already, so
+    // the main thread can say what is about to be downloaded before it starts.
+    function imports({ code }) {
+        let names = [];
+        try {
+            const found = py.pyodide_py.code.find_imports(code);
+            names = found.toJs();
+            found.destroy();
+        } catch (e) { /* a syntax error: the run reports it */ }
+        return { imports: names.map(String), loaded: Object.keys(py.loadedPackages) };
+    }
+
+    // Packages the code imports, loaded by the harness (never by agent code) from the
+    // pinned CDN, in memory only (DESIGN §8). Pyodide doesn't throw when a package fails:
+    // it reports "Loaded …" / "Failed to load …" and the reasons through the callbacks.
+    async function load({ code }) {
+        const t0 = performance.now();
+        const loaded = [], failed = [], errors = [];
+        netAttempts = [];
+        const names = (m, prefix) => m.slice(prefix.length).split(",").map(s => s.trim()).filter(Boolean);
+        netMode = "cdn";
+        try {
+            await py.loadPackagesFromImports(code, {
+                messageCallback: (m) => {
+                    if (/^Loaded /.test(m)) loaded.push(...names(m, "Loaded "));
+                    else if (/^Failed to load /.test(m)) failed.push(...names(m, "Failed to load "));
+                },
+                errorCallback: (m) => { if (errors.length < 20) errors.push(String(m).slice(0, 500)); },
+            });
+        } catch (e) {
+            errors.push(String(e && e.message || e).split("\n")[0].slice(0, 500));
+            if (!failed.length) failed.push("(packages)");
+        } finally {
+            netMode = "closed";
+        }
+        return { loaded, failed, errors, netAttempts: netAttempts.slice(), ms: Math.round(performance.now() - t0) };
+    }
+
     async function run({ code, allowNetwork }) {
         const t0 = performance.now();
         const notes = [];
@@ -265,35 +303,19 @@ def hermit_clear_workspace():
         let status = "ok";
         let errorText = "";
 
-        // 1. Packages the code imports, loaded by the harness (never by agent code)
-        //    from the pinned CDN, in memory only (DESIGN §8).
-        netMode = "cdn";
+        // The step itself, in the persistent namespace. Its packages were loaded before
+        // (the load op), with the network limited to the pinned CDN.
+        netMode = allowNetwork ? "open" : "closed";
         try {
-            await py.loadPackagesFromImports(code, {
-                messageCallback: (m) => { if (/^Loaded /.test(m)) notes.push(m); },
-                errorCallback: (m) => notes.push(m),
-            });
+            harness.get("hermit_forget_workspace_modules")();
+            await py.runPythonAsync(code, { globals: ns, filename: "<step>" });
         } catch (e) {
             status = "error";
-            errorText = "Could not load the packages this code imports (offline, or not in the Pyodide distribution): "
-                + String(e && e.message || e).split("\n")[0];
-        } finally {
-            netMode = allowNetwork ? "open" : "closed";
-        }
-
-        // 2. The step itself, in the persistent namespace.
-        if (status === "ok") {
-            try {
-                harness.get("hermit_forget_workspace_modules")();
-                await py.runPythonAsync(code, { globals: ns, filename: "<step>" });
-            } catch (e) {
-                status = "error";
-                errorText = trimTraceback(e && e.message || e);
-            }
+            errorText = trimTraceback(e && e.message || e);
         }
         netMode = "closed";
 
-        // 3. What changed, relative to the workspace the main thread knows about.
+        // What changed, relative to the workspace the main thread knows about.
         const after = listing();
         const files = {};
         for (const [p, h] of Object.entries(after)) {
@@ -308,7 +330,7 @@ def hermit_clear_workspace():
         };
     }
 
-    const OPS = { boot, seed, write, remove, run };
+    const OPS = { boot, seed, write, remove, imports, load, run };
 
     self.onmessage = async (e) => {
         const { id, op } = e.data || {};

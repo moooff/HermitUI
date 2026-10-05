@@ -45,11 +45,12 @@
         <div class="brand">
             <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.1.0</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
+            <span class="local-badge" id="localBadge" hidden>🏠 local</span>
         </div>
         <div class="header-actions">
             <button type="button" class="header-btn" id="newSessionBtn" title="New session">➕ New</button>
-            <button type="button" class="header-btn" id="importBtn" title="Import a session (.zip)">📂 Import</button>
-            <button type="button" class="header-btn" id="exportBtn" title="Export the session or the workspace">💾 Export</button>
+            <button type="button" class="header-btn" id="importBtn" title="Import a session (.zip); a plain zip goes into the workspace">📂 Import</button>
+            <button type="button" class="header-btn" id="exportBtn" title="Export the session or the workspace">💾 Export<span class="unsaved-dot" id="unsavedDot" hidden aria-hidden="true"></span></button>
             <button type="button" class="header-btn icon-only" id="debugBtn" title="Debug console: tool calls and model requests" aria-label="Toggle the debug console" aria-pressed="false">🐛</button>
             <button type="button" class="header-btn icon-only" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
             <button type="button" class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
@@ -62,7 +63,10 @@
         <span class="stat" id="statStep">Step 0</span>
         <span class="stat" id="statTime">⏱ 0s</span>
         <span class="stat" id="statTokens">🔢 0 tokens</span>
+        <span class="stat stat-context" id="statContext" hidden><span id="statContextText">📏 context</span><span class="ctx-meter" aria-hidden="true"><span class="ctx-fill" id="statContextFill"></span><span class="ctx-mark" id="statContextMark"></span></span></span>
         <span class="stat" id="statInterp">🐍 not started</span>
+        <span class="stat" id="statMemory">🗂️ 0 checkpoints</span>
+        <button type="button" class="stat stat-unsaved" id="statUnsaved" hidden title="This session lives only in this tab. Export it to keep it.">⚠️ not exported</button>
     </div>
 
     <main class="layout">
@@ -92,6 +96,7 @@
                         </label>
                         <div class="composer-actions">
                             <button type="button" class="action-btn" id="killBtn" title="Terminate the Python interpreter now (the workspace survives, variables don't)">☠️ Kill</button>
+                            <button type="button" class="action-btn" id="compactBtn" hidden title="Summarise the older steps for the model now, keeping the last few in full. The timeline keeps everything, and rewinding to an earlier step restores the full history.">🗜️ Compact</button>
                             <button type="button" class="action-btn" id="stopBtn" hidden title="Stop after the running step">⏹ Stop</button>
                             <button type="button" class="action-btn" id="continueBtn" hidden title="Resume the agent">⏯ Continue</button>
                             <button type="submit" class="action-btn primary" id="sendBtn">▶ Start</button>
@@ -109,9 +114,11 @@
             <div class="ws-actions">
                 <button type="button" class="small-btn" id="wsUploadBtn" title="Add files">📎 Files</button>
                 <button type="button" class="small-btn" id="wsFolderBtn" title="Add a folder">📁 Folder</button>
+                <button type="button" class="small-btn" id="wsImportZipBtn" title="Import files from a workspace zip, or the workspace of an exported session">📦 Import zip</button>
                 <button type="button" class="small-btn" id="wsDownloadBtn" title="Download the workspace as a zip">⬇️ Zip</button>
                 <input type="file" id="wsFileInput" multiple hidden>
                 <input type="file" id="wsFolderInput" webkitdirectory multiple hidden>
+                <input type="file" id="wsZipInput" accept=".zip,application/zip" hidden>
             </div>
             <div class="ws-tree" id="wsTree"></div>
             <p class="ws-note" id="networkNote">🔒 Agent code runs in a WebAssembly Python inside this tab: it can't touch your disk or other tabs, and changes to your files need your approval. Network access from agent code is blocked on a best-effort basis, so don't add secrets you couldn't afford to leak.</p>
@@ -151,11 +158,11 @@
                 </div>
                 <div>
                     <label for="settingAutoCompact">Auto-compact at (%)</label>
-                    <input type="number" id="settingAutoCompact" min="0" max="95" title="When the history reaches this share of the context, older steps are summarised and the last 4 kept in full. 0 = off. Also compacts once when the server rejects a prompt as too long.">
+                    <input type="number" id="settingAutoCompact" min="0" max="95" title="When the history reaches this share of the context, or leaves less room than Max tokens / reply (at most half the context), older steps are summarised and the last 4 kept in full. 0 = off. Also compacts when the server rejects a prompt as too long, or a reply runs out of context.">
                 </div>
                 <div>
                     <label for="settingContextSize">Context size (tokens)</label>
-                    <input type="number" id="settingContextSize" min="0" title="0 = use the size the server reports (llama.cpp /props). Set it for servers that don't report one, such as Ollama or cloud APIs.">
+                    <input type="number" id="settingContextSize" min="0" title="0 = use the size the server reports (llama.cpp /props, vLLM and LM Studio model lists, Ollama num_ctx). Test Connection shows what was found. Set it for servers that don't report one, such as most cloud APIs.">
                 </div>
             </div>
             <div class="modal-actions">
@@ -170,6 +177,7 @@
         <div class="modal modal-wide">
             <h3 id="viewerTitle">file</h3>
             <p class="hint" id="viewerMeta"></p>
+            <div class="viewer-tabs" id="viewerTabs" role="tablist" aria-label="Which view" hidden></div>
             <div class="viewer-body" id="viewerBody"></div>
             <div class="modal-actions">
                 <button type="button" class="cancel-btn" id="viewerDownload">⬇️ Download</button>

@@ -22,7 +22,9 @@
 The agent needs a model that can recover from its own errors. The reference tasks
 pass with Qwen3.8-27B at reasoning effort Low (see [ROADMAP.md](ROADMAP.md)).
 Packages such as numpy or pandas load on demand from the pinned Pyodide CDN, so they
-need a connection; the standard library works fully offline.
+need a connection; the standard library works fully offline, and a package that can't
+load says why. If the server goes away mid-task, the agent retries for two minutes and
+then pauses: nothing is lost, and Retry carries on where it stopped.
 
 Agent code runs in a WebAssembly Python inside the tab. Its network access is
 blocked on a **best-effort** basis: 17 known paths are tested and closed (DESIGN
@@ -71,6 +73,7 @@ See [DESIGN.md §11](DESIGN.md#11-project-layout--merge-path).
 |---|---|
 | [DESIGN.md](DESIGN.md) | The full design: supervision model, session import/export, architecture, agent loop, security, packaging |
 | [ROADMAP.md](ROADMAP.md) | Phases with checklists and exit criteria, from the first spike to the merge decision |
+| [PHASE0_FINDINGS.md](PHASE0_FINDINGS.md) | What the Phase 0 spike measured: offline boot, kill & re-seed, network blocking, GitHub Pages |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or AI) working in this folder, build & test commands |
-| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Decisions taken during the unattended MVP build, waiting for a review |
+| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Decisions taken without the owner (MVP, Phase 2a), waiting for a review |
 | [tests/README.md](tests/README.md) | What the unit, end-to-end and real-model tests cover |

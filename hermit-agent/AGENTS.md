@@ -8,18 +8,20 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-Phase 1 (MVP) is built: `src/` → `build.py` → `dist/hermit-agent-standalone.html`. The
+Phase 1 (MVP) and Phase 2a (reliability) are built: `src/` → `build.py` →
+`dist/hermit-agent-standalone.html`. The
 source of truth is [DESIGN.md](DESIGN.md), and the current phase is in
 [ROADMAP.md](ROADMAP.md). If an implementation needs to deviate from the design, update
-DESIGN.md in the same commit. Open decisions taken during the unattended MVP build are
-listed in [REVIEW_NOTES.md](REVIEW_NOTES.md).
+DESIGN.md in the same commit. Open decisions taken without the owner (the MVP build,
+Phase 2a) are listed in [REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ## Build & test
 ```bash
 python3 build.py                                   # → dist/hermit-agent-standalone.html
 node tests/run.mjs                                 # unit tests (pure logic)
 ../benchmark/.venv/bin/python tests/e2e_agent.py   # e2e vs. a mock endpoint, Chromium + Firefox
-../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1   # real model
+../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 --runs 3   # real model: success rate
+../benchmark/.venv/bin/python tests/e2e_longrun.py --base-url http://localhost:8080/v1           # real model: 20+ steps through outages
 ```
 See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwright's
 `wait_for_function` can't run inside it: poll with `page.evaluate` instead.
@@ -37,8 +39,8 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **OpenAI chat-completions schema** for all LLM traffic.
 - Glassmorphism, the Inter font, CSS variables plus `data-theme`, a fluid layout with
   minimal media queries.
-- Git workflow: check origin first, review before commit, commit locally, **never
-  push unless asked**, and use implementation plans for major changes.
+- Git workflow: check origin first, review before commit, and **never commit or push
+  unless the user asks**. No implementation plan is needed before implementing.
 
 ## Specific to this folder
 - **Don't touch the root app for agent work.** Never edit `../src/`, `../build.py`,
@@ -68,11 +70,11 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 |---|---|---|---|
 | `escapeHtml`, `gunzipToBytes`, `createThrottle`, `parseThinkSegments` | `script.js` | `28483fc` | unchanged |
 | `apiEndpoint`, `normalizeApiUrl`, `apiRoot`, `CLOUD_PROVIDERS`, `detectCloudProvider`, `isLocalEndpoint`, `describeRemoteEndpoint`, `isBlockedMixedContent` | `script.js` | `28483fc` | unchanged (example URL in the error text says :8080) |
-| `chatErrorHint` | `script.js` | `28483fc` | wllama branch dropped; context-overflow advice says "rewind"; its overflow regex moved into `isContextOverflowError` (shared with auto-compaction) |
+| `chatErrorHint` | `script.js` | `28483fc` | wllama branch dropped; context-overflow advice says "rewind"; its overflow regex moved into `isContextOverflowError` (shared with auto-compaction); agent wording via `retriedMs` (paused after retries) and `autoCompact` (overflow advice) |
 | `parseReasoningTemplateSupport`, `REASONING_PARAM_KEYS`, `looksLikeReasoningRejection` | `script.js` | `28483fc` | unchanged |
-| `buildReasoningParams` | `script.js` | `28483fc` | remote backend only (no wllama kwargs path) |
-| `probeReasoningSupport` | `script.js` | `28483fc` | returns levels plus llama.cpp's `n_ctx` (for the step stats); runs automatically before the first request |
-| `fetchAndStreamChat` → `streamChat` | `script.js` | `28483fc` | API path only; returns `{finishReason, usage, rawUsage, timings, clock}` instead of callbacks; strip-and-retry of reasoning params kept |
+| `buildReasoningParams` | `script.js` | `28483fc` | external-endpoint path only (no wllama kwargs path) |
+| `probeReasoningSupport` | `script.js` | `28483fc` | returns levels plus the context size and where it came from: llama.cpp's `n_ctx`, Ollama's `num_ctx`, else the model list (vLLM, LM Studio, OpenRouter-style); runs automatically before the first request |
+| `fetchAndStreamChat` → `streamChat` | `script.js` | `28483fc` | API path only; returns `{finishReason, usage, rawUsage, timings, clock}` instead of callbacks; strip-and-retry of reasoning params kept; a stream that ends without `finish_reason`/`[DONE]`, an empty answer, or 3 min of silence after data started throw retryable errors (`requestWithRetry`) |
 | Test Connection handler → `testConnection` | `script.js` | `28483fc` | no vision detection; also probes reasoning support |
 | `showToast` | `script.js` | `28483fc` | unchanged |
 | Debug console (`setDebugConsole`, `#debugConsole` markup and CSS) | `script.js`, `index.html`, `style.css` | `28483fc` | logs agent tool calls instead of wllama output; filter instead of verbosity; no tab, Escape closes |

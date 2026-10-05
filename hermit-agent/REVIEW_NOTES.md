@@ -1,6 +1,6 @@
-# Decisions to review (Phase 1 MVP build)
+# Decisions to review (Phase 1 MVP build, Phase 2a)
 
-The MVP was built unattended on 2026-10-03, on the instruction "make educated guesses
+The MVP was built unattended on 2026-10-03, and Phase 2a on 2026-10-05, on the instruction "make educated guesses
 when problems arise, note them for me to decide later". Each entry says what was
 decided, why, and what the alternative is. When you confirm or reverse one, delete it
 here; if you reverse it, update DESIGN.md too. The ⭐ entries are the ones most worth a
@@ -13,8 +13,8 @@ look.
   file and DESIGN.md's "as built" notes stand in for the plan. A local
   `walkthrough.md` (gitignored) summarises the changes.
 - **Phase 0 network blocking was answered by the MVP's own tests** instead of a
-  separate spike (DESIGN §10, "As built and measured"). Still open from Phase 0:
-  checking `crossOriginIsolated` on GitHub Pages.
+  separate spike (DESIGN §10, "As built and measured"). `crossOriginIsolated` on
+  GitHub Pages was checked on 2026-10-05 (false), which closed Phase 0.
 
 ## Packaging
 
@@ -179,18 +179,64 @@ look.
 
 - **The workspace panel sits on the right and wraps below the timeline on narrow
   screens.** It's not a drawer yet (Phase 2 mobile pass).
-- **There are no per-file text diffs** (Phase 2). A file chip opens the new
-  version, or the old one for a deletion.
+- **Per-file text diffs** (Phase 2a): a modified file's chip opens a line diff, with
+  tabs for both versions. Binary files (images included) have no diff view yet.
 - **No approve/reject keyboard shortcuts** (DESIGN §13 open question). Ctrl+Enter
   submits the composer.
 - **Dark mode follows the system at load**, and the toggle isn't remembered
   (ephemerality).
 
+## Phase 2a (reliability), decided while building it
+
+- ⭐ **Retry for 2 minutes, then pause.** Network errors, 408/429/5xx, a dropped or
+  stalled stream and an empty answer are retried after 2, 4, 8, 16, then 30 s, up to
+  2 minutes in all; then the run pauses (Retry / Continue resume it). It is a constant,
+  not a setting. Alternative: a "Retry for (s)" setting, or waiting indefinitely with
+  a periodic probe and auto-resume.
+- **A stream silent for 3 minutes after data started is given up and retried.** There
+  is no watchdog before the first token, because a long prompt can take minutes to
+  process; a connection that dies silently *before* the first token still hangs until
+  Stop. (Playwright's Firefox showed this with requests made offline.)
+- **A retry discards the partial reply** and asks again from scratch, rather than
+  trying to continue it.
+- ⭐ **Elision keeps the last 4–7 steps in full and moves in blocks of 4**, so the
+  prompt prefix stays cacheable for 4 requests at a time. Observations over 2,000
+  characters keep 600 + 600; long `<write_file>` bodies become a placeholder. Old
+  python code is never elided. Alternative: a fixed window of K steps (simpler, but
+  re-reads the tail on every request).
+- ⭐ **The system prompt lists all ~300 loadable packages** (~1k tokens of fixed,
+  cacheable prefix). Alternative: a curated short list, which would save tokens on
+  small contexts but invite `ModuleNotFoundError` round-trips.
+- ⭐ **No offline package pack** (DESIGN §8). Packages need the CDN on first import; the
+  failure says so. Revisit with Phase 4.
+- **Package loading has its own 2-minute limit**, outside the step timeout, and a
+  failed package means the code doesn't run at all.
+- **`<python>…</python>` runs like a fence.** Seen with Qwen3.8 in the success
+  measurement, where it ended a task as a "final answer". A `<tool_call>` gets advice
+  instead of running. Alternative: treat both as malformed replies.
+- **⚡ Send now aborts the model's reply in flight**, discarding its reasoning so far,
+  and the turn starts over with the note. It isn't offered while Python runs or a
+  step waits for you: the note goes out with the next request anyway.
+- **The close warning only fires for unexported work**, and a workspace of uploads
+  alone doesn't count. Before, any timeline or file triggered it.
+- **Large uploads ask first** at 50 MB in one go, 25 MB in one file, or 500 files.
+- **Tab in the code editor indents** (Shift+Tab leaves the field), which traps forward
+  Tab for keyboard users in that one field.
+- **"Run N more steps" remembers N** for the session (default 10); the composer's
+  Continue at the limit uses it too.
+
 ## Not covered by automated tests
 
-- Drag-drop and folder upload: wired, but only folder-less file upload is in e2e.
+- Drag-drop of a *folder* (entry-based): the folder input and a synthetic file drop are
+  in e2e, and the folder walk is unit-tested with fake entries, but a real OS drag of a
+  folder is tested by hand only.
 - Safari, mobile browsers, and real desktop Chrome/Edge/Firefox on Windows. The
   spike page ran in desktop Chrome on Windows; the app itself hasn't.
-- Long tasks against a real model: compaction is tested end-to-end only against the
-  mock endpoint. How good the summaries are, and whether an agent continues well from
-  them, hasn't been measured yet.
+- Long tasks against a real model: the Phase 2a long run (`tests/e2e_longrun.py`)
+  continued correctly across up to 4 compactions in a 33-step task, with Qwen3.8-27B.
+  That is one model and one task shape (short, independent steps); summaries of long,
+  stateful work (say, a refactor across files) haven't been measured.
+- Stock Firefox: once, under heavy CPU load (a real-model run in parallel), the outage
+  scenario's retry request neither failed nor answered for 30 s; it passed 9 runs in a
+  row afterwards. Not understood; a request that hangs before its first byte is only
+  ended by Stop (DESIGN §5.5).
