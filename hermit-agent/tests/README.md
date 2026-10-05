@@ -6,7 +6,7 @@ dependencies to install for the unit half.
 ```bash
 node tests/run.mjs                                              # unit tests (all *.test.mjs)
 python3 build.py && ../benchmark/.venv/bin/python tests/e2e_agent.py [chromium] [firefox] [firefox=/path/to/stock/firefox]
-../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 [--runs 3]
+../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 [--runs 3] [--tool-mode native|text]
 ../benchmark/.venv/bin/python tests/e2e_longrun.py --base-url http://localhost:8080/v1 [--runs 5]
 ```
 
@@ -74,6 +74,14 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
     `read_file` / `edit_file`, the prompt's figure rules.
   - `figures` and `fileListSent` through `validateSession` (unsafe paths dropped, junk
     coerced, older exports) and the transcript.
+- **`tools.test.mjs`** covers native tool calls (DESIGN §5.6): the tool definitions,
+  `resolveProtocol`, support detection from llama.cpp `/props`, Ollama `/api/show` and
+  model lists, which refusals count as a tool rejection, `parseToolCalls` (what runs,
+  what is skipped and why, finish/ask_user, unknown tools, bad JSON, cut-off arguments,
+  generated ids, replies without calls), native file batches through `applyFileActions`
+  and `fileCallResults`, answering a pending `ask_user`/`finish`, `toolHistoryAsText`
+  (calls written out parse back to the same actions), elision and compaction with tool
+  calls, the native system prompt and hints, and session format 2.
 - **`files.test.mjs`** covers the file actions (DESIGN §5.1):
   - `extractFileActions`: both quote styles, fences inside written content,
     line-start only, unclosed tags, path normalising and unsafe paths.
@@ -181,6 +189,19 @@ it stall, on cue; see its docstring):
     is, the file list follows step 5's observation (and no other), the cards show the
     images (figures first) and they load, the viewer shows a summary, a changed PNG opens
     on both versions, a zip's entries are listed, and figures survive export → import.
+17. **Native tool calls** (Phase 3; `native`, `native_fallback`), against the mock's
+    `/tools/v1`, whose `/props` reports tool support, and `/notools/v1`, which refuses
+    `tools` like llama.cpp without `--jinja`. The mock checks every request's history like
+    a strict server (each call answered by one tool message, valid JSON arguments, no
+    tool messages without `tools`). Auto goes native; a read + write batch answers each
+    call; a `write_file` next to `run_python` is not run and says so; an `edit_file` of
+    an uploaded file is held and its rejection reaches the model with the reason; a call
+    without an id gets a generated one; code in plain text runs nothing; the answer to
+    `ask_user` is its tool result; `finish` ends the task and a follow-up acknowledges it;
+    cards carry the 🔧 badge and list calls that didn't run; export (format 2) → import
+    keeps the history and a strict server accepts a follow-up. A refused request falls
+    back to code-as-action without an error card, and switching Settings → Actions to
+    text mid-session sends the history with calls written out as code and tags.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters
@@ -209,6 +230,9 @@ the results inside the same interpreter, or against the final answer. The two ta
 that change an uploaded file must have been held for it: that is the real-model gating
 check. It takes minutes per task, so launch it detached and watch the log; `--app`
 tests a copy of the build, so rebuilding meanwhile doesn't change what is measured.
+`--tool-mode native|text|auto` sets Settings → Actions (Phase 3); with `native` or `text`
+a run fails unless every step used that protocol, and each result records how many
+steps used which.
 
 ## Real model, long run — `e2e_longrun.py`
 

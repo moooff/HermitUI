@@ -163,6 +163,16 @@ button, select, input, textarea { font: inherit; color: inherit; }
     cursor: help;
     white-space: nowrap;
 }
+.protocol-badge {
+    font-size: 0.75rem;
+    color: var(--primary);
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--primary);
+    cursor: help;
+    white-space: nowrap;
+}
+.protocol-badge[data-protocol="text"] { color: var(--text-muted); border-color: var(--border); }
 #exportBtn { position: relative; }
 .unsaved-dot {
     position: absolute;
@@ -364,7 +374,8 @@ button, select, input, textarea { font: inherit; color: inherit; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .badge.status-ok { color: var(--ok); background: var(--ok-bg); }
 .badge.status-error, .badge.status-timeout, .badge.status-killed, .badge.status-crashed { color: var(--danger); background: var(--danger-bg); }
-.badge.status-cutoff, .badge.status-empty, .badge.status-broken, .badge.status-interrupted, .badge.status-toolcall, .badge.status-fakeobs, .badge.status-mixed { color: var(--warn); background: var(--warn-bg); }
+.badge.status-cutoff, .badge.status-empty, .badge.status-broken, .badge.status-interrupted, .badge.status-toolcall, .badge.status-fakeobs, .badge.status-mixed, .badge.status-textaction, .badge.status-badcall { color: var(--warn); background: var(--warn-bg); }
+.badge.protocol { margin-left: auto; opacity: 0.75; }
 .badge.verdict-auto { color: var(--ok); }
 .badge.verdict-approved, .badge.verdict-edited, .badge.verdict-approved-network- { color: var(--primary); }
 .badge.verdict-rejected, .badge.verdict-rolled-back, .badge.status-rejected { color: var(--danger); background: var(--danger-bg); }

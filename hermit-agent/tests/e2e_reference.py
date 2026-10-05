@@ -4,6 +4,7 @@ risk-based supervision, several runs each, reported as one pass rate.
 
     ../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 [--runs 3]
     ../benchmark/.venv/bin/python tests/e2e_reference.py --only "data processing,code + tests,calculation"   # Phase 1's three
+    ../benchmark/.venv/bin/python tests/e2e_reference.py --tool-mode native   # Phase 3: native tool calls (also: text, auto)
 
 Drives dist/hermit-agent-standalone.html like a user would: uploads the task's files,
 starts the task, approves held steps (each one is logged with its reasons), answers
@@ -386,7 +387,7 @@ def ev(page, js, arg=None):
     return page.evaluate(js, arg) if arg is not None else page.evaluate(js)
 
 
-def run_task(page, task, deadline_s):
+def run_task(page, task, deadline_s, tool_mode="auto"):
     page.click("#newSessionBtn")
     if page.locator("#confirmModal.active").count():
         page.click("#confirmOk")
@@ -404,9 +405,9 @@ def run_task(page, task, deadline_s):
     approvals = []
     while time.time() - t0 < deadline_s:
         info = ev(page, """() => ({ status: S.status, steps: S.timeline.filter(t => t.type === 'step' && t.phase === 'done').map(t => ({
-            n: t.n, kind: t.kind, status: t.status, decision: t.decision, out: (t.output || '').slice(-160), content: t.content })) })""")
+            n: t.n, kind: t.kind, status: t.status, decision: t.decision, out: (t.output || '').slice(-160), content: t.content, protocol: t.protocol })) })""")
         for s in info["steps"][seen:]:
-            print(f"    step {s['n']}: {s['kind']:6} {s['status'] or '':9} {s['decision'] or '':10} {s['out'].strip()[-100:]!r}")
+            print(f"    step {s['n']}: {s['kind']:6} {s['status'] or '':9} {s['decision'] or '':10} {'🔧' if s['protocol'] == 'tools' else '  '} {s['out'].strip()[-100:]!r}")
         seen = len(info["steps"])
         st = info["status"]
         if st == "awaiting-approval":
@@ -427,10 +428,16 @@ def run_task(page, task, deadline_s):
     answer = ev(page, "() => { const t = S.timeline.filter(t => t.type === 'step').pop(); return t ? t.content : ''; }") or ""
     steps = ev(page, "() => S.stepCount")
     tokens = ev(page, "() => S.tokens")
-    base = {"name": task["name"], "steps": steps, "secs": round(elapsed), "tokens": tokens, "approvals": approvals, "answer": answer[-400:]}
+    protocols = ev(page, "() => S.timeline.filter(t => t.type === 'step').map(t => t.protocol || 'text')")
+    base = {"name": task["name"], "steps": steps, "secs": round(elapsed), "tokens": tokens, "approvals": approvals, "answer": answer[-400:],
+            "protocols": {p: protocols.count(p) for p in set(protocols)}}
     if status != "done":
         return {**base, "passed": False, "detail": f"ended in state {status}" + ("" if time.time() - t0 < deadline_s else " (deadline)")}
     problems = []
+    # Phase 3: a run meant to measure one protocol must have used only that one.
+    want = {"native": "tools", "text": "text"}.get(tool_mode)
+    if want and any(p != want for p in protocols):
+        problems.append(f"steps used {base['protocols']}, not only {want}")
     flat = answer.replace(",", "").replace(" ", "")
     for want in task.get("answer_contains", []):
         if want.replace(",", "").replace(" ", "") not in flat:
@@ -462,6 +469,7 @@ def main():
     ap.add_argument("--model", default="")
     ap.add_argument("--browser", default="chromium")
     ap.add_argument("--effort", default="low")
+    ap.add_argument("--tool-mode", default="auto", choices=["auto", "native", "text"], help="Settings → Actions (Phase 3)")
     ap.add_argument("--runs", type=int, default=1, help="runs of the whole suite")
     ap.add_argument("--deadline", type=int, default=1200, help="seconds per task")
     ap.add_argument("--only", default="", help="comma-separated substrings of task names")
@@ -483,17 +491,18 @@ def main():
         page.click("#settingsBtn")
         page.fill("#settingUrl", args.base_url)
         page.fill("#settingModelInput", args.model)
+        page.select_option("#settingToolMode", args.tool_mode)
         page.click("#settingSave")
         page.select_option("#effortSelect", args.effort)
         page.select_option("#autonomySelect", "risk")
         for run in range(1, args.runs + 1):
             for task in tasks:
                 print(f"▶ run {run}/{args.runs} · {task['name']} …")
-                r = run_task(page, task, args.deadline)
+                r = run_task(page, task, args.deadline, args.tool_mode)
                 r["run"] = run
                 print(f"  {'✅' if r['passed'] else '❌'} {task['name']}: {r['steps']} steps, {r['secs']} s {r.get('detail', '')}")
                 results.append(r)
-                out.write_text(json.dumps({"base_url": args.base_url, "model": args.model, "effort": args.effort, "results": results}, indent=1))
+                out.write_text(json.dumps({"base_url": args.base_url, "model": args.model, "effort": args.effort, "tool_mode": args.tool_mode, "results": results}, indent=1))
         browser.close()
     passed = sum(r["passed"] for r in results)
     print(f"\n{'task':34} pass rate")

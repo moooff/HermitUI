@@ -17,7 +17,8 @@ const APP_VERSION = "0.1.0";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 const SESSION_FORMAT = "hermit-agent-session";
-const SESSION_FORMAT_VERSION = 1;
+// 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
+const SESSION_FORMAT_VERSION = 2;
 const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8 };
 const THROTTLE_MS = 80;
 
@@ -307,21 +308,13 @@ function looksLikeReasoningRejection(detail) {
 // ========== 3. Agent logic (pure) ==========
 // DESIGN §5.3. The user's custom instructions are appended after it. packages: the import
 // names Pyodide can load (packageImportNames); without them a few examples are named.
-function buildSystemPrompt(instructions, packages) {
+// protocol: "tools" describes the native tools (DESIGN §5.6), else code-as-action (§5.1).
+function buildSystemPrompt(instructions, packages, protocol) {
     const pkgs = Array.isArray(packages) && packages.length
         ? `Only these packages from the Pyodide distribution can be imported besides the standard library; each is loaded automatically on its first import: ${packages.join(", ")}.`
         : "Packages from the Pyodide distribution (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, ...) are loaded automatically when you import them.";
-    const base = `You are an agent that solves tasks by writing and running Python code. A human supervises you and may approve, edit or reject your steps.
-
-Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the user's browser.
-- The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
-- The standard library is available. ${pkgs} There is no pip and no network access, so nothing else can be installed. input() does not work.
-- There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
-- Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
-- It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
-- matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
-- Each step has a time limit. A step that runs too long is killed.
-
+    // Code-as-action (DESIGN §5.1).
+    const textFormat = `
 Every reply must be exactly ONE of:
 1. Short reasoning, then exactly ONE \`\`\`python code block. It is executed and you get its output back in an <observation> message. Write nothing after the code block. Only \`\`\`python blocks are executed. To show output, data or other non-Python text, use a \`\`\`text block.
 2. Short reasoning, then one or more file actions (see below). They are applied in order and you get the results back in an <observation> message. Never put file actions and a \`\`\`python block in the same reply.
@@ -352,6 +345,32 @@ Rules:
 - Don't delete or overwrite the user's files unless the task requires it.
 - Take one step at a time: you only see a step's output in the next turn.
 - Code blocks are executed, never saved. To create a file, use <write_file> (or write it from your code). A "# reader.py" comment at the top of a block does not create a file.`;
+    // Native tool calls (DESIGN §5.6): the tools describe their own arguments.
+    const toolsFormat = `
+You act only through tool calls, and you get each call's result back in an <observation>:
+- run_python: runs Python code. Code you run is not saved: to create a file, use write_file (or write it from your code).
+- read_file, write_file, edit_file: read and change text files in /workspace directly. Prefer them over Python for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. read_file shows at most 400 lines at a time: ask for more with start_line. Each old_text of edit_file must match the file exactly, indentation included, and occur exactly once.
+- finish: ends the task with your final answer for the user, once the task is complete. Mention the files you created.
+- ask_user: asks the user a question, if you cannot continue without information from them.
+
+Each reply is ONE step: one run_python call, OR one or more file tool calls (applied in order; if any write or edit fails, none of that reply's changes are applied), OR finish, OR ask_user. Don't combine run_python with other tools in one reply: only the first action runs. Code or file contents written in your message text are not run.
+
+Rules:
+- Inspect files before you modify them.
+- Print short summaries, not whole files or huge data.
+- Don't delete or overwrite the user's files unless the task requires it.
+- Take one step at a time: you only see a step's result in the next turn.`;
+    const base = `You are an agent that solves tasks by writing and running Python code. A human supervises you and may approve, edit or reject your steps.
+
+Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the user's browser.
+- The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
+- The standard library is available. ${pkgs} There is no pip and no network access, so nothing else can be installed. input() does not work.
+- There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
+- Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
+- It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
+- matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
+- Each step has a time limit. A step that runs too long is killed.
+${protocol === "tools" ? toolsFormat : textFormat}`;
     const extra = String(instructions || "").trim();
     return extra ? base + "\n\nAdditional instructions from the user:\n" + extra : base;
 }
@@ -491,18 +510,330 @@ function buildObservation(o) {
 }
 
 // Append text to the last user message, or add a user message when the last one is
-// the assistant's. Some chat templates reject two user messages in a row.
+// the assistant's or a tool result. Some chat templates reject two user messages in a
+// row. A native tool call still waiting for the user (ask_user, or finish before a
+// follow-up) is answered first: ask_user with the text itself, finish with a short
+// acknowledgement and the text as a user message (DESIGN §5.6).
 function appendToLastUserMessage(messages, text) {
     const last = messages[messages.length - 1];
-    if (last && last.role === "user") last.content += "\n\n" + text;
-    else messages.push({ role: "user", content: text });
+    if (last && last.role === "user") { last.content += "\n\n" + text; return messages; }
+    const pending = last && last.role === "assistant" ? last.tool_calls || [] : [];
+    const asks = pending.filter(c => c.function && c.function.name === "ask_user");
+    for (const c of pending) {
+        const answered = asks.length && c === asks[asks.length - 1];
+        messages.push({ role: "tool", tool_call_id: c.id, content: answered ? text : c.function && c.function.name === "finish" ? "Your final answer was shown to the user." : "(not run)" });
+    }
+    if (!asks.length) messages.push({ role: "user", content: text });
     return messages;
+}
+
+// Does the history end where the model is due to answer (a user message or a tool
+// result), rather than with the model's own reply?
+function awaitsModel(messages) {
+    const last = (messages || [])[(messages || []).length - 1];
+    return !!last && (last.role === "user" || last.role === "tool");
+}
+
+// A deep copy of a history message, tool calls included.
+function copyMessage(m) {
+    const c = { role: m.role, content: m.content };
+    if (Array.isArray(m.tool_calls)) c.tool_calls = m.tool_calls.map(t => ({ id: t.id, type: "function", function: { name: t.function.name, arguments: t.function.arguments } }));
+    if (m.tool_call_id !== undefined) c.tool_call_id = m.tool_call_id;
+    return c;
+}
+
+// ---------- Native tool calls (DESIGN §5.6) ----------
+// The tools offered when the endpoint supports OpenAI `tools`. The file tools take the
+// argument shapes applyFileActions consumes; run_python, ask_user and finish are the
+// code block, the ask: line and the final answer of code-as-action.
+const AGENT_TOOL_NAMES = ["run_python", "read_file", "write_file", "edit_file", "ask_user", "finish"];
+function agentToolDefs() {
+    const fn = (name, description, properties, required) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required } } });
+    const path = { type: "string", description: "Path relative to /workspace, e.g. \"data/report.md\"" };
+    return [
+        fn("run_python", "Run Python code in the persistent interpreter, with /workspace as the working directory. Variables persist between calls. You get stdout, stderr, errors and the list of changed files back. Print short summaries, not whole files.",
+            { code: { type: "string", description: "The Python code to run" } }, ["code"]),
+        fn("read_file", "Show a text file from /workspace with line numbers, at most 400 lines per call. The line numbers are not part of the file.",
+            { path, start_line: { type: "integer", minimum: 1, description: "First line to show (default 1)" }, end_line: { type: "integer", minimum: 1, description: "Last line to show" } }, ["path"]),
+        fn("write_file", "Create a text file in /workspace, or replace all of its content. Folders are created as needed.",
+            { path, content: { type: "string", description: "The complete content of the file" } }, ["path", "content"]),
+        fn("edit_file", "Replace text in an existing text file. Each old_text must match the file exactly, indentation included, and occur exactly once: include surrounding lines to make it unique. An empty new_text deletes the text.",
+            { path, edits: { type: "array", minItems: 1, items: { type: "object", properties: { old_text: { type: "string" }, new_text: { type: "string" } }, required: ["old_text", "new_text"] } } }, ["path", "edits"]),
+        fn("ask_user", "Ask the user a question when you cannot continue without their input. The task pauses until they answer.",
+            { question: { type: "string" } }, ["question"]),
+        fn("finish", "End the task with your final answer for the user, once the task is complete. Mention the files you created.",
+            { answer: { type: "string", description: "The final answer, in Markdown" } }, ["answer"]),
+    ];
+}
+
+// Which protocol the next request uses: "tools" (native tool calls) or "text"
+// (code-as-action). setting: "auto" | "native" | "text"; support: what the endpoint
+// reports ("supported" | "unsupported" | "unknown"); rejected: it refused a request
+// with tools. Auto only goes native on a positive report: a server that silently ignores
+// `tools` would leave the model with no way to act.
+function resolveProtocol(setting, support, rejected) {
+    if (rejected || setting === "text") return "text";
+    if (setting === "native") return "tools";
+    return support === "supported" ? "tools" : "text";
+}
+
+// Tool-call support from llama.cpp's /props: chat_template_caps when present, else
+// whether its chat template handles tools at all.
+function toolSupportFromProps(p) {
+    const caps = p && p.chat_template_caps;
+    if (caps && typeof caps.supports_tool_calls === "boolean") return caps.supports_tool_calls && caps.supports_tools !== false ? "supported" : "unsupported";
+    // \x7b is an opening curly brace, spelled out so tests/extract.mjs's brace matching holds.
+    if (p && typeof p.chat_template === "string") return /\x7b%-?[^%]*\btools\b/.test(p.chat_template) ? "supported" : "unsupported";
+    return "unknown";
+}
+
+// From Ollama's /api/show: its capabilities list, else its Go template ({{ .Tools }}).
+function toolSupportFromOllamaShow(show) {
+    if (show && Array.isArray(show.capabilities)) return show.capabilities.includes("tools") ? "supported" : "unsupported";
+    if (show && typeof show.template === "string") return /\.Tools\b/.test(show.template) ? "supported" : "unsupported";
+    return "unknown";
+}
+
+// The entry for `model` in an OpenAI-style model list; a list of one counts as that model.
+function findListedModel(data, model) {
+    const list = Array.isArray(data) ? data : (data && (data.data || data.models)) || [];
+    if (!Array.isArray(list) || !list.length) return null;
+    const want = String(model || "");
+    const m = list.find(x => x && want && (x.id === want || x.name === want || x.model === want)) || (list.length === 1 ? list[0] : null);
+    return m && typeof m === "object" ? m : null;
+}
+
+// From a model list's supported_parameters (OpenRouter and others).
+function toolSupportFromModelList(data, model) {
+    const m = findListedModel(data, model);
+    if (!m || !Array.isArray(m.supported_parameters)) return "unknown";
+    return m.supported_parameters.includes("tools") ? "supported" : "unsupported";
+}
+
+// Did the server refuse the request because of `tools`? llama.cpp without --jinja, vLLM
+// without --enable-auto-tool-choice, Ollama models without tool support and OpenRouter
+// routes without one all answer like this; a template that can't render the tool
+// messages fails with a 500 that names them.
+function looksLikeToolRejection(status, detail) {
+    if (![400, 404, 422, 500, 501].includes(status)) return false;
+    return /\btools?\b|tool[ _-]?(?:choice|calls?|use|parser)|function[ _-]?call/i.test(String(detail || ""));
+}
+
+// Ids for calls the server sent without one (or twice): 9 alphanumerics, the format the
+// strictest APIs (Mistral) accept, unique within a session (step, call index).
+function fallbackToolCallId(step, i) {
+    return "h" + String(step % 100000).padStart(5, "0") + String(i % 1000).padStart(3, "0");
+}
+
+// A tool call's arguments → a file action in the shape extractFileActions produces, so
+// applyFileActions treats both protocols alike. Errors name the tool's own fields.
+function toolCallToFileAction(name, args) {
+    const a = args || {};
+    const action = { tool: name, args: { path: typeof a.path === "string" ? a.path : "" } };
+    const path = normalizeActionPath(a.path);
+    if (typeof a.path !== "string" || !a.path.trim()) action.error = `${name} needs a path, e.g. {"path": "notes.txt"}.`;
+    else if (!path) action.error = `Unsafe path ${JSON.stringify(a.path.slice(0, 100))}: use a relative path inside /workspace.`;
+    else action.args.path = path;
+    if (name === "read_file") {
+        for (const key of ["start_line", "end_line"]) {
+            if (a[key] === undefined || a[key] === null) continue;
+            const n = Number(a[key]);
+            if (Number.isInteger(n) && n >= 1) action.args[key] = n;
+            else action.error = action.error || `${key} ${JSON.stringify(a[key])} is not a line number (lines start at 1).`;
+        }
+    } else if (name === "write_file") {
+        if (typeof a.content !== "string") action.error = action.error || "write_file needs content: the complete text of the file.";
+        action.args.content = typeof a.content === "string" ? a.content : "";
+    } else {
+        const edits = Array.isArray(a.edits) ? a.edits : [];
+        action.args.edits = edits.filter(e => e && typeof e === "object").map(e => ({ old_text: typeof e.old_text === "string" ? e.old_text : "", new_text: typeof e.new_text === "string" ? e.new_text : "" }));
+        if (!action.args.edits.length) action.error = action.error || "edit_file needs edits: a list of {\"old_text\": …, \"new_text\": …}.";
+        else if (edits.some(e => !e || typeof e.old_text !== "string" || typeof e.new_text !== "string")) action.error = action.error || "Every edit needs old_text and new_text, both strings.";
+    }
+    return action;
+}
+
+// DESIGN §5.6: what one native reply does. calls: [{ id, name, arguments }] as streamed
+// (arguments a JSON string, or an object from servers that send one). The first action
+// call decides: a run_python runs alone; a file tool runs together with the file calls
+// right after it, as one batch. finish and ask_user count only without action calls.
+// Every call that doesn't run gets a reason. A reply without calls is read like a
+// code-as-action reply, except that a fence or a file tag in it runs nothing: plain text
+// is the final answer. Returns { kind, prose, code?, actions? (with .id), answer?,
+// question?, stored: the calls to keep in the history, [{ id, name, arguments }], skipped:
+// [[id, reason]], notes: for the step's observation }.
+function parseToolCalls(calls, text, finishReason, step) {
+    const prose = String(text || "").trim();
+    const out = { prose, stored: [], skipped: [], notes: [] };
+    const seen = new Set();
+    const list = (calls || []).map((c, i) => {
+        let id = typeof c.id === "string" && c.id && !seen.has(c.id) ? c.id : fallbackToolCallId(step || 0, i);
+        while (seen.has(id)) id = fallbackToolCallId(step || 0, i + 500);
+        seen.add(id);
+        const name = String(c.name || "");
+        let args = null, json = "";
+        if (c.arguments && typeof c.arguments === "object" && !Array.isArray(c.arguments)) { args = c.arguments; json = JSON.stringify(args); }
+        else {
+            const raw = String(c.arguments ?? "").trim();
+            try { args = raw === "" ? {} : JSON.parse(raw); json = raw === "" ? "{}" : raw; } catch (e) { args = null; }
+            if (!args || typeof args !== "object" || Array.isArray(args)) args = null;
+        }
+        return { id, name, args, json };
+    });
+    // A call whose arguments aren't a JSON object can't go back into the history (servers
+    // re-parse them when they render the prompt), so it is dropped there and only named.
+    const bad = list.filter(c => !c.args);
+    const ok = list.filter(c => c.args);
+    if (finishReason === "length" && (bad.length || !list.length)) {
+        out.kind = "cutoff";
+        out.stored = ok.map(c => ({ id: c.id, name: c.name, arguments: c.json }));
+        for (const c of ok) out.skipped.push([c.id, "Not run: the reply was cut off before it finished."]);
+        return out;
+    }
+    for (const c of bad) out.notes.push(`Your ${c.name || "unnamed"} call was ignored: its arguments were not a valid JSON object.`);
+    if (!list.length) {
+        const p = parseReply(text, finishReason);
+        if (["code", "files", "mixed", "broken", "toolcall"].includes(p.kind)) return { ...out, kind: "textaction", tag: p.kind === "toolcall" ? p.tag : "", what: p.kind === "files" ? "files" : p.kind === "toolcall" ? "toolcall" : "code" };
+        return { ...p, prose: p.prose !== undefined ? p.prose : prose, stored: [], skipped: [], notes: [] };
+    }
+    const isAction = (c) => c.name === "run_python" || FILE_TOOLS.includes(c.name);
+    const known = (c) => AGENT_TOOL_NAMES.includes(c.name);
+    const unknownReason = (c) => `There is no tool ${JSON.stringify(c.name)}. The tools are ${AGENT_TOOL_NAMES.join(", ")}` + (/bash|shell|terminal|exec|command/i.test(c.name) ? " (no shell: run Python, e.g. runpy.run_path(\"script.py\"))." : ".");
+    const first = ok.findIndex(c => known(c) && isAction(c));
+    if (first < 0) {
+        const end = ok.find(c => c.name === "finish" || c.name === "ask_user");
+        const field = end && (end.name === "finish" ? "answer" : "question");
+        const value = end && typeof end.args[field] === "string" ? end.args[field].trim() : "";
+        if (end && (value || (end.name === "finish" && prose))) {
+            // Ending the run: only the call that ends it stays in the history, answered when
+            // the user replies (appendToLastUserMessage).
+            out.stored = [{ id: end.id, name: end.name, arguments: end.json }];
+            if (end.name === "finish") return { ...out, kind: "final", answer: value };
+            return { ...out, kind: "ask", question: value };
+        }
+        out.kind = "badcall";
+        out.stored = ok.map(c => ({ id: c.id, name: c.name, arguments: c.json }));
+        for (const c of ok) {
+            out.skipped.push([c.id, !known(c) ? unknownReason(c)
+                : `${c.name} needs ${c.name === "finish" ? "an answer" : "a question"}: {"${c.name === "finish" ? "answer" : "question"}": "…"}.`]);
+        }
+        if (!ok.length) out.notes.push("Nothing ran. Call a tool with valid JSON arguments, or finish with your final answer.");
+        return out;
+    }
+    out.stored = ok.map(c => ({ id: c.id, name: c.name, arguments: c.json }));
+    const lead = ok[first];
+    if (lead.name === "run_python" && !(typeof lead.args.code === "string" && lead.args.code.trim())) {
+        for (const c of ok) out.skipped.push([c.id, c === lead ? "Not run: run_python needs code: {\"code\": \"print(1)\"}." : "Not run: the run_python call before it had no code, so nothing in this reply ran."]);
+        return { ...out, kind: "badcall" };
+    }
+    let ran = [lead];
+    if (lead.name !== "run_python") {
+        for (let i = first + 1; i < ok.length && FILE_TOOLS.includes(ok[i].name); i++) ran.push(ok[i]);
+    }
+    const ranIds = new Set(ran.map(c => c.id));
+    for (const c of ok) {
+        if (ranIds.has(c.id)) continue;
+        let why;
+        if (!known(c)) why = unknownReason(c);
+        else if (c.name === "finish" || c.name === "ask_user") why = `Not processed: ${c.name} only counts in a reply without other tool calls. Call it again on its own once you have seen these results.`;
+        else if (c.name === "run_python" && lead.name === "run_python") why = "Not run: only the first run_python call of a reply runs. Send this one again if you still need it.";
+        else if (c.name === "run_python") why = "Not run: run_python doesn't run in the same reply as file tools. Call it again now that the file tools have run.";
+        else if (lead.name === "run_python") why = `Not run: ${c.name} doesn't run in the same reply as run_python. Call it again now that the code has run.`;
+        else why = `Not run: only the file tools at the start of a reply run together, and a call to another tool came first. Call ${c.name} again now.`;
+        out.skipped.push([c.id, why]);
+    }
+    if (lead.name === "run_python") {
+        const code = lead.args.code;
+        return { ...out, kind: "code", code: code.endsWith("\n") ? code : code + "\n", blockCount: 1, runId: lead.id };
+    }
+    return { ...out, kind: "files", actions: ran.map(c => ({ ...toolCallToFileAction(c.name, c.args), id: c.id })) };
+}
+
+// A native tool call written out the code-as-action way: a ```python block, file-action
+// tags, the answer or an ask: line. For text-mode requests and the summariser.
+function toolCallAsText(call) {
+    const f = call && call.function || {};
+    let a = {};
+    try { a = JSON.parse(f.arguments || "{}") || {}; } catch (e) { a = {}; }
+    const s = (v) => (typeof v === "string" ? v : "");
+    const attr = (v) => JSON.stringify(s(v)).replace(/\\"/g, "&quot;");
+    switch (f.name) {
+        case "run_python": { const code = s(a.code); return "```python\n" + code + (code.endsWith("\n") ? "" : "\n") + "```"; }
+        case "read_file": return `<read_file path=${attr(a.path)}${a.start_line ? ` start="${a.start_line}"` : ""}${a.end_line ? ` end="${a.end_line}"` : ""}/>`;
+        case "write_file": return `<write_file path=${attr(a.path)}>\n${s(a.content)}</write_file>`;
+        case "edit_file": return `<edit_file path=${attr(a.path)}>\n` + (Array.isArray(a.edits) ? a.edits : []).map(e => `<old>\n${s(e && e.old_text)}\n</old>\n<new>\n${s(e && e.new_text)}\n</new>`).join("\n") + "\n</edit_file>";
+        case "finish": return s(a.answer);
+        case "ask_user": return "ask: " + s(a.question);
+        default: return `[call to ${String(f.name || "?")}: ${String(f.arguments || "").slice(0, 2000)}]`;
+    }
+}
+
+// A message's text with its tool calls written out (toolCallAsText).
+function messageAsText(m) {
+    const calls = Array.isArray(m.tool_calls) ? m.tool_calls.map(toolCallAsText).filter(Boolean) : [];
+    return [String(m.content || "").trim(), ...calls].filter(Boolean).join("\n\n");
+}
+
+// The history in code-as-action form, for a text-mode request after native steps (a
+// fallback, or the setting changed): calls become blocks and tags, and tool results
+// merge with the user message after them into one user message.
+function toolHistoryAsText(messages) {
+    const out = [];
+    for (const m of messages || []) {
+        if (m.role === "assistant") { out.push({ role: "assistant", content: messageAsText(m) }); continue; }
+        if (m.role === "system") { out.push({ role: "system", content: m.content }); continue; }
+        const prev = out[out.length - 1];
+        if (prev && prev.role === "user") prev.content += "\n\n" + m.content;
+        else out.push({ role: "user", content: m.content });
+    }
+    return out;
+}
+
+// What the model gets back per call of a native file step: each read, write or edit its
+// own result, the step's file changes and notes with the last one.
+function fileCallResults(results, failed) {
+    const failedAt = failed ? results.findIndex(r => !r.ok && r.tool !== "read_file") : -1;
+    const native = (s) => String(s).replace(/<old>/g, "old_text").replace(/<new>/g, "new_text").replace(/<write_file>/g, "write_file");
+    return results.map((r, i) => {
+        let head = `${r.tool} ${r.path || "?"}: ${r.ok ? r.message : "ERROR: " + native(r.message)}`;
+        if (failed && r.ok && r.tool !== "read_file") head = `${r.tool} ${r.path}: not applied, because the ${results[failedAt].tool} call for ${results[failedAt].path || "?"} failed: no file changes of this reply were written. Fix it and send all of the changes again.`;
+        else if (failed && i === failedAt) head += "\nNo file changes of this reply were applied. Fix this and send all of the changes again.";
+        return r.output !== undefined && r.ok ? head + "\n" + r.output : head;
+    });
+}
+
+// What a reply that ran nothing is told, per kind (parseReply, parseToolCalls).
+// native: the session acts through tool calls; ctxCut: the context, not max_tokens, cut it.
+function noActionAdvice(parsed, native, ctxCut) {
+    const act = native ? "Make ONE tool call (run_python, or file tools), or call finish with the final answer." : "Reply with ONE ```python block, file actions, or the final answer.";
+    switch (parsed.kind) {
+        case "cutoff": return ctxCut
+            ? `Your reply was cut off because the context window filled up before it finished, so nothing ran. ${act}`
+            : `Your reply was cut off at the token limit before it finished, so nothing ran. Reason less and ${act.charAt(0).toLowerCase() + act.slice(1)}`;
+        case "empty": return native ? "Your reply had no tool call and no answer, so nothing ran. Call a tool, finish with the final answer, or ask_user." : "Your reply had no code block, no file actions and no answer, so nothing ran. Reply with ONE ```python block, file actions, the final answer, or an ask: line.";
+        case "broken": return parsed.unclosed
+            ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
+            : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.";
+        case "mixed": return "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.";
+        case "toolcall": return `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py")); to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).`;
+        case "fakeobs": return native
+            ? "Your reply contained an <observation> tag, but observations only come back after a tool call ran, so nothing ran. Call a tool."
+            : "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.";
+        case "textaction": return parsed.what === "toolcall"
+            ? `Your reply contained a tool call written as text (<${parsed.tag || "tool_call"}>) that wasn't received as a tool call, so nothing ran. Make the call again through the tools interface.`
+            : `Your reply had ${parsed.what === "files" ? "file-action tags" : "a ```python block"} in its text, but here code and file changes only run as tool calls, so nothing ran. Call ${parsed.what === "files" ? "read_file, write_file or edit_file" : "run_python"} instead, or call finish if that was your final answer.`;
+        case "badcall": return "None of your tool calls could run; each one's result says why.";
+        default: return "Nothing ran.";
+    }
 }
 
 // ---------- Context compaction (DESIGN §5.4) ----------
 function messageChars(messages) {
     let n = 0;
-    for (const m of messages || []) n += String(m.content || "").length;
+    for (const m of messages || []) {
+        n += String(m.content || "").length;
+        for (const c of m.tool_calls || []) n += String(c.function && c.function.name || "").length + String(c.function && c.function.arguments || "").length;
+    }
     return n;
 }
 
@@ -585,7 +916,7 @@ If the history starts with an earlier summary, fold it in. Write only the summar
     if (prev) parts.push("EARLIER SUMMARY:\n" + prev);
     for (let i = 2; i < cut; i++) {
         const m = messages[i];
-        parts.push(`--- ${m.role === "assistant" ? "AGENT" : "RESULT"} ---\n` + truncateOutput(m.content, 1500, 1500));
+        parts.push(`--- ${m.role === "assistant" ? "AGENT" : "RESULT"} ---\n` + truncateOutput(m.role === "assistant" ? messageAsText(m) : m.content, 1500, 1500));
     }
     return [
         { role: "system", content: system },
@@ -600,7 +931,7 @@ function buildCompactedMessages(messages, cut, summary, toStep, files) {
     return [
         { role: messages[0].role, content: messages[0].content },
         { role: "user", content: taskMessageBase(messages[1].content) + "\n\n" + block },
-        ...messages.slice(cut).map(m => ({ role: m.role, content: m.content })),
+        ...messages.slice(cut).map(copyMessage),
     ];
 }
 
@@ -629,14 +960,15 @@ const FILE_EXTENSIONS = ["py", "csv", "tsv", "txt", "md", "json", "jsonl", "yaml
 
 // A code step that starts with a "# reader.py" comment, as if that saved it — but no
 // such file exists after the run. Models carry this habit over from chat UIs.
-function filenameCommentHint(code, paths) {
+// native: the session acts through tool calls, so the advice names write_file.
+function filenameCommentHint(code, paths, native) {
     const first = String(code || "").split("\n").find(l => l.trim()) || "";
     const m = first.match(/^\s*#\s*(?:file(?:name)?\s*:\s*)?(\S+\.([A-Za-z0-9]+))\s*$/i);
     if (!m || !FILE_EXTENSIONS.includes(m[2].toLowerCase())) return "";
     const name = m[1].replace(/^\/?workspace\//, "");
     const have = new Set(paths || []);
     if (have.has(name) || [...have].some(p => p.split("/").pop() === name)) return "";
-    return `Your code starts with "# ${m[1]}", but running a code block doesn't save it: there is no ${name} in /workspace. If you meant to create that file, use <write_file path="${name}">.`;
+    return `Your code starts with "# ${m[1]}", but running ${native ? "code" : "a code block"} doesn't save it: there is no ${name} in /workspace. If you meant to create that file, use ${native ? `write_file with path "${name}"` : `<write_file path="${name}">`}.`;
 }
 
 // Files a final answer presents (in backticks or bold) that aren't in the workspace.
@@ -962,18 +1294,23 @@ function elideHistory(messages, keepSteps, minChars) {
     const at = [];
     for (let i = 2; i < messages.length; i++) if (messages[i].role === "assistant") at.push(i);
     const elideSteps = Math.floor(Math.max(0, at.length - keep) / keep) * keep;
-    const out = messages.map(m => ({ role: m.role, content: m.content }));
+    const out = messages.map(copyMessage);
     if (!elideSteps) return out;
     const end = at[elideSteps];   // messages[2..end) belong to the elided steps
     const kb = (n) => (n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " characters");
     for (let i = 2; i < end; i++) {
         const m = out[i];
+        const placeholder = (body) => `[… ${body.replace(/^\r?\n/, "").split("\n").length} lines (${kb(body.length)}) elided from this old step; the file is in /workspace …]`;
         if (m.role === "assistant") {
-            m.content = m.content.replace(/^([ \t]*<write_file\b[^>\n]*>)([\s\S]*?)(<\/write_file>)/gm, (all, open, body, close) => {
-                if (body.length <= min) return all;
-                const lines = body.replace(/^\r?\n/, "").split("\n").length;
-                return `${open}\n[… ${lines} lines (${kb(body.length)}) elided from this old step; the file is in /workspace …]\n${close}`;
-            });
+            m.content = m.content.replace(/^([ \t]*<write_file\b[^>\n]*>)([\s\S]*?)(<\/write_file>)/gm, (all, open, body, close) => (body.length <= min ? all : `${open}\n${placeholder(body)}\n${close}`));
+            // Native write_file calls: the content argument (the arguments stay valid JSON).
+            for (const c of m.tool_calls || []) {
+                if (c.function.name !== "write_file" || c.function.arguments.length <= min) continue;
+                try {
+                    const a = JSON.parse(c.function.arguments);
+                    if (a && typeof a.content === "string" && a.content.length > min) c.function.arguments = JSON.stringify({ ...a, content: placeholder(a.content) });
+                } catch (e) { /* stored calls are valid JSON; leave anything else alone */ }
+            }
         } else {
             m.content = m.content.replace(/(<observation step="(\d+)"[^>\n]*>\n)([\s\S]*?)(\n<\/observation>)/g, (all, open, step, body, close) => {
                 if (body.length <= min) return all;
@@ -1489,7 +1826,7 @@ function transcriptMarkdown(session) {
         else if (item.type === "compaction") md.push(`## History compacted — steps ${item.fromStep}–${item.toStep}`, ``, `<details><summary>Summary the model continued from</summary>`, ``, item.summary || "", ``, `</details>`, ``);
         else if (item.type === "step") {
             const verdict = item.decision ? ` · ${item.decision}${item.decidedBy ? " by " + item.decidedBy : ""}` : "";
-            md.push(`## Step ${item.n} — ${item.kind}${item.status ? " · " + item.status : ""}${verdict}`, ``);
+            md.push(`## Step ${item.n} — ${item.kind}${item.status ? " · " + item.status : ""}${verdict}${item.protocol === "tools" ? " · tool call" : ""}`, ``);
             if (item.retryNote) md.push(`> ${item.retryNote}`, ``);
             if (item.reasoning) md.push(`<details><summary>Reasoning</summary>`, ``, block("text", item.reasoning), ``, `</details>`, ``);
             if (item.kind === "final") md.push(item.content || "", ``);
@@ -1509,6 +1846,8 @@ function transcriptMarkdown(session) {
                 if (item.fileListSent) md.push(`The current file list (${item.fileListSent} files) was sent with this step.`, ``);
                 if (item.risk && item.risk.reasons && item.risk.reasons.length) md.push(`Held because it ${item.risk.reasons.join("; ")}.`, ``);
                 if (item.rejectReason) md.push(`Rejection reason: ${item.rejectReason}`, ``);
+                for (const line of item.skippedCalls || []) md.push(`- Tool call not run: ${line}`);
+                if ((item.skippedCalls || []).length) md.push(``);
             }
         }
     }
@@ -1573,9 +1912,24 @@ function validateSession(raw) {
     if (typeof raw.task !== "string") throw new Error("session.json: 'task' is missing.");
     if (!Array.isArray(raw.messages)) throw new Error("session.json: 'messages' is missing.");
     if (!Array.isArray(raw.timeline)) throw new Error("session.json: 'timeline' is missing.");
+    // Native tool calls (format 2): an assistant message may carry tool_calls, and a
+    // "tool" message answers one by its id. Only the fields the API takes are kept.
     const msgList = (arr, where) => arr.map((m, i) => {
-        if (!m || !["system", "user", "assistant"].includes(m.role) || typeof m.content !== "string") throw new Error(`session.json: ${where} ${i} is malformed.`);
-        return { role: m.role, content: m.content };
+        const bad = () => new Error(`session.json: ${where} ${i} is malformed.`);
+        if (!m || !["system", "user", "assistant", "tool"].includes(m.role) || typeof m.content !== "string") throw bad();
+        const out = { role: m.role, content: m.content };
+        if (m.role === "tool") {
+            if (typeof m.tool_call_id !== "string" || !m.tool_call_id) throw bad();
+            out.tool_call_id = m.tool_call_id;
+        }
+        if (m.role === "assistant" && m.tool_calls !== undefined) {
+            if (!Array.isArray(m.tool_calls)) throw bad();
+            out.tool_calls = m.tool_calls.map(c => {
+                if (!c || typeof c.id !== "string" || !c.id || !c.function || typeof c.function.name !== "string" || typeof c.function.arguments !== "string") throw bad();
+                return { id: c.id, type: "function", function: { name: c.function.name, arguments: c.function.arguments } };
+            });
+        }
+        return out;
     });
     const messages = msgList(raw.messages, "message");
     if (raw.compactions !== undefined && !Array.isArray(raw.compactions)) throw new Error("session.json: 'compactions' is not a list.");
@@ -1588,7 +1942,7 @@ function validateSession(raw) {
         if (withPrev) r.prevHash = /^[0-9a-f]{64}$/.test(x.prevHash) ? x.prevHash : "";
         return r;
     });
-    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt", "retryNote"];
+    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt", "retryNote", "protocol"];
     const timeline = raw.timeline.map((it, i) => {
         if (!it || typeof it !== "object") throw new Error(`session.json: timeline item ${i} is malformed.`);
         const ts = str(it.ts);
@@ -1604,6 +1958,7 @@ function validateSession(raw) {
                 s.edited = it.edited === true;
                 s.notes = strArr(it.notes);
                 s.netAttempts = strArr(it.netAttempts);
+                s.skippedCalls = strArr(it.skippedCalls);
                 s.blockCount = num(it.blockCount, 0);
                 s.changes = it.changes && typeof it.changes === "object"
                     ? { added: fileList(it.changes.added), modified: fileList(it.changes.modified, true), deleted: fileList(it.changes.deleted, true) }
@@ -1640,6 +1995,8 @@ function validateSession(raw) {
         task: raw.task,
         createdAt: str(raw.createdAt),
         status: str(raw.status) || "paused",
+        // Which system prompt messages[0] holds (format 1 had code-as-action only).
+        protocol: raw.protocol === "tools" ? "tools" : "text",
         messages,
         compactions,
         timeline,
@@ -1653,6 +2010,7 @@ function validateSession(raw) {
             stepLimit: num(st.stepLimit, 20), stepTimeoutSec: num(st.stepTimeoutSec, 60),
             maxTokens: num(st.maxTokens, 8192), effort: ["off", "low", "medium", "high", "default"].includes(st.effort) ? st.effort : "low",
             autoCompactPct: Math.min(95, Math.max(0, num(st.autoCompactPct, 85))), contextSize: Math.max(0, num(st.contextSize, 0)),
+            toolMode: ["auto", "native", "text"].includes(st.toolMode) ? st.toolMode : "auto",
         },
     };
 }
@@ -1978,13 +2336,16 @@ async function runInWorker(code, opts) {
 }
 
 // ========== 6. LLM streaming (adapted from HermitUI's fetchAndStreamChat) ==========
-// Streams one chat completion. onDelta(reasoning, content) fires per chunk. Resolves to
-// { finishReason, usage, rawUsage, timings, clock }; rejects on HTTP/network errors and
-// AbortError. rawUsage/timings are the server's own objects (timings: llama.cpp only),
-// clock holds performance.now() stamps for the request, first token and end.
+// Streams one chat completion. onDelta(reasoning, content, toolCalls) fires per chunk.
+// Resolves to { finishReason, usage, rawUsage, timings, clock, toolCalls }; rejects on
+// HTTP/network errors and AbortError. rawUsage/timings are the server's own objects
+// (timings: llama.cpp only), clock holds performance.now() stamps for the request, first
+// token and end. toolCalls: [{ id, name, arguments }], assembled from the streamed
+// deltas (DESIGN §5.6). A refusal because of `tools` carries .toolsRejected.
 async function streamChat(payload, signal, onDelta) {
     let promptTokens = 0, completionTokens = 0, finishReason = null, sawStreamData = false, sawEvent = false, sawDone = false;
     let rawUsage = null, timings = null;
+    const toolCalls = [];
     const clock = { startMs: performance.now(), firstMs: 0, endMs: 0 };
     const chatUrl = apiEndpoint(SETTINGS.apiUrl, "/chat/completions");
     // A stream that goes silent mid-reply (the server hung, or the connection died without
@@ -2012,18 +2373,23 @@ async function streamChat(payload, signal, onDelta) {
     };
 
     let response = await postChat(payload);
+    let detail = response.ok ? "" : await readDetail(response);
     // A strict server can 400 purely because of the reasoning params: drop them, retry
     // once, and stop sending them for this endpoint.
-    if (!response.ok && response.status === 400 && REASONING_PARAM_KEYS.some(k => k in payload)) {
-        const detail = await readDetail(response);
-        if (!looksLikeReasoningRejection(detail)) throw new Error(`Server Error 400: ${detail}`);
+    if (!response.ok && response.status === 400 && REASONING_PARAM_KEYS.some(k => k in payload) && looksLikeReasoningRejection(detail)) {
         const retry = { ...payload };
         for (const k of REASONING_PARAM_KEYS) delete retry[k];
         REASONING.rejected = true;
         showToast("🧠 This endpoint rejects reasoning settings — retrying without them");
         response = await postChat(retry);
+        detail = response.ok ? "" : await readDetail(response);
     }
-    if (!response.ok) throw new Error(`Server Error ${response.status}: ${await readDetail(response)}`);
+    if (!response.ok) {
+        const err = new Error(`Server Error ${response.status}: ${detail}`);
+        // Not retried: the caller switches this endpoint to code-as-action instead.
+        if (payload.tools && looksLikeToolRejection(response.status, detail)) err.toolsRejected = true;
+        throw err;
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
@@ -2035,11 +2401,30 @@ async function streamChat(payload, signal, onDelta) {
         promptTokens = data.usage.prompt_tokens || promptTokens;
         completionTokens = data.usage.completion_tokens || completionTokens;
     };
-    const emit = (reasoning, content) => {
-        if (!reasoning && !content) return;
+    const emit = (reasoning, content, calls) => {
+        if (!reasoning && !content && !calls) return;
         sawStreamData = true;
         if (!clock.firstMs) clock.firstMs = performance.now();
-        onDelta(reasoning || "", content || "");
+        onDelta(reasoning || "", content || "", toolCalls);
+    };
+    // Tool-call deltas: the first chunk of a call carries its index, id and name, the
+    // rest pieces of its arguments. Some servers repeat the id and name in every chunk,
+    // or send a call whole, with its arguments as an object.
+    const mergeToolCalls = (deltas) => {
+        if (!Array.isArray(deltas) || !deltas.length) return false;
+        for (const d of deltas) {
+            if (!d || typeof d !== "object") continue;
+            const f = d.function || {};
+            let c = Number.isInteger(d.index) ? toolCalls.find(t => t.index === d.index)
+                : d.id ? toolCalls.find(t => t.id === d.id) : toolCalls[toolCalls.length - 1];
+            if (!c) { c = { index: Number.isInteger(d.index) ? d.index : toolCalls.length, id: "", name: "", arguments: "" }; toolCalls.push(c); }
+            if (typeof d.id === "string" && d.id && !c.id) c.id = d.id;
+            if (typeof f.name === "string" && f.name && !c.name) c.name = f.name;
+            if (typeof f.arguments === "string") c.arguments += f.arguments;
+            else if (f.arguments && typeof f.arguments === "object") c.arguments = JSON.stringify(f.arguments);
+        }
+        toolCalls.sort((a, b) => a.index - b.index);
+        return true;
     };
     const raiseIfError = (data) => {
         if (!data.error) return;
@@ -2058,7 +2443,7 @@ async function streamChat(payload, signal, onDelta) {
         if (choice && choice.finish_reason) finishReason = choice.finish_reason;
         readUsage(data);
         const delta = choice && choice.delta;
-        emit(delta && (delta.reasoning_content || delta.reasoning || delta.thinking || ""), delta && delta.content);
+        emit(delta && (delta.reasoning_content || delta.reasoning || delta.thinking || ""), delta && delta.content, delta && mergeToolCalls(delta.tool_calls));
     };
     try {
         for (;;) {
@@ -2097,11 +2482,11 @@ async function streamChat(payload, signal, onDelta) {
             const msg = choice && choice.message;
             if (choice && choice.finish_reason) finishReason = choice.finish_reason;
             readUsage(data);
-            if (msg) emit(msg.reasoning_content || msg.reasoning || msg.thinking || "", msg.content);
+            if (msg) emit(msg.reasoning_content || msg.reasoning || msg.thinking || "", msg.content, mergeToolCalls(msg.tool_calls));
         }
     }
     clock.endMs = performance.now();
-    return { finishReason, usage: { prompt: promptTokens, completion: completionTokens }, rawUsage, timings, clock, sawData: sawStreamData };
+    return { finishReason, usage: { prompt: promptTokens, completion: completionTokens }, rawUsage, timings, clock, sawData: sawStreamData, toolCalls: toolCalls.map(c => ({ id: c.id, name: c.name, arguments: c.arguments })) };
 }
 
 // ---------- Per-step inference stats ----------
@@ -2174,7 +2559,9 @@ function formatStepStats(st) {
 // Reasoning support for the configured endpoint, read from llama.cpp's /props or
 // Ollama's /api/show. Never probed with a throwaway completion: permissive servers
 // answer 200 for parameters they ignore, so a non-error proves nothing.
-const REASONING = { key: "", state: "unknown", levels: ["low", "medium", "high"], rejected: false, nCtx: 0, ctxSource: "" };
+// The same probe reports native tool-call support (tools: "supported" | "unsupported" |
+// "unknown", toolsSource); toolsRejected: the endpoint refused a request with tools.
+const REASONING = { key: "", state: "unknown", levels: ["low", "medium", "high"], rejected: false, nCtx: 0, ctxSource: "", tools: "unknown", toolsSource: "", toolsRejected: false };
 
 // The context size an OpenAI-style model list reports for `model`, or 0: vLLM's
 // max_model_len, LM Studio's loaded_context_length (in its /api/v0/models), or
@@ -2182,11 +2569,8 @@ const REASONING = { key: "", state: "unknown", levels: ["low", "medium", "high"]
 // exact id match, a list of one model counts as that model. llama.cpp's
 // meta.n_ctx_train is the trained size, not the server's, so it is left alone.
 function contextSizeFromModelList(data, model) {
-    const list = Array.isArray(data) ? data : (data && (data.data || data.models)) || [];
-    if (!Array.isArray(list) || !list.length) return 0;
-    const want = String(model || "");
-    const m = list.find(x => x && want && (x.id === want || x.name === want || x.model === want)) || (list.length === 1 ? list[0] : null);
-    if (!m || typeof m !== "object") return 0;
+    const m = findListedModel(data, model);
+    if (!m) return 0;
     for (const k of ["max_model_len", "loaded_context_length", "context_length", "context_window"]) {
         if (Number.isFinite(m[k]) && m[k] > 0) return m[k];
     }
@@ -2201,15 +2585,17 @@ function ollamaNumCtx(show) {
 }
 
 // Reasoning support plus the context size (nCtx, 0 when unknown; ctxSource names where
-// it came from): llama.cpp's /props or Ollama's num_ctx, else the model list.
+// it came from): llama.cpp's /props or Ollama's num_ctx, else the model list; and
+// tool-call support (tools, toolsSource) from the same places.
 // reached: whether any probe got an HTTP answer at all (an endpoint that is down proves
 // nothing, so its result isn't cached).
 async function probeReasoningSupport(url, key, model) {
     const r = await probeTemplateCaps(url, key, model);
-    if (!r.nCtx) {
-        const reached = r.reached;
-        Object.assign(r, await probeModelListContext(url, key, model));
-        r.reached = r.reached || reached;
+    if (!r.nCtx || r.tools === "unknown") {
+        const l = await probeModelListContext(url, key, model);
+        r.reached = r.reached || l.reached;
+        if (!r.nCtx) Object.assign(r, { nCtx: l.nCtx, ctxSource: l.ctxSource });
+        if (r.tools === "unknown" && l.tools !== "unknown") Object.assign(r, { tools: l.tools, toolsSource: l.toolsSource });
     }
     return r;
 }
@@ -2217,24 +2603,28 @@ async function probeReasoningSupport(url, key, model) {
 async function probeModelListContext(url, key, model) {
     const headers = { "Authorization": "Bearer " + (key || "none") };
     let reached = false;
+    let tools = "unknown", toolsSource = "";
     const fromList = async (listUrl, source) => {
         try {
             const res = await fetch(listUrl, { headers });
             reached = true;
             if (!res.ok) return null;
-            const nCtx = contextSizeFromModelList(await res.json(), model);
-            return nCtx ? { nCtx, ctxSource: source, reached } : null;
+            const data = await res.json();
+            if (tools === "unknown") { tools = toolSupportFromModelList(data, model); toolsSource = tools === "unknown" ? "" : source; }
+            const nCtx = contextSizeFromModelList(data, model);
+            return nCtx ? { nCtx, ctxSource: source } : null;
         } catch (e) { return null; }
     };
-    return (await fromList(apiEndpoint(url, "/models"), "/v1/models"))
+    const found = (await fromList(apiEndpoint(url, "/models"), "/v1/models"))
         || (await fromList(apiRoot(url) + "/api/v0/models", "LM Studio /api/v0/models"))
-        || { nCtx: 0, ctxSource: "", reached };
+        || { nCtx: 0, ctxSource: "" };
+    return { ...found, reached, tools, toolsSource };
 }
 
 async function probeTemplateCaps(url, key, model) {
     const root = apiRoot(url);
     const headers = { "Authorization": "Bearer " + (key || "none") };
-    let nCtx = 0, reached = false;
+    let nCtx = 0, reached = false, tools = "unknown", toolsSource = "";
     try {
         const res = await fetch(root + "/props", { headers });
         reached = true;
@@ -2245,10 +2635,12 @@ async function probeTemplateCaps(url, key, model) {
             const ctxSource = nCtx ? "llama.cpp /props" : "";
             const caps = p.chat_template_caps;
             const t = parseReasoningTemplateSupport(p.chat_template);
+            tools = toolSupportFromProps(p);
+            toolsSource = tools === "unknown" ? "" : "llama.cpp /props";
             if (caps && typeof caps.supports_reasoning_effort === "boolean") {
-                return { state: caps.supports_reasoning_effort || t.supported ? "supported" : "unsupported", levels: t.levels, source: "llama.cpp /props", nCtx, ctxSource, reached };
+                return { state: caps.supports_reasoning_effort || t.supported ? "supported" : "unsupported", levels: t.levels, source: "llama.cpp /props", nCtx, ctxSource, reached, tools, toolsSource };
             }
-            if (typeof p.chat_template === "string") return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "server chat template", nCtx, ctxSource, reached };
+            if (typeof p.chat_template === "string") return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "server chat template", nCtx, ctxSource, reached, tools, toolsSource };
         }
     } catch (e) { /* no /props here — try Ollama next */ }
     try {
@@ -2262,10 +2654,12 @@ async function probeTemplateCaps(url, key, model) {
             const show = await res.json();
             const t = parseReasoningTemplateSupport(show.template);
             const numCtx = ollamaNumCtx(show);
-            return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "Ollama /api/show", nCtx: nCtx || numCtx, ctxSource: nCtx ? "llama.cpp /props" : numCtx ? "Ollama num_ctx" : "", reached };
+            const ot = toolSupportFromOllamaShow(show);
+            if (ot !== "unknown") { tools = ot; toolsSource = "Ollama /api/show"; }
+            return { state: t.supported ? "supported" : "unsupported", levels: t.levels, source: "Ollama /api/show", nCtx: nCtx || numCtx, ctxSource: nCtx ? "llama.cpp /props" : numCtx ? "Ollama num_ctx" : "", reached, tools, toolsSource };
         }
     } catch (e) { /* not Ollama either */ }
-    return { state: "unknown", levels: ["low", "medium", "high"], source: "endpoint exposes no capability data", nCtx, ctxSource: nCtx ? "llama.cpp /props" : "", reached };
+    return { state: "unknown", levels: ["low", "medium", "high"], source: "endpoint exposes no capability data", nCtx, ctxSource: nCtx ? "llama.cpp /props" : "", reached, tools, toolsSource };
 }
 
 async function ensureReasoningProbe() {
@@ -2273,7 +2667,15 @@ async function ensureReasoningProbe() {
     if (REASONING.key === key) return;
     const r = await probeReasoningSupport(SETTINGS.apiUrl, SETTINGS.apiKey, SETTINGS.model);
     // Probed while the endpoint was down: try again before the next request.
-    Object.assign(REASONING, r, { key: r.reached ? key : "", rejected: false });
+    Object.assign(REASONING, r, { key: r.reached ? key : "", rejected: false, toolsRejected: false });
+    renderHeader();
+}
+
+// The protocol for the next request (DESIGN §5.6), from the setting and what the probe of
+// the current endpoint found.
+function currentProtocol() {
+    const probed = REASONING.key === SETTINGS.apiUrl + "|" + SETTINGS.model;
+    return resolveProtocol(SETTINGS.toolMode, probed ? REASONING.tools : "unknown", probed && REASONING.toolsRejected);
 }
 
 function currentReasoningParams() {
@@ -2290,6 +2692,9 @@ const SETTINGS = {
     // DESIGN §5.4: summarise older steps at this % of the context (0 = off), measured
     // against contextSize, or the server's n_ctx when that is 0.
     autoCompactPct: 85, contextSize: 0,
+    // DESIGN §5.6: "auto" (native tool calls when the endpoint reports support), "native"
+    // or "text" (code-as-action).
+    toolMode: "auto",
 };
 
 // The canonical workspace (DESIGN §4.1): path -> { hash, origin }, content-addressed blobs.
@@ -2304,6 +2709,8 @@ function freshSession() {
         // One entry per compaction: the full history it replaced, so a rewind to an
         // earlier checkpoint can restore it. A checkpoint's epoch indexes this list.
         compactions: [],
+        // The protocol messages[0] (the system prompt) describes: "text" or "tools".
+        protocol: "text",
     };
 }
 let S = freshSession();
@@ -2523,7 +2930,7 @@ async function requestWithRetry(attempt, onRetry) {
         try {
             return await attempt(signal);
         } catch (e) {
-            if (e.name === "AbortError" || !isRetryableError(e.message)) throw e;
+            if (e.name === "AbortError" || e.toolsRejected || !isRetryableError(e.message)) throw e;
             const waited = Date.now() - t0;
             const delay = retryDelayMs(n, LIMITS.retryFirstMs, LIMITS.retryMaxMs);
             if (waited + delay > LIMITS.retryWindowMs) { e.retriedMs = waited; throw e; }
@@ -2536,9 +2943,31 @@ async function requestWithRetry(attempt, onRetry) {
     }
 }
 
-// What the model is sent: the history with older long outputs elided (DESIGN §5.4).
-function requestMessages() {
-    return elideHistory(S.messages, LIMITS.elideKeepSteps, LIMITS.elideMinChars);
+// What the model is sent: the history with older long outputs elided (DESIGN §5.4), in
+// code-as-action form unless the request uses native tool calls (DESIGN §5.6).
+function requestMessages(protocol) {
+    const msgs = elideHistory(S.messages, LIMITS.elideKeepSteps, LIMITS.elideMinChars);
+    return (protocol || currentProtocol()) === "tools" ? msgs : toolHistoryAsText(msgs);
+}
+
+// The system prompt describes one protocol: switch it when the next request uses the
+// other one (the setting changed, or the endpoint refused tools). S.protocol records
+// which one messages[0] holds.
+function syncSystemPrompt(protocol) {
+    if (S.protocol === protocol || !S.messages.length || S.messages[0].role !== "system") return;
+    S.messages[0].content = buildSystemPrompt(SETTINGS.instructions, PKG.names, protocol);
+    debugLog("model", `actions switched to ${protocol === "tools" ? "native tool calls" : "code blocks and tags"} (the system prompt follows)`);
+    S.protocol = protocol;
+}
+
+// The result of the step that the last assistant message started: one tool message per
+// call in native mode (perCall: Map(id -> content); calls not in it get `observation`),
+// else one user message.
+function pushStepResult(observation, perCall) {
+    const last = S.messages[S.messages.length - 1];
+    const calls = last && last.role === "assistant" ? last.tool_calls || [] : [];
+    if (!calls.length) { S.messages.push({ role: "user", content: observation }); return; }
+    for (const c of calls) S.messages.push({ role: "tool", tool_call_id: c.id, content: (perCall && perCall.get(c.id)) || observation });
 }
 
 function flushModelNotes() {
@@ -2578,8 +3007,11 @@ async function startTask(text) {
     S.task = text;
     S.createdAt = nowIso();
     const files = workspaceFileList();
+    // What is known of the endpoint so far; the first turn switches the prompt if its
+    // probe finds otherwise (syncSystemPrompt).
+    S.protocol = currentProtocol();
     S.messages = [
-        { role: "system", content: buildSystemPrompt(SETTINGS.instructions, PKG.names) },
+        { role: "system", content: buildSystemPrompt(SETTINGS.instructions, PKG.names, S.protocol) },
         { role: "user", content: buildTaskMessage(text, files) },
     ];
     RUN.modelNotes = [];
@@ -2605,12 +3037,11 @@ function submitUserText(text) {
         showToast("📝 Note queued — it goes out with the next request.");
         return;
     }
-    const last = S.messages[S.messages.length - 1];
     const kind = S.status === "awaiting-user" ? "answer" : "followup";
     if (text) {
         addTimelineItem({ type: "user", kind, text });
         appendToLastUserMessage(S.messages, text);
-    } else if (!last || last.role !== "user") {
+    } else if (!awaitsModel(S.messages)) {
         showToast("Type a follow-up for the agent first.");
         return;
     }
@@ -2694,7 +3125,7 @@ async function runLoop() {
             restartInterpreter();
             const lastMsg = S.messages[S.messages.length - 1];
             if (lastMsg && lastMsg.role === "assistant" && (last.kind === "code" || last.kind === "files")) {
-                S.messages.push({ role: "user", content: buildObservation({ step: last.n, status: "error", notes: ["The harness failed while handling this step (" + (e.message || e) + "). Nothing was committed, and the interpreter was restarted: variables are lost, files are as they were before this step."] }) });
+                pushStepResult(buildObservation({ step: last.n, status: "error", notes: ["The harness failed while handling this step (" + (e.message || e) + "). Nothing was committed, and the interpreter was restarted: variables are lost, files are as they were before this step."] }));
             }
         }
         addTimelineItem({ type: "error", text: e.message || String(e), hint: "The step was not committed. Press Retry to ask the model again." });
@@ -2728,10 +3159,14 @@ async function agentTurn() {
         }
     }
     setActivity("thinking");
-    debugLog("model", `→ request to ${SETTINGS.model || "default model"} · ${S.messages.length} messages · effort ${SETTINGS.effort}`);
+    await ensureReasoningProbe().catch(() => {});
+    const protocol = currentProtocol();
+    const native = protocol === "tools";
+    syncSystemPrompt(protocol);
+    debugLog("model", `→ request to ${SETTINGS.model || "default model"} · ${S.messages.length} messages · effort ${SETTINGS.effort}${native ? " · native tool calls" : ""}`);
     const step = addTimelineItem({
         type: "step", n, phase: "thinking", kind: "", reasoning: "", content: "", prose: "",
-        notes: [], netAttempts: [], startedAt: nowIso(), changes: null, risk: null,
+        notes: [], netAttempts: [], startedAt: nowIso(), changes: null, risk: null, protocol,
     });
     const idx = S.timeline.length - 1;
     const render = createThrottle(THROTTLE_MS);
@@ -2739,8 +3174,7 @@ async function agentTurn() {
     let result, sent = [];
     const t0 = Date.now();
     try {
-        await ensureReasoningProbe().catch(() => {});
-        sent = requestMessages();
+        sent = requestMessages(protocol);
         const payload = {
             model: SETTINGS.model || "local-model",
             messages: sent,
@@ -2748,25 +3182,28 @@ async function agentTurn() {
             stream_options: { include_usage: true },
             ...currentReasoningParams(),
         };
+        if (native) { payload.tools = agentToolDefs(); payload.parallel_tool_calls = true; }
         if (SETTINGS.maxTokens > 0) payload.max_tokens = SETTINGS.maxTokens;
         setRequesting(true);
         result = await requestWithRetry((signal) => {
             // A retry starts the reply over: what streamed before the drop is discarded.
-            rawContent = ""; apiReasoning = "";
+            rawContent = ""; apiReasoning = ""; step._calling = "";
             setActivity("thinking");
-            return streamChat(payload, signal, (r, c) => {
+            return streamChat(payload, signal, (r, c, calls) => {
                 apiReasoning += r;
                 rawContent += c;
                 const split = splitReply(rawContent, false);
-                if (split.text && RUN.activity === "thinking") setActivity("writing");
+                const calling = (calls || []).map(t => t.name || "…").join(", ");
+                if ((split.text || calling) && RUN.activity === "thinking") setActivity("writing");
                 if (step._retry) { step._retry = null; renderTimelineItem(idx); }
                 step.reasoning = [apiReasoning, split.reasoning].filter(Boolean).join("\n\n");
                 step.content = split.text;
+                step._calling = calling;
                 render(() => renderTimelineItem(idx));
             });
         }, (e, attempt, delay) => {
             render.cancel();
-            step.reasoning = ""; step.content = "";
+            step.reasoning = ""; step.content = ""; step._calling = "";
             step._retry = { n: attempt, error: String(e.message || e) };
             step._retries = attempt;
             setActivity("retrying");
@@ -2782,6 +3219,15 @@ async function agentTurn() {
             debugLog("model", "request aborted"); addNote("⏹ Stopped the model request."); setStatus("stopped"); return "stopped";
         }
         debugLog("error", "model request failed: " + (e.message || e));
+        // DESIGN §5.6: the endpoint refuses native tool calls. Fall back to code-as-action
+        // for it (the history is sent in that form from now on) and ask again.
+        if (e.toolsRejected && native) {
+            REASONING.toolsRejected = true;
+            renderHeader();
+            addNote(`🔧 The endpoint refused native tool calls (${e.message}). Switched to code blocks and tags for this endpoint; the task goes on.`, "warn");
+            showToast("🔧 This endpoint refuses tool calls — using code blocks and tags instead");
+            return "continue";
+        }
         // The prompt no longer fits: compact once (as far as it takes) and ask again.
         if (isContextOverflowError(e.message) && SETTINGS.autoCompactPct > 0 && !RUN.overflowRetried) {
             RUN.overflowRetried = true;
@@ -2801,6 +3247,7 @@ async function agentTurn() {
         setRequesting(false);
     }
     render.cancel();
+    step._calling = "";
     if (step._retries) {
         const secs = Math.round((Date.now() - t0 - (result.clock.endMs - result.clock.startMs)) / 1000);
         step.retryNote = `🔌 The endpoint answered again after ${step._retries} retr${step._retries === 1 ? "y" : "ies"} (about ${secs} s without a reply).`;
@@ -2816,7 +3263,9 @@ async function agentTurn() {
     step.content = split.text;
     step.finishReason = result.finishReason || "";
     step.stats = buildStepStats(result.rawUsage, result.timings, result.clock, REASONING.nCtx);
-    const parsed = parseReply(split.text, result.finishReason);
+    // Native mode reads the reply's tool calls (a reply without any is read as text);
+    // code-as-action reads the text. Both give the same kinds (DESIGN §5.6).
+    const parsed = native ? parseToolCalls(result.toolCalls, split.text, result.finishReason, n) : parseReply(split.text, result.finishReason);
     step.kind = parsed.kind;
     const ctxCut = cutByContext(result.finishReason, result.usage, SETTINGS.maxTokens, REASONING.nCtx);
     if (ctxCut) {
@@ -2825,16 +3274,27 @@ async function agentTurn() {
         step.notes.push(`The context window ran out, not the reply budget: the prompt (${u.prompt.toLocaleString("en-US")} tokens) plus this reply (${u.completion.toLocaleString("en-US")}) filled it before ${SETTINGS.maxTokens > 0 ? `the ${SETTINGS.maxTokens.toLocaleString("en-US")} max tokens` : "the reply ended"}.` + (SETTINGS.autoCompactPct > 0 ? " The history is compacted before the next request." : " Auto-compaction is off."));
         debugLog("error", `reply cut by the context window · prompt ${u.prompt} + reply ${u.completion} tok` + (REASONING.nCtx ? ` of n_ctx ${REASONING.nCtx}` : ""));
     }
-    debugLog("model", `← reply · finish ${result.finishReason || "?"} · ${result.usage.completion} tok · ${((result.clock.endMs - result.clock.startMs) / 1000).toFixed(1)} s → ${parsed.kind}`, clipForDebug(split.text, 4000));
-    // The history keeps the visible reply only; reasoning isn't sent back.
-    S.messages.push({ role: "assistant", content: split.text });
+    const callSummary = native && result.toolCalls.length ? " · calls: " + result.toolCalls.map(c => c.name || "?").join(", ") : "";
+    debugLog("model", `← reply · finish ${result.finishReason || "?"} · ${result.usage.completion} tok · ${((result.clock.endMs - result.clock.startMs) / 1000).toFixed(1)} s${callSummary} → ${parsed.kind}`,
+        clipForDebug([split.text, ...(native ? result.toolCalls.map(c => `${c.name}(${c.arguments})`) : [])].filter(Boolean).join("\n\n"), 4000));
+    // The history keeps the visible reply only; reasoning isn't sent back. Native calls go
+    // with it, each answered by a tool message (pushStepResult), or by the user's reply
+    // for finish and ask_user.
+    const assistantMsg = { role: "assistant", content: split.text };
+    if (native && parsed.stored.length) assistantMsg.tool_calls = parsed.stored.map(c => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments } }));
+    S.messages.push(assistantMsg);
     S.stepCount = n;
+    if (parsed.skipped && parsed.skipped.length) {
+        step.skippedCalls = parsed.skipped.map(([id, why]) => { const c = parsed.stored.find(x => x.id === id); return `${c ? c.name : "?"}: ${why}`; });
+        for (const line of step.skippedCalls) debugLog("error", "tool call not run · " + line);
+    }
 
     if (parsed.kind === "final") {
+        if (native && parsed.answer) step.content = [split.text, parsed.answer].filter(Boolean).join("\n\n");
         // An answer that presents files the workspace doesn't have goes back to the
         // model once, instead of ending the task on a false claim. Only once in a
         // row: the second answer stands either way.
-        const missing = missingMentionedFiles(split.text, [...WS.files.keys()]);
+        const missing = missingMentionedFiles(step.content, [...WS.files.keys()]);
         const prev = S.timeline.slice(0, idx).reverse().find(t => t.type === "step");
         if (missing.length && !(prev && prev.status === "unverified")) {
             step.status = "unverified";
@@ -2843,12 +3303,12 @@ async function agentTurn() {
             const list = missing.join(", ");
             debugLog("tool", "final_answer → sent back: mentions missing " + list);
             step.notes = [`The answer mentions ${list}, which ${missing.length === 1 ? "isn't" : "aren't"} in the workspace. The agent was asked to check.`];
-            S.messages.push({ role: "user", content: buildObservation({ step: n, status: "error", notes: [`Your answer mentions ${list}, but /workspace has no such file${missing.length === 1 ? "" : "s"}. Files that exist: ${[...WS.files.keys()].join(", ") || "(none)"}. Create the missing file${missing.length === 1 ? "" : "s"} with <write_file> or code, or correct your answer.`] }) });
+            pushStepResult(buildObservation({ step: n, status: "error", notes: [`Your answer mentions ${list}, but /workspace has no such file${missing.length === 1 ? "" : "s"}. Files that exist: ${[...WS.files.keys()].join(", ") || "(none)"}. Create the missing file${missing.length === 1 ? "" : "s"} with ${native ? "write_file or run_python" : "<write_file> or code"}, or correct your answer.`] }));
             step.checkpoint = takeCheckpoint("step " + n);
             renderTimelineItem(idx);
             return "continue";
         }
-        debugLog("tool", "final_answer", clipForDebug(parsed.prose || split.text, 4000));
+        debugLog("tool", "final_answer", clipForDebug(step.content, 4000));
         step.phase = "done";
         step.endedAt = nowIso();
         step.checkpoint = takeCheckpoint("step " + n);
@@ -2869,26 +3329,17 @@ async function agentTurn() {
     }
     if (parsed.kind !== "code" && parsed.kind !== "files") {
         // Cut off, empty, an unclosed block or tag, file actions mixed with code, a
-        // <tool_call>, or a made-up <observation>:
-        // nothing ran. Tell the model why.
-        const why = {
-            cutoff: ctxCut
-                ? "Your reply was cut off because the context window filled up before it finished, so nothing ran. Reply with ONE ```python block, file actions, or the final answer."
-                : "Your reply was cut off at the token limit before it finished, so nothing ran. Reason less and reply with ONE ```python block, file actions, or the final answer.",
-            empty: "Your reply had no code block, no file actions and no answer, so nothing ran. Reply with ONE ```python block, file actions, the final answer, or an ask: line.",
-            broken: parsed.unclosed
-                ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
-                : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.",
-            mixed: "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.",
-            toolcall: `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py")); to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).`,
-            fakeobs: "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.",
-        }[parsed.kind];
+        // <tool_call> in text, a made-up <observation>, or (native) no call that could
+        // run: nothing ran. Tell the model why.
+        const why = noActionAdvice(parsed, native, ctxCut);
         debugLog("error", "no tool call (" + parsed.kind + ")", why);
         step.prose = parsed.prose || "";
         step.status = parsed.kind;
         step.phase = "done";
         step.endedAt = nowIso();
-        S.messages.push({ role: "user", content: buildObservation({ step: n, status: "error", notes: [why] }) });
+        const whyNotes = [...(parsed.kind === "badcall" ? [] : [why]), ...(parsed.notes || [])];
+        pushStepResult(buildObservation({ step: n, status: "error", notes: whyNotes }),
+            new Map((parsed.skipped || []).map(([id, r]) => [id, buildObservation({ step: n, status: "error", notes: [r, ...whyNotes] })])));
         sendFileListingIfDue(step);
         step.checkpoint = takeCheckpoint("step " + n);
         renderTimelineItem(idx);
@@ -2896,7 +3347,7 @@ async function agentTurn() {
     }
 
     step.prose = parsed.prose;
-    const notes = [];
+    const notes = [...(parsed.notes || [])];
     let outcome;
     if (parsed.kind === "files") {
         if (result.finishReason === "length") notes.push(`Your reply was cut off at ${ctxCut ? "the end of the context window" : "the token limit"} after these file actions; anything after them was lost.`);
@@ -2910,7 +3361,10 @@ async function agentTurn() {
     debugLog("result", `step ${n} done · ${step.status || "?"} · ${step.decision || "no decision"} · changes: ${formatChanges(step.changes)}`);
     step.phase = "done";
     step.endedAt = nowIso();
-    S.messages.push({ role: "user", content: outcome.observation });
+    // Calls that didn't run get their reason; a file batch gets one result per call.
+    const perCall = new Map((parsed.skipped || []).map(([id, why]) => [id, buildObservation({ step: n, status: "error", notes: [why] })]));
+    for (const [id, obs] of outcome.perCall || []) perCall.set(id, obs);
+    pushStepResult(outcome.observation, perCall);
     sendFileListingIfDue(step);
     step.checkpoint = takeCheckpoint("step " + n);
     // Decided: the versions it wrote are now the workspace's (and the checkpoint's) or
@@ -3001,7 +3455,7 @@ async function compactHistory(reason) {
     }
     const files = workspaceFileList();
     RUN.listedKey = fileListingKey(files);   // the compacted history carries the list
-    S.compactions.push({ before: S.messages.map(m => ({ role: m.role, content: m.content })), fromStep, toStep });
+    S.compactions.push({ before: S.messages.map(copyMessage), fromStep, toStep });
     S.messages = buildCompactedMessages(S.messages, plan.cut, summary, toStep, files);
     const tokensAfter = estimateTokens(requestMessages(), RUN.tokenRatio);
     debugLog("result", `history compacted · steps ${fromStep}–${toStep} · ~${tokensBefore} → ~${tokensAfter} tokens`, clipForDebug(summary, 4000));
@@ -3068,7 +3522,7 @@ async function executeStep(step, idx, notes) {
         // Figures and other binary files: the model is told what they are (it can't see them).
         step.figures = r.figures.filter(f => effect.pending.has(f.path));
         step.notes.push(...binaryFileNotes([...effect.pending].map(([p, h]) => ({ path: p, bytes: WS.blobs.get(h) })), step.figures));
-        const fileHint = filenameCommentHint(code, Object.keys(r.listing));
+        const fileHint = filenameCommentHint(code, Object.keys(r.listing), step.protocol === "tools");
         if (fileHint) step.notes.push(fileHint);
         const modHint = moduleNotFoundHint(r.output, PKG.names);
         if (modHint) step.notes.push(modHint);
@@ -3112,7 +3566,8 @@ async function executeStep(step, idx, notes) {
 // A file-action step (DESIGN §2.3). The actions are worked out against the canonical
 // workspace without changing it, so the effect is gated *before* anything is applied:
 // a reject has nothing to roll back and the interpreter keeps its variables.
-// Returns { observation, stop }.
+// Returns { observation, stop, perCall? }: native tool calls (actions with an .id) each
+// get their own result once applied, the step's changes and notes with the last one.
 async function executeFileStep(step, idx, actions, notes) {
     const ws = { paths: [...WS.files.keys()], read: (p) => { const f = WS.files.get(p); return f ? WS.blobs.get(f.hash) || null : null; } };
     setActivity("files");
@@ -3179,7 +3634,16 @@ async function executeFileStep(step, idx, actions, notes) {
             step.decision = hold ? "approved" : "auto";
             step.decidedBy = hold ? "user" : "auto";
         }
-        return { observation: buildObservation({ step: step.n, status: step.status, output: step.output, changes: step.changes, notes: step.notes, truncate: false }), stop: false };
+        let perCall = null;
+        if (actions.some(a => a.id)) {
+            const texts = fileCallResults(applied.results, applied.failed);
+            const last = actions.length - 1;
+            perCall = new Map(actions.map((a, i) => [a.id, buildObservation({
+                step: step.n, status: applied.results[i].ok && !(applied.failed && a.tool !== "read_file") ? "ok" : "error", output: texts[i], truncate: false,
+                ...(i === last ? { changes: step.changes, notes: step.notes } : {}),
+            })]));
+        }
+        return { observation: buildObservation({ step: step.n, status: step.status, output: step.output, changes: step.changes, notes: step.notes, truncate: false }), stop: false, perCall };
     }
     step.decision = "rejected";
     step.decidedBy = decision.auto ? "auto" : "user";
@@ -3291,7 +3755,7 @@ async function rewindTo(idx) {
     // today's system prompt, which Settings may have changed since).
     if ((cp.epoch || 0) < S.compactions.length) {
         const system = S.messages[0];
-        S.messages = S.compactions[cp.epoch || 0].before.map(m => ({ role: m.role, content: m.content }));
+        S.messages = S.compactions[cp.epoch || 0].before.map(copyMessage);
         if (system && system.role === "system" && S.messages[0].role === "system") S.messages[0] = system;
         S.compactions.length = cp.epoch || 0;
     }
@@ -3307,8 +3771,7 @@ async function rewindTo(idx) {
     RUN.compactNext = false;
     RUN.listedKey = "";
     restartInterpreter();
-    const last = S.messages[S.messages.length - 1];
-    addNote(`⏪ Rewound to ${label}. ` + (last && last.role === "user" ? "Press Continue to resume, or send a note first." : "Send a follow-up to continue."));
+    addNote(`⏪ Rewound to ${label}. ` + (awaitsModel(S.messages) ? "Press Continue to resume, or send a note first." : "Send a follow-up to continue."));
     setStatus("paused");
     renderTimeline();
     renderWorkspace();
@@ -3372,7 +3835,7 @@ function button(label, action, idx, cls, title) {
 }
 
 const VERDICT_LABELS = { auto: "✅ auto-committed", approved: "👍 approved", edited: "✏️ edited & approved", rejected: "↩️ rejected", "rolled back": "↩️ rolled back", "approved (network)": "🌐 approved with network" };
-const STATUS_LABELS = { unverified: "⚠️ files missing", ok: "ok", error: "error", timeout: "⏱ timeout", killed: "☠️ killed", crashed: "💥 crashed", rejected: "rejected", cutoff: "✂️ cut off", empty: "empty reply", broken: "unclosed code", mixed: "mixed reply", toolcall: "tool call", fakeobs: "no action", interrupted: "interrupted" };
+const STATUS_LABELS = { unverified: "⚠️ files missing", ok: "ok", error: "error", timeout: "⏱ timeout", killed: "☠️ killed", crashed: "💥 crashed", rejected: "rejected", cutoff: "✂️ cut off", empty: "empty reply", broken: "unclosed code", mixed: "mixed reply", toolcall: "tool call", fakeobs: "no action", interrupted: "interrupted", textaction: "no tool call", badcall: "bad tool call" };
 
 function renderThink(item, card, streaming) {
     if (!item.reasoning) return;
@@ -3553,15 +4016,21 @@ function buildStepCard(item, idx, old) {
     if (item.phase === "thinking") head.appendChild(el("span", "badge live", "streaming…"));
     if (item.phase === "running") head.appendChild(el("span", "badge live", "running…"));
     if (item.phase === "pending-run" || item.phase === "pending-approval") head.appendChild(el("span", "badge waiting", "⏸ waiting for you"));
+    if (item.protocol === "tools") {
+        const b = head.appendChild(el("span", "badge protocol", "🔧"));
+        b.title = "The model acted through native tool calls";
+    }
     card.appendChild(head);
 
     const think = renderThink(item, old, item.phase === "thinking" && !item.content);
     if (think) card.appendChild(think);
 
     card.dataset.retry = item._retry ? String(item._retry.n) : "";
+    card.dataset.calling = item._calling || "";
     if (item.phase === "thinking") {
         if (item._retry) card.appendChild(el("p", "hint retry-hint", `🔌 No answer from the endpoint (${item._retry.error}). Retrying automatically (attempt ${item._retry.n}); the status bar counts down, and Stop ends the wait.`));
         if (item.content) card.appendChild(renderMarkdown(item.content));
+        if (item._calling) card.appendChild(el("p", "hint calling-hint", `🔧 calling ${item._calling}…`));
         return card;
     }
     if (item.kind === "final") {
@@ -3605,7 +4074,12 @@ function buildStepCard(item, idx, old) {
             card.appendChild(d);
         }
     } else if (item.kind !== "code" && item.status) {
-        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off before it finished — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran.", toolcall: "The reply used a tool-call tag, which isn't how actions work here — nothing ran.", fakeobs: "The reply wrote its own <observation> instead of acting — nothing ran." }[item.status] || ""));
+        card.appendChild(el("p", "hint", { cutoff: "✂️ The reply was cut off before it finished — nothing ran.", empty: "The reply was empty — nothing ran.", broken: "The reply had an unclosed code block or file tag — nothing ran.", mixed: "The reply mixed file actions with a code block — nothing ran.", toolcall: "The reply used a tool-call tag, which isn't how actions work here — nothing ran.", fakeobs: "The reply wrote its own <observation> instead of acting — nothing ran.", textaction: "The reply put code or file actions in its text instead of calling a tool — nothing ran.", badcall: "None of the reply's tool calls could run — nothing ran." }[item.status] || ""));
+    }
+    if ((item.skippedCalls || []).length) {
+        const ul = el("ul", "step-notes skipped-calls");
+        for (const line of item.skippedCalls) ul.appendChild(el("li", "", "🔧 " + line));
+        card.appendChild(ul);
     }
     if (item.changes) card.appendChild(renderFileChips(item.changes, idx));
     const images = item.phase !== "running" ? renderStepImages(item) : null;
@@ -3771,6 +4245,7 @@ function buildCard(item, idx, old) {
 // made the timeline flicker.
 function patchStreamingCard(card, item) {
     if ((card.dataset.retry || "") !== (item._retry ? String(item._retry.n) : "")) return false;
+    if ((card.dataset.calling || "") !== (item._calling || "")) return false;
     const thinking = !item.content;
     const think = card.querySelector(":scope > details.think-block");
     if (item.reasoning) {
@@ -4243,6 +4718,19 @@ function renderHeader() {
     const local = $("localBadge");
     local.hidden = !!remote || !SETTINGS.apiUrl;
     local.title = "The endpoint is on this machine or your local network, so the task, file contents the agent reads and its outputs go only there.";
+    // How the agent acts with the next request (DESIGN §5.6). Auto is only resolved once
+    // the endpoint has been probed: before the first request, or by Test Connection.
+    const badge = $("protocolBadge");
+    const probed = REASONING.key === SETTINGS.apiUrl + "|" + SETTINGS.model;
+    const protocol = SETTINGS.toolMode === "auto" && !probed ? "auto" : currentProtocol();
+    badge.dataset.protocol = protocol;
+    badge.textContent = { tools: "🔧 native", text: "📝 text", auto: "🔧 auto" }[protocol];
+    badge.title = {
+        tools: "Native tool calls: the agent acts through the endpoint's OpenAI tools support (run_python, read_file, write_file, edit_file, ask_user, finish).",
+        text: "Code blocks and tags: the agent acts by writing ```python blocks and file tags in its replies. Works with any chat model."
+            + (probed && REASONING.toolsRejected ? " This endpoint refused native tool calls." : SETTINGS.toolMode === "text" ? " Chosen in Settings → Actions." : " The endpoint doesn't report tool-call support; choose Native in Settings → Actions to use it anyway."),
+        auto: "Settings → Actions is Auto: native tool calls if the endpoint reports support, else code blocks and tags. Decided before the first request, or by Test Connection.",
+    }[protocol];
 }
 
 function updateComposer() {
@@ -4251,7 +4739,7 @@ function updateComposer() {
     const hasSession = !!S.task;
     $("stopBtn").hidden = !RUN.active;
     $("compactBtn").hidden = RUN.active || !hasSession || !planCompaction(S.messages, 1, 1);
-    $("continueBtn").hidden = RUN.active || !hasSession || !["paused", "stopped", "error"].includes(S.status) || (S.messages.length && S.messages[S.messages.length - 1].role !== "user");
+    $("continueBtn").hidden = RUN.active || !hasSession || !["paused", "stopped", "error"].includes(S.status) || (S.messages.length && !awaitsModel(S.messages));
     if (!hasSession) { input.placeholder = "Describe a task… (Ctrl+Enter to start)"; send.textContent = "▶ Start"; }
     else if (RUN.active) { input.placeholder = "Add a note for the agent — it goes out with the next request"; send.textContent = "📝 Add note"; }
     else if (S.status === "awaiting-user") { input.placeholder = "Answer the agent's question…"; send.textContent = "↩️ Answer"; }
@@ -4272,7 +4760,8 @@ function fillSettingsForm() {
     $("settingMaxTokens").value = SETTINGS.maxTokens;
     $("settingAutoCompact").value = SETTINGS.autoCompactPct;
     $("settingContextSize").value = SETTINGS.contextSize;
-    $("reasoningStatus").textContent = REASONING.key ? `Reasoning control: ${REASONING.state} (${REASONING.source || ""})` : "";
+    $("settingToolMode").value = SETTINGS.toolMode;
+    $("reasoningStatus").textContent = REASONING.key ? `Reasoning control: ${REASONING.state} (${REASONING.source || ""}) · ${toolSupportText(REASONING)}` : "";
 }
 
 function currentSettingsModel() {
@@ -4295,10 +4784,19 @@ function saveSettings() {
     SETTINGS.maxTokens = int("settingMaxTokens", 0, 1000000, 8192);
     SETTINGS.autoCompactPct = int("settingAutoCompact", 0, 95, 85);
     SETTINGS.contextSize = int("settingContextSize", 0, 10000000, 0);
+    SETTINGS.toolMode = ["auto", "native", "text"].includes($("settingToolMode").value) ? $("settingToolMode").value : "auto";
     RUN.compactAfter = 0;
-    if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = buildSystemPrompt(SETTINGS.instructions, PKG.names);
+    if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = buildSystemPrompt(SETTINGS.instructions, PKG.names, S.protocol);
     renderHeader();
     return true;
+}
+
+// What the probe found about native tool calls, for the settings dialog.
+function toolSupportText(r) {
+    if (r.toolsRejected) return "tool calls: refused by the endpoint, using code blocks and tags";
+    if (r.tools === "supported") return `tool calls: supported (${r.toolsSource})`;
+    if (r.tools === "unsupported") return `tool calls: not supported (${r.toolsSource}), Auto uses code blocks and tags`;
+    return "tool calls: not reported, Auto uses code blocks and tags";
 }
 
 async function testConnection() {
@@ -4336,7 +4834,12 @@ async function testConnection() {
         select.hidden = false;
         $("settingModelInput").hidden = true;
         const r = await probeReasoningSupport(url, key, currentSettingsModel());
-        $("reasoningStatus").textContent = `Reasoning control: ${r.state} (${r.source}) · ` + (r.nCtx ? `context ${r.nCtx.toLocaleString("en-US")} tokens (${r.ctxSource})` : "context size not reported: set it below for auto-compaction");
+        // The saved endpoint was tested: keep what was found (the header's Actions badge).
+        if (url === SETTINGS.apiUrl && currentSettingsModel() === SETTINGS.model && r.reached) {
+            Object.assign(REASONING, r, { key: url + "|" + SETTINGS.model, rejected: false, toolsRejected: false });
+            renderHeader();
+        }
+        $("reasoningStatus").textContent = `Reasoning control: ${r.state} (${r.source}) · ` + (r.nCtx ? `context ${r.nCtx.toLocaleString("en-US")} tokens (${r.ctxSource})` : "context size not reported: set it below for auto-compaction") + " · " + toolSupportText(r);
         showToast(`✅ Connection successful! Found ${models.length} model${models.length === 1 ? "" : "s"}.`);
     } catch (error) {
         const baseUrl = $("settingUrl").value.trim();
@@ -4353,9 +4856,9 @@ function sessionSnapshot() {
     return {
         session: {
             task: S.task, createdAt: S.createdAt, status: S.status, messages: S.messages, timeline: S.timeline,
-            stepCount: S.stepCount, tokens: S.tokens, activeMs: S.activeMs, compactions: S.compactions,
+            stepCount: S.stepCount, tokens: S.tokens, activeMs: S.activeMs, compactions: S.compactions, protocol: S.protocol,
             // Non-secret connection settings only: the API key is never exported.
-            settings: { apiUrl: SETTINGS.apiUrl, model: SETTINGS.model, autonomy: SETTINGS.autonomy, stepLimit: SETTINGS.stepLimit, stepTimeoutSec: SETTINGS.stepTimeoutSec, maxTokens: SETTINGS.maxTokens, effort: SETTINGS.effort, autoCompactPct: SETTINGS.autoCompactPct, contextSize: SETTINGS.contextSize },
+            settings: { apiUrl: SETTINGS.apiUrl, model: SETTINGS.model, autonomy: SETTINGS.autonomy, stepLimit: SETTINGS.stepLimit, stepTimeoutSec: SETTINGS.stepTimeoutSec, maxTokens: SETTINGS.maxTokens, effort: SETTINGS.effort, autoCompactPct: SETTINGS.autoCompactPct, contextSize: SETTINGS.contextSize, toolMode: SETTINGS.toolMode },
         },
         files: WS.files, blobs: WS.blobs, checkpoints: CHECKPOINTS,
     };
@@ -4411,7 +4914,7 @@ async function importSessionFile(file) {
     Object.assign(S, {
         task: s.task, createdAt: s.createdAt, status: "paused", messages: s.messages, timeline: s.timeline,
         stepCount: s.stepCount, stepBudget: s.stepCount + SETTINGS.stepLimit, tokens: s.tokens, activeMs: s.activeMs,
-        compactions: s.compactions,
+        compactions: s.compactions, protocol: s.protocol,
     });
     WS.files = parsed.files;
     WS.blobs = parsed.blobs;
@@ -4438,9 +4941,8 @@ async function importSessionFile(file) {
     restartInterpreter();
     renderTimeline();
     renderWorkspace();
-    const last = S.messages[S.messages.length - 1];
     const conn = s.settings.apiUrl && s.settings.apiUrl !== SETTINGS.apiUrl ? ` It was recorded against ${s.settings.model || "a model"} at ${s.settings.apiUrl}; the current connection settings were kept.` : "";
-    addNote(`📂 Session imported, paused. Nothing has run.${conn} ` + (last && last.role === "user" ? "Press Continue to resume." : "Send a follow-up to continue."));
+    addNote(`📂 Session imported, paused. Nothing has run.${conn} ` + (awaitsModel(S.messages) ? "Press Continue to resume." : "Send a follow-up to continue."));
     setStatus("paused");
     markExported();   // it is in a file already
 }

@@ -100,7 +100,7 @@ Scaffold the folder per §11 (`src/`, `build.py`, `tests/`, `dist/`), then:
 
 What the MVP does *not* have yet is listed in Phase 2. Mobile gets no pass beyond flex
 wrapping; it moved to a later phase (see the end).
-Decisions taken without the owner are in [REVIEW_NOTES.md](REVIEW_NOTES.md).
+Open decisions are in [REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ---
 
@@ -236,14 +236,34 @@ for the build with that fix.
 
 ## Phase 3 — Native tool calls
 
-- [ ] `run_python` / `ask_user` / `finish` as OpenAI `tools` (§5.6). `read_file`,
-      `write_file` and `edit_file` already have their argument shapes and a
-      protocol-independent executor; they only need the tool-call parsing.
-- [ ] Capability detection with code-as-action as the fallback.
-- [ ] The same timeline, gating and export; only the parsing changes.
+- [x] `run_python` / `ask_user` / `finish` as OpenAI `tools` (§5.6), next to `read_file`,
+      `write_file` and `edit_file`. Streamed tool-call deltas are assembled; one reply is
+      one step (the first action call decides, the other calls are told why they didn't
+      run). Covered by `tests/tools.test.mjs` and the e2e `native_scenario`.
+- [x] Capability detection with code-as-action as the fallback: Settings → Actions
+      (Auto / Native / Code blocks and tags); Auto reads llama.cpp `/props`, Ollama
+      `/api/show` and model lists; a server that refuses `tools` switches to
+      code-as-action, and the history converts. Covered by the e2e
+      `native_fallback_scenario` (a refusal, and a switch mid-session).
+- [x] The same timeline, gating and export; only the parsing changes. Native steps run
+      through the same executors and gates; session format 2 stores the tool messages.
 
 **Exit criteria:** both modes pass the Phase 1 reference tasks on an endpoint that
 supports tools.
+
+**Result (2026-10-05): met.** Qwen3.8-27B (IQ4_XS, llama.cpp b10678, `/props` reports
+`supports_tool_calls`), reasoning effort Low, risk-based, the built file in headless
+Chromium, `tests/e2e_reference.py --only "data processing,code + tests,calculation"`:
+- **Native tool calls** (`--tool-mode native`, every step a tool call): **9/9**, data
+  processing, code plus tests, and calculation 3/3 each (6 min).
+- **Code blocks and tags** (`--tool-mode text`): 14/18 over two runs of 3. Code plus
+  tests 6/6; data processing 5/6, where the model once named the column `amount` instead of
+  the requested `total` (and said in its answer that it was `total`); calculation 3/6,
+  each failure the known int32 overflow (the answer was the true sum mod 2³², as in
+  Phases 2a and 2b). The code-as-action system prompt is byte-identical to the Phase 2b
+  one, so these are the model's misses, not a change in that mode.
+- `tests/e2e_agent.py` (mock): all checks green in Chromium and Playwright's Firefox,
+  with the two new scenarios; `node tests/run.mjs`: 6 files green.
 
 ---
 

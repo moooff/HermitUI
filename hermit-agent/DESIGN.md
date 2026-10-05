@@ -3,8 +3,8 @@
 Status: **Phase 1 (MVP), Phase 2a (reliability) and Phase 2b (rich output) implemented**
 in `src/` (see
 [ROADMAP.md](ROADMAP.md)). Where
-the build deviated from the original plan, the section says so; decisions taken
-during the unattended MVP build that still need an owner's call are collected in
+the build deviated from the original plan, the section says so; decisions that
+still need an owner's call are collected in
 [REVIEW_NOTES.md](REVIEW_NOTES.md). Statements still marked *(verify in spike)* are
 unconfirmed.
 
@@ -590,7 +590,7 @@ The step card says it was sent, and the debug console logs it.
 - **Context overflow** that compaction can't fix, or with auto-compaction off, gets its
   own advice (lower Max tokens / reply, or press 🗜️ Compact / turn it on).
 
-### 5.6 Later: native tool calls
+### 5.6 Native tool calls *(built in Phase 3)*
 When the endpoint supports OpenAI `tools`, offer `run_python(code)`,
 `ask_user(question)` and `finish(answer)` as tools. The executor, gating and timeline
 are identical; only the parsing layer changes. Auto-detect support (as HermitUI
@@ -605,6 +605,55 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
 | `read_file` | `path` (string), `start_line`, `end_line` (integers ≥ 1, optional) |
 | `write_file` | `path`, `content` (strings) |
 | `edit_file` | `path` (string), `edits`: array of `{ old_text, new_text }` |
+
+*As built (Phase 3):*
+- **Setting:** Settings → *Actions*: **Auto** (default), *Native tool calls*, or *Code blocks
+  and tags*. Auto goes native only on a positive report, because a server that silently
+  ignores `tools` would leave the model with no way to act: llama.cpp's `/props`
+  (`chat_template_caps.supports_tool_calls`, else a template that references `tools`),
+  Ollama's `/api/show` (`capabilities` contains `"tools"`, else a template with `.Tools`),
+  or a model list's `supported_parameters` (OpenRouter). It is the same probe that reads
+  the reasoning levels and the context size; Test Connection shows what it found. A
+  header badge beside 🏠 local says which one the next request uses: 🔧 native, 📝 text,
+  or 🔧 auto until the endpoint has been probed (before the first request, or by Test
+  Connection of the saved endpoint).
+- **Request:** the six tools, `parallel_tool_calls: true`, otherwise unchanged. The system
+  prompt keeps the environment section and swaps the response-format section for one that
+  describes the tools; `S.protocol` records which one `messages[0]` holds, and it is
+  switched (`syncSystemPrompt`) when the next request uses the other protocol.
+- **Fallback:** a request refused because of `tools` (a 400/404/422/500/501 whose message
+  names tools, tool choice, tool calls or function calls: llama.cpp without `--jinja`,
+  vLLM without `--enable-auto-tool-choice`, an Ollama model without tool support, an
+  OpenRouter route without one) is not retried: that endpoint switches to code-as-action
+  until its URL or model changes, a note says so, and the turn is asked again.
+- **One reply = one step** (`parseToolCalls`), the same kinds as `parseReply`: the first
+  *action* call decides. A `run_python` runs alone; a file tool runs together with the file
+  calls right after it, as one all-or-nothing batch (§5.1). `finish` and `ask_user` count
+  only in a reply without action calls. Every call that doesn't run gets its own result
+  saying why (a second `run_python`, a file call next to code, `finish` next to actions, an
+  unknown tool with no-shell advice). `run_python` without code, or only unknown calls,
+  runs nothing (`badcall`). Arguments that aren't a JSON object are dropped from the
+  history (servers re-parse stored arguments when they render the prompt) and named in a
+  note; cut off by the token limit, the step is `cutoff`. Calls without an id, or with a
+  repeated one, get a generated 9-character alphanumeric id (the strictest APIs want that).
+- **A reply without calls** is read like a code-as-action reply, except that a ```python
+  fence, a file tag or a `<tool_call>` written as text runs nothing (`textaction`) and is
+  told to call the tool: plain text is the final answer, and a final answer may show
+  sample code. An `ask:` line still asks.
+- **History:** real OpenAI messages: the assistant message carries `tool_calls`, and each
+  call gets a `tool` message with its observation envelope (§5.2); a file batch answers
+  each call with its own read/write/edit result, the step's file changes and notes going
+  with the last one. `finish` and `ask_user` stay unanswered until the user replies:
+  `ask_user`'s result *is* the answer; `finish` gets "Your final answer was shown to the
+  user" and the follow-up comes as a user message. Notes and the periodic file list after
+  tool results are user messages. Elision shortens old `write_file` arguments (still valid
+  JSON) and old tool results; the summariser and a code-as-action request see the calls
+  written out as blocks and tags (`toolHistoryAsText`), so a fallback or a switch of the
+  setting mid-session works on the same history.
+- **Same executor, gating, timeline and export:** a native step runs through
+  `executeStep` / `executeFileStep` like any other and gets a 🔧 badge; while it streams,
+  the card says which tool is being called. Session format 2 adds `tool_calls`, `tool`
+  messages, `protocol` (session and step) and `skippedCalls`; format 1 still imports.
 
 ---
 

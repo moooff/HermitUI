@@ -37,8 +37,13 @@ You give the agent a task, for example "clean up these CSVs and chart the monthl
 totals", "write and test a parser for this log format" or "check this calculation
 numerically". The agent works through it step by step: it writes Python, runs it
 against a virtual file system, reads the output and decides the next step. Text
-files it can also read, write and edit directly, with `<read_file>`, `<write_file>`
-and `<edit_file>` actions that need no Python and are gated before they apply.
+files it can also read, write and edit directly, with `read_file`, `write_file`
+and `edit_file` actions that need no Python and are gated before they apply.
+
+The agent acts through **native tool calls** (OpenAI `tools`) when the endpoint says it
+supports them (llama.cpp with `--jinja`, Ollama models with tool support), and through
+```` ```python ```` blocks and file tags in its reply with any other chat model. Settings →
+**Actions** picks one explicitly; a server that refuses tool calls falls back on its own.
 
 What makes it different from CLI agents is that **you can supervise it**:
 
@@ -75,5 +80,5 @@ See [DESIGN.md §11](DESIGN.md#11-project-layout--merge-path).
 | [ROADMAP.md](ROADMAP.md) | Phases with checklists and exit criteria, from the first spike to the merge decision |
 | [PHASE0_FINDINGS.md](PHASE0_FINDINGS.md) | What the Phase 0 spike measured: offline boot, kill & re-seed, network blocking, GitHub Pages |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or AI) working in this folder, build & test commands |
-| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Decisions taken without the owner (MVP, Phases 2a and 2b), waiting for a review |
+| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Open decisions (MVP, Phases 2a, 2b and 3), waiting for a review |
 | [tests/README.md](tests/README.md) | What the unit, end-to-end and real-model tests cover |

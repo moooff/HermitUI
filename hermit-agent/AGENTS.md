@@ -8,11 +8,12 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-Phase 1 (MVP), Phase 2a (reliability) and Phase 2b (rich output) are built: `src/` →
+Phase 1 (MVP), Phase 2a (reliability), Phase 2b (rich output) and Phase 3 (native tool
+calls) are built: `src/` →
 `build.py` → `dist/hermit-agent-standalone.html`. The source of truth is
 [DESIGN.md](DESIGN.md), and the current phase is in [ROADMAP.md](ROADMAP.md). If an
 implementation needs to deviate from the design, update DESIGN.md in the same commit.
-Open decisions taken without the owner (the MVP build, Phases 2a and 2b) are listed in
+Open decisions waiting for review (the MVP build, Phases 2a, 2b and 3) are listed in
 [REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ## Build & test
@@ -20,7 +21,7 @@ Open decisions taken without the owner (the MVP build, Phases 2a and 2b) are lis
 python3 build.py                                   # → dist/hermit-agent-standalone.html
 node tests/run.mjs                                 # unit tests (pure logic)
 ../benchmark/.venv/bin/python tests/e2e_agent.py   # e2e vs. a mock endpoint, Chromium + Firefox
-../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 --runs 3   # real model: success rate
+../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 --runs 3   # real model: success rate (--tool-mode native|text)
 ../benchmark/.venv/bin/python tests/e2e_longrun.py --base-url http://localhost:8080/v1           # real model: 20+ steps through outages
 ```
 See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwright's

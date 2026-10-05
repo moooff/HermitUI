@@ -21,6 +21,15 @@ and "stall" streams part of it and then goes silent for 3 s. A reply
 with `then_down` sets `state.down` to that mode once it has been sent. A reply with
 `alt: [substring, reply]` is replaced by that reply when the last user message contains
 the substring (a note sent with ⚡ Send now, say).
+
+Native tool calls (Phase 3): a reply's `tool_calls` ([{name, arguments}], arguments a dict
+or a raw string; `id` optional, `no_id` leaves it out) are streamed as OpenAI deltas,
+arguments in pieces, finish_reason "tool_calls". Under /tools/v1 the mock's /props reports
+tool support (chat_template_caps); under /notools/v1 it reports support too but answers
+any request with `tools` like llama.cpp without --jinja (a 500 naming the tools param).
+Every request's history is checked like a strict server would: each assistant
+tool_calls entry answered by exactly one tool message right after it, arguments valid
+JSON, and no tool messages at all in a request without `tools` (a 400 otherwise).
 """
 import json
 import re
@@ -41,6 +50,37 @@ class MockState:
         self.lock = threading.Lock()
         self.down = None                # None | "refuse" | "503"
         self.fail_next = []             # one mode per chat request: "refuse" | "503" | "drop"
+
+
+def tool_sequence_error(body):
+    """What a strict OpenAI server would refuse in this history, or None."""
+    msgs = body.get("messages", [])
+    has_tools = bool(body.get("tools"))
+    i = 0
+    while i < len(msgs):
+        m = msgs[i]
+        if m["role"] == "tool":
+            return f"messages[{i}]: a tool message that answers no tool call"
+        if m.get("tool_calls"):
+            if not has_tools:
+                return f"messages[{i}]: tool_calls in a request without tools"
+            ids = []
+            for c in m["tool_calls"]:
+                try:
+                    json.loads(c["function"]["arguments"])
+                except (KeyError, TypeError, ValueError):
+                    return f"messages[{i}]: tool call arguments are not valid JSON"
+                ids.append(c["id"])
+            j, got = i + 1, []
+            while j < len(msgs) and msgs[j]["role"] == "tool":
+                got.append(msgs[j].get("tool_call_id"))
+                j += 1
+            if sorted(got) != sorted(ids):
+                return f"messages[{i}]: tool calls {ids} answered by {got}"
+            i = j
+            continue
+        i += 1
+    return None
 
 
 def make_handler(state):
@@ -97,6 +137,9 @@ def make_handler(state):
                 return self.send_json(404, {"error": {"message": "not found"}})
             if self.path == "/props":   # llama.cpp's: context size only, no template
                 return self.send_json(200, {"default_generation_settings": {"n_ctx": 4096}})
+            if self.path in ("/tools/props", "/notools/props"):   # llama.cpp --jinja with a tool-capable template
+                return self.send_json(200, {"default_generation_settings": {"n_ctx": 4096},
+                                            "chat_template_caps": {"supports_tools": True, "supports_tool_calls": True}})
             if self.path.endswith("/models"):
                 return self.send_json(200, {"data": [{"id": "mock-model"}]})
             self.send_json(404, {"error": {"message": "not found"}})
@@ -117,6 +160,11 @@ def make_handler(state):
                 return self.refuse()
             if mode == "503":
                 return self.send_json(503, {"error": {"message": "Loading model"}})
+            if body.get("tools") and self.path.startswith("/notools/"):
+                return self.send_json(500, {"error": {"message": "tools param requires --jinja flag"}})
+            bad = tool_sequence_error(body)
+            if bad:
+                return self.send_json(400, {"error": {"message": "invalid history: " + bad}})
             msgs = body.get("messages", [])
             first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
             if msgs and SUMMARISER_MARK in msgs[0]["content"]:
@@ -161,14 +209,23 @@ def make_handler(state):
                 time.sleep(3)
                 self.close_connection = True
                 return
+            calls = reply.get("tool_calls") or []
             try:
                 for i in range(0, len(reasoning), 40):
                     chunk({"reasoning_content": reasoning[i:i + 40]})
                 for i in range(0, len(content), 40):
                     chunk({"content": content[i:i + 40]})
+                for k, c in enumerate(calls):
+                    args = c["arguments"] if isinstance(c["arguments"], str) else json.dumps(c["arguments"])
+                    head = {"index": k, "type": "function", "function": {"name": c["name"], "arguments": ""}}
+                    if not c.get("no_id"):
+                        head["id"] = c.get("id", f"call_{len(state.requests)}_{k}")
+                    chunk({"tool_calls": [head]})
+                    for i in range(0, len(args), 30):
+                        chunk({"tool_calls": [{"index": k, "function": {"arguments": args[i:i + 30]}}]})
             except (BrokenPipeError, ConnectionResetError):
                 return   # the page aborted the request (Stop, ⚡ Send now)
-            chunk({}, reply.get("finish", "stop"), reply.get("usage", {"prompt_tokens": 100, "completion_tokens": 20}),
+            chunk({}, reply.get("finish", "tool_calls" if calls else "stop"), reply.get("usage", {"prompt_tokens": 100, "completion_tokens": 20}),
                   {"cache_n": 60, "prompt_n": 40, "prompt_per_second": 500.0, "predicted_n": 20, "predicted_per_second": 33.3})
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()

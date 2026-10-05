@@ -30,7 +30,7 @@ function constDecl(name) {
     return m[0].trim();
 }
 
-const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS"];
+const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "AGENT_TOOL_NAMES"];
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
     "detectCloudProvider", "isLocalEndpoint", "describeRemoteEndpoint", "chatErrorHint",
@@ -47,6 +47,9 @@ const FUNCS = [
     "lineDiff", "diffHunks", "elideHistory", "isRetryableError", "retryDelayMs", "contextGauge", "uploadWarning",
     "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "readEntry",
     "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
+    "awaitsModel", "copyMessage", "agentToolDefs", "resolveProtocol", "toolSupportFromProps", "toolSupportFromOllamaShow", "findListedModel",
+    "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "parseToolCalls", "toolCallAsText",
+    "messageAsText", "toolHistoryAsText", "fileCallResults", "noActionAdvice",
 ];
 
 const mod = `

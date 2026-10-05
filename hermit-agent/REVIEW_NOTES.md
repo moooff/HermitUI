@@ -1,17 +1,13 @@
-# Decisions to review (Phase 1 MVP build, Phases 2a and 2b)
+# Decisions to review (Phase 1 MVP build, Phases 2a, 2b and 3)
 
-The MVP was built unattended on 2026-10-03, and Phases 2a and 2b on 2026-10-05, on the instruction "make educated guesses
-when problems arise, note them for me to decide later". Each entry says what was
-decided, why, and what the alternative is. When you confirm or reverse one, delete it
+Open decisions from the MVP (2026-10-03), Phases 2a and 2b (2026-10-05) and Phase 3
+(2026-10-05), waiting for the owner's call. Each entry says what was decided, why, and
+what the alternative is. When you confirm or reverse one, delete it
 here; if you reverse it, update DESIGN.md too. The ⭐ entries are the ones most worth a
 look.
 
 ## Process
 
-- **No implementation-plan approval round.** AGENTS.md asks for a plan and explicit
-  approval before major changes. You asked for the build to run unattended, so this
-  file and DESIGN.md's "as built" notes stand in for the plan. A local
-  `walkthrough.md` (gitignored) summarises the changes.
 - **Phase 0 network blocking was answered by the MVP's own tests** instead of a
   separate spike (DESIGN §10, "As built and measured"). `crossOriginIsolated` on
   GitHub Pages was checked on 2026-10-05 (false), which closed Phase 0.
@@ -227,7 +223,7 @@ look.
 
 ## Phase 2b (rich output), decided while building it
 
-- ⭐ **2b's exit criteria were set by the agent**, as the roadmap asked, before building:
+- ⭐ **2b's exit criteria were set before building**, as the roadmap asked:
   every item tested (unit + e2e in Chromium and Firefox), and an 18-task success
   measurement (three new 2b tasks) at ≥ 90 % over 3 runs, with the shown-chart task's
   figure captured in every run. Alternative: a stricter bar (no regression from 2a's
@@ -263,6 +259,37 @@ look.
   a script with `runpy.run_path`. Found in the 2b measurement, where such a reply ended
   a task as its "final answer". Alternative: run the tag's content as Python, like
   `<python>` (here it held a shell command, which would only fail).
+
+## Phase 3 (native tool calls), decided while building it
+
+- ⭐ **Auto uses native tool calls only when the endpoint says it supports them**
+  (llama.cpp `/props`, Ollama `/api/show`, a model list's `supported_parameters`).
+  Unknown — most cloud APIs — means code-as-action; pick *Native tool calls* in Settings
+  for those. Reason: a server that ignores `tools` would leave the model unable to act,
+  while code-as-action works everywhere. Alternative: go native on unknown and rely on
+  the refusal fallback (which can't catch a server that silently ignores `tools`).
+- ⭐ **Plain text without a tool call is the final answer**, and `finish` is offered too.
+  Code or file tags in such text run nothing and the model is told to call the tool,
+  rather than being executed. Alternatives: require `finish` (models that end with text
+  would be pushed back every time), or run fences found in text.
+- ⭐ **Several calls in one reply: the first action call decides**, as in "only the
+  first code block runs". `write_file` + `run_python` in one reply writes the file and
+  tells the model to call `run_python` again, instead of running both in order. Running
+  both would mix the two gating paths (a file step is gated before it applies, a code step
+  after it runs). Alternative: run file calls, then the code, as two gated sub-steps.
+- **A server that refuses `tools` switches that endpoint to code-as-action for the rest
+  of the session** (until its URL or model changes), including when *Native* is chosen
+  explicitly, with a note. Alternative: an error card when Native was chosen.
+- **`parallel_tool_calls: true` is always sent**, so llama.cpp parses more than one call
+  per reply (its default is one). Servers that don't know the parameter ignore it.
+- **User notes after a tool result are user messages**, not text appended to the tool
+  result; the answer to `ask_user` is its tool result. A template that insists on strict
+  user/assistant alternation around tool messages would refuse these histories; none
+  tested does.
+- **Session format 2.** Older builds refuse format-2 exports with "made with a newer
+  HermitUI Agent" rather than a malformed-message error. Format-1 exports still import.
+- **The Actions setting is exported but not restored on import**, like the connection
+  settings: it is about the endpoint, and the history works in either protocol.
 
 ## Not covered by automated tests
 

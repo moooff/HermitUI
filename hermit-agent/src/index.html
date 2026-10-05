@@ -46,6 +46,7 @@
             <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.1.0</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
             <span class="local-badge" id="localBadge" hidden>🏠 local</span>
+            <span class="protocol-badge" id="protocolBadge">🔧 auto</span>
         </div>
         <div class="header-actions">
             <button type="button" class="header-btn" id="newSessionBtn" title="New session">➕ New</button>
@@ -141,6 +142,12 @@
                 <button type="button" class="small-btn" id="testConnectionBtn">🔌 Test Connection</button>
                 <span class="hint" id="reasoningStatus"></span>
             </div>
+            <label for="settingToolMode">Actions</label>
+            <select id="settingToolMode" title="How the agent acts. Native tool calls use the endpoint's OpenAI tools support; code blocks and tags work with any chat model.">
+                <option value="auto">Auto — native tool calls when the endpoint reports support</option>
+                <option value="native">Native tool calls (OpenAI tools)</option>
+                <option value="text">Code blocks and tags (any model)</option>
+            </select>
             <label for="settingInstructions">Custom instructions</label>
             <textarea id="settingInstructions" rows="3" placeholder="Appended to the agent's system prompt, e.g. &quot;Prefer pandas. Write a short report.md at the end.&quot;"></textarea>
             <div class="modal-grid">

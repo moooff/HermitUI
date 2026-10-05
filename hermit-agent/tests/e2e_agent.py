@@ -45,6 +45,11 @@ def final(text):
     return {"content": text}
 
 
+def calls(*cs, content=""):
+    """A native reply: tool calls given as (name, arguments) or (name, arguments, extra)."""
+    return {"content": content, "tool_calls": [{"name": c[0], "arguments": c[1], **(c[2] if len(c) > 2 else {})} for c in cs]}
+
+
 def exfil_probe(port):
     base = f"http://127.0.0.1:{port}/exfil"
     # Every way agent code could reach the network from the worker that we know of.
@@ -206,6 +211,26 @@ plt.figure(); plt.plot([1, 1])
             py('print("five")'),
             py('import matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(4, 3)); ax.bar(["a"], [1]); fig.savefig("bars.png")\nprint("resaved")'),
             final("Charts done."),
+        ],
+        "E2E-NATIVE": [
+            calls(("read_file", {"path": "data.csv"}), ("write_file", {"path": "notes/out.txt", "content": "hello\n"}), content="Looking first."),
+            calls(("run_python", {"code": "print(open('notes/out.txt').read().strip() + '!')"}), ("write_file", {"path": "x.txt", "content": "never"})),
+            calls(("edit_file", {"path": "data.csv", "edits": [{"old_text": "amount", "new_text": "total"}]})),
+            calls(("bash", {"cmd": "ls"}, {"no_id": True})),
+            {"content": "Here:\n```python\nprint('in text')\n```"},
+            calls(("ask_user", {"question": "Which unit?"})),
+            calls(("finish", {"answer": "Done: `notes/out.txt` holds the greeting."})),
+            calls(("finish", {"answer": "More done."})),
+            calls(("finish", {"answer": "After import."})),
+        ],
+        "E2E-NOTOOLS": [
+            py('print("fell back")'),
+            final("Fallback done."),
+        ],
+        "E2E-SWITCH": [
+            calls(("run_python", {"code": "print(7)"})),
+            calls(("ask_user", {"question": "Go on?"})),
+            final("Switched and done."),
         ],
         "E2E-APPROVE": [
             py('print("original")'),
@@ -745,6 +770,134 @@ def step_limit_scenario(browser, port, state):
     page.context.close()
 
 
+def configure_at(page, base, timeout_s, tool_mode="auto"):
+    page.click("#settingsBtn")
+    page.fill("#settingUrl", base)
+    page.fill("#settingModelInput", "mock-model")
+    page.fill("#settingTimeout", str(timeout_s))
+    page.select_option("#settingToolMode", tool_mode)
+    page.click("#settingSave")
+
+
+def native_scenario(browser, port, state, downloads=True):
+    print("— native tool calls: batch, skipped calls, gating, bad calls, ask_user, finish, export → import")
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV}])
+    wait_until(page, "() => WS.files.has('data.csv')", 10, "upload")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-NATIVE: tools please")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "held edit of a user file")
+    check("an edit_file call on your file is held", page.evaluate("() => S.timeline[S.timeline.length - 1].risk.reasons.join()") == "overwrites your file data.csv")
+    page.fill(".step-card.phase-pending-approval .reason-input", "keep it")
+    page.locator(".step-card.phase-pending-approval [data-action=reject]").click()
+    wait_until(page, "() => S.status === 'awaiting-user'", 60, "ask_user")
+    page.fill("#taskInput", "euros")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "finish")
+    reqs = state.requests[n0:]
+    check("Auto went native: every request offers the tools", all(r.get("tools") and r.get("parallel_tool_calls") for r in reqs) and len(reqs) == 7, len(reqs))
+    check("…and the system prompt describes them", "run_python" in reqs[0]["messages"][0]["content"] and "```python code block" not in reqs[0]["messages"][0]["content"])
+    st = page.evaluate("() => S.timeline.filter(t => t.type === 'step').map(t => [t.kind, t.status || '', t.decision || '', t.protocol])")
+    check("steps: files, code, held files, bad call, code in text, ask, final",
+          [x[:2] for x in st] == [["files", "ok"], ["code", "ok"], ["files", "rejected"], ["badcall", "badcall"], ["textaction", "textaction"], ["ask", ""], ["final", ""]]
+          and all(x[3] == "tools" for x in st), st)
+    m1 = reqs[1]["messages"]
+    ids0 = [c["id"] for c in m1[-3]["tool_calls"]]
+    check("a batch answers each call with its own result", [m["tool_call_id"] for m in m1[-2:]] == ids0
+          and "north" in m1[-2]["content"] and "write_file notes/out.txt: created" in m1[-1]["content"] and "files changed: +notes/out.txt" in m1[-1]["content"], m1[-2:])
+    m2 = reqs[2]["messages"]
+    check("run_python ran; the write_file beside it got 'not run'", "hello!" in m2[-2]["content"] and "Not run: write_file doesn't run in the same reply as run_python" in m2[-1]["content"], m2[-2:])
+    check("…and x.txt was never written", "x.txt" not in [w[0] for w in workspace(page)])
+    m3 = reqs[3]["messages"]
+    check("the rejected edit's result says so, with the reason", m3[-1]["role"] == "tool" and 'status="rejected"' in m3[-1]["content"] and "keep it" in m3[-1]["content"])
+    check("…and data.csv is unchanged", page.evaluate("() => new TextDecoder().decode(WS.blobs.get(WS.files.get('data.csv').hash))") == DATA_CSV.decode())
+    m4 = reqs[4]["messages"]
+    gen_id = m4[-2]["tool_calls"][0]["id"]
+    check("a call without an id gets a generated one, answered", re.fullmatch(r"[A-Za-z0-9]{9}", gen_id) and m4[-1]["tool_call_id"] == gen_id and "no shell" in m4[-1]["content"], (gen_id, m4[-1]))
+    m5 = reqs[5]["messages"]
+    check("code in plain text runs nothing and is told to call run_python", m5[-1]["role"] == "user" and "Call run_python instead" in m5[-1]["content"])
+    m6 = reqs[6]["messages"]
+    check("the answer to ask_user is its tool result", m6[-1]["role"] == "tool" and m6[-1]["content"] == "euros" and m6[-2]["tool_calls"][0]["function"]["name"] == "ask_user")
+    check("the final answer comes from finish", "notes/out.txt" in page.inner_text(".step-card:last-of-type") or "holds the greeting" in page.evaluate("() => S.timeline.filter(t => t.type === 'step').pop().content"))
+    check("step cards carry the tool-call badge", page.locator(".step-card .badge.protocol").count() == 7)
+    check("the header says native", page.inner_text("#protocolBadge") == "🔧 native", page.inner_text("#protocolBadge"))
+    check("the card lists the call that didn't run", "x.txt" not in page.inner_text(".skipped-calls") and "write_file: Not run" in page.inner_text(".skipped-calls"))
+
+    page.fill("#taskInput", "one more thing")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' && S.stepCount === 8", 60, "follow-up")
+    last = state.requests[-1]["messages"]
+    check("a follow-up after finish: finish acknowledged, then the user's message", last[-2]["role"] == "tool" and last[-1] == {"role": "user", "content": "one more thing"}, last[-2:])
+    if not downloads:
+        page.context.close()
+        return
+    before = page.evaluate("() => JSON.stringify({ m: S.messages, p: S.protocol })")
+    with page.expect_download() as dl:
+        page.click("#exportBtn")
+        page.click("#exportSessionBtn")
+    zpath = str(pathlib.Path(tempfile.mkdtemp()) / "native-session.zip")
+    dl.value.save_as(zpath)
+    z = zipfile.ZipFile(zpath)
+    check("export is format 2", json.loads(z.read("manifest.json"))["formatVersion"] == 2)
+    check("the transcript marks tool-call steps", "· tool call" in z.read("transcript.md").decode())
+    page.context.close()
+    page = open_app(browser)
+    page.set_input_files("#importInput", zpath)
+    wait_until(page, "() => S.status === 'paused' && S.timeline.length > 0", 30, "import")
+    after = page.evaluate("() => JSON.stringify({ m: S.messages, p: S.protocol })")
+    check("tool calls and results survive export → import", json.loads(after) == json.loads(before), next((f"{i}: {a!r} vs {b!r}" for i, (a, b) in enumerate(zip(json.loads(before)["m"], json.loads(after)["m"])) if a != b), (len(before), len(after), before[-200:], after[-200:])))
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    page.fill("#taskInput", "after import")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' && S.stepCount === 9", 60, "follow-up after import")
+    check("…and a follow-up on the imported history is accepted by a strict server", "After import." in page.evaluate("() => S.timeline.filter(t => t.type === 'step').pop().content"))
+    page.context.close()
+
+
+def native_fallback_scenario(browser, port, state):
+    print("— native tool calls refused → code blocks and tags; switching protocols mid-session")
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/notools/v1", 10)
+    check("before the endpoint is probed, the header says auto", page.inner_text("#protocolBadge") == "🔧 auto", page.inner_text("#protocolBadge"))
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-NOTOOLS: try tools")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' || S.status === 'error'", 60, "fallback task")
+    reqs = state.requests[n0:]
+    check("the refused request offered tools, the next ones didn't", reqs[0].get("tools") and not any(r.get("tools") for r in reqs[1:]) and len(reqs) == 3, [bool(r.get("tools")) for r in reqs])
+    check("…the task finished in code-as-action", page.evaluate("() => S.status") == "done"
+          and page.evaluate("() => S.timeline.filter(t => t.type === 'step').map(t => t.protocol + ':' + t.kind).join()") == "text:code,text:final")
+    check("…with the text system prompt", "```python code block" in reqs[1]["messages"][0]["content"])
+    check("…and a note says why", "refused native tool calls" in page.inner_text(".note-card"))
+    check("…no error card", page.locator(".error-card").count() == 0)
+    check("…and the header says text, with the reason", page.inner_text("#protocolBadge") == "📝 text" and "refused" in page.get_attribute("#protocolBadge", "title"))
+    page.context.close()
+
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10, "native")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-SWITCH: start native")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-user'", 60, "ask_user")
+    check("Native chosen: the header says native", page.inner_text("#protocolBadge") == "🔧 native")
+    page.click("#settingsBtn")
+    page.select_option("#settingToolMode", "text")
+    page.click("#settingSave")
+    check("…and text once switched", page.inner_text("#protocolBadge") == "📝 text")
+    page.fill("#taskInput", "yes")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "final in text mode")
+    last = state.requests[-1]
+    roles = [m["role"] for m in last["messages"]]
+    check("after switching to text, the history goes out without tool messages", "tools" not in last and "tool" not in roles and roles[1:] == ["user", "assistant", "user", "assistant", "user"], roles)
+    check("…calls written out as code, results merged", "```python\nprint(7)\n```" in last["messages"][2]["content"] and "ask: Go on?" in last["messages"][4]["content"]
+          and last["messages"][5]["content"] == "yes", [m["content"][:80] for m in last["messages"]])
+    check("…with the text system prompt", "```python code block" in last["messages"][0]["content"])
+    page.context.close()
+
+
 def step_count(page):
     return page.evaluate("() => S.stepCount")
 
@@ -1251,6 +1404,10 @@ def main():
                     figures_scenario(browser, port, state, downloads=not exe)
                 if want("upload"):
                     upload_scenario(browser, port, state, folders=not exe)
+                if want("native"):
+                    native_scenario(browser, port, state, downloads=not exe)
+                if want("native_fallback"):
+                    native_fallback_scenario(browser, port, state)
             except AssertionError as e:
                 check(f"{name}: scenario completed", False, str(e))
             finally:
