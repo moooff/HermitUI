@@ -287,6 +287,19 @@ look.
   tested does.
 - **Session format 2.** Older builds refuse format-2 exports with "made with a newer
   HermitUI Agent" rather than a malformed-message error. Format-1 exports still import.
+- ⭐ **The system prompt's library list names what the distribution has**: pymupdf for
+  PDFs, matplotlib for charts, no writer for `.xlsx`/`.docx`/`.pptx` (write CSV,
+  Markdown or HTML instead). Those aren't the common choices: openpyxl, python-docx,
+  fpdf2, pypdf and the like are pure-Python and left out of Pyodide by design (it expects
+  micropip from PyPI), so they need a load mechanism this sandbox doesn't have yet.
+  Phase 3.5 will bundle them (decided 2026-10-05); a study picks which, and this entry
+  goes once the prompt names them.
+- ⭐ **Phase 3.5: which libraries to bundle — your pick.** The study
+  ([PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md)) recommends Tier 1 (openpyxl,
+  XlsxWriter, python-docx, python-pptx, Markdown, qrcode; 1.33 MB, about +1.8 MB on the
+  file), Tier 2 as an option (tabulate, xmltodict, markdownify, seaborn; 0.35 MB), and
+  no new PDF library (pymupdf and matplotlib already serve). Alternatives: Tier 1 only,
+  both tiers, or a different set.
 - **The Actions setting is exported but not restored on import**, like the connection
   settings: it is about the endpoint, and the history works in either protocol.
 

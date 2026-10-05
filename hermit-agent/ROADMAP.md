@@ -267,6 +267,48 @@ Chromium, `tests/e2e_reference.py --only "data processing,code + tests,calculati
 
 ---
 
+## Phase 3.5 — Common pure-Python libraries
+
+The libraries most people and models reach for (openpyxl, XlsxWriter, python-docx,
+python-pptx, fpdf2, pypdf, reportlab, Markdown, tabulate) aren't in the Pyodide
+distribution. They aren't missing: the distribution mostly carries packages that have to
+be compiled for WebAssembly, and Pyodide expects pure-Python ones to be installed from
+PyPI with micropip at run time. Agent code can't download (no network), so today they
+can't be used, and the system prompt points to what the distribution has instead
+(pymupdf, matplotlib): a stopgap, not the best fit.
+
+**Decided (2026-10-05): bundle them.** Pinned wheels are inlined in the HTML at build
+time, sha256-checked like the Pyodide core, and installed from memory on first import.
+This works offline and leaves the network guard as it is. Not taken: installing from PyPI
+in the load phase (smaller file, but needs a connection and widens the network guard
+and the CSP, DESIGN §10).
+
+- [x] **Study: which libraries warrant bundling** ([PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md)).
+      33 candidates: size, license, popularity; all 32 bundleable ones work in the app's
+      interpreter (seven need Pyodide packages their metadata doesn't declare); Qwen3.8
+      on 18 format tasks without a library hint. Recommendation, Tier 1 (1.33 MB):
+      openpyxl, XlsxWriter, python-docx, python-pptx, Markdown, qrcode; Tier 2 optional
+      (0.35 MB): tabulate, xmltodict, markdownify, seaborn; no extra PDF library.
+      **Waiting for the owner's pick** (REVIEW_NOTES).
+- [ ] Bundle the chosen wheels: `build.py` downloads them pinned by sha256 and inlines
+      them; the harness installs one into memory when a step's imports need it (the
+      same loading phase as Pyodide packages); the import index and the package list in
+      the system prompt include them.
+- [ ] Rewrite the system prompt's library guidance to suggest the bundled libraries for
+      the matching tasks.
+- [ ] Tests: unit (import index, prompt), e2e (an import of each bundled library loads
+      it offline), and success-measurement tasks for the new formats.
+
+**Exit criteria** (proposed by the study; confirm with the pick):
+- Each bundled library imports and works **offline** in Chromium and Firefox (e2e),
+  together with the Pyodide packages it needs, and the file grows by no more than the
+  chosen set's size.
+- The success measurement grows by one task per bundled format (Excel, Word, PowerPoint,
+  Markdown → HTML, QR), each checking the produced file with the library itself, and the
+  suite passes **≥ 90 %** over 3 runs against a real model, in both protocols.
+
+---
+
 ## Phase 4 — In-browser models (wllama)
 
 - [ ] Bring over HermitUI's wllama loading (local file / URL into an in-memory Blob,
