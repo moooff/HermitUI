@@ -75,12 +75,11 @@ Operational rules learned the hard way — keep future runs working:
 - **Check Origin:** ALWAYS check origin for change or new Stuff before start of edit or task
 - **Pre-Commit Review:** ALWAYS conduct a careful review of your changes before executing a `git commit` to ensure everything is correct, strictly adheres to the rules, and does not introduce any bugs or inconsistencies.
 - **Build Before Commit:** ALWAYS run `python3 build.py` to regenerate the compiled files before executing a `git commit`.
-- **Local Commits:** ALWAYS commit changes locally using `git commit` immediately after completing a task or edit. 
-- **Remote Pushing:** Do NOT push commits to GitHub (or any remote repository) unless explicitly requested by the user.
+- **Ask Before Committing:** Do NOT `git commit` on your own. When a task is done, report it and leave the changes uncommitted; commit only when the user explicitly asks for it.
+- **Ask Before Pushing:** Do NOT push commits to GitHub (or any remote repository) unless the user explicitly asks for it.
 - **Agent Rules:** This root `AGENTS.md` is the single source of truth for agent rules and is committed to the repo (read directly by Antigravity, and by Claude Code via the gitignored `CLAUDE.md` symlink). Keep the `CLAUDE.md` symlink local — do not commit it.
 - **Version Bumping:** Whenever a new version is tagged in git, automatically update the version number within the `src/index.html` file to match.
 
 ## 📝 Safe Refactoring Workflow
-- **Implementation Plans:** Because the application heavily integrates HTML, CSS, and JS, ALWAYS create an Implementation Plan artifact (`implementation_plan.md`) before making any structural or major feature changes. 
-- **Wait for Approval:** Request explicit user approval on the proposed plan before editing the `src/` files.
+- **No Plan Required:** An Implementation Plan (`implementation_plan.md`) and plan approval are no longer required before implementing a change. Write one only when the user asks for it.
 - **Walkthroughs:** After completing major changes, generate a Walkthrough artifact (`walkthrough.md`) summarizing the exact modifications made.
