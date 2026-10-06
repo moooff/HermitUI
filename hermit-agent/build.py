@@ -8,19 +8,23 @@ Reads src/ (index.html, style.css, worker.js, script.js, favicon.svg) and writes
 dist/hermit-agent-standalone.html with everything inlined: the CDN libraries (verified
 against the SRI pins in src/index.html), the Inter font, and the Pyodide core
 (verified against PYODIDE_SHA256 below, gzipped + base64-encoded as
-window.__PYODIDE_INLINE__). Downloads are cached in libs/ (gitignored). Like the root
-build it fails loudly instead of writing an output that still points at a CDN.
+window.__PYODIDE_INLINE__), and the bundled pure-Python libraries (BUNDLED_LIBRARIES in
+src/script.js: wheels verified against their sha256 pins and their own metadata, inlined
+base64-encoded as window.__HERMIT_WHEELS__). Downloads are cached in libs/ (gitignored).
+Like the root build it fails loudly instead of writing an output that still points at a CDN.
 
 Adapted from ../build.py; it never reads from or writes to anything outside this folder.
 """
 import base64
 import gzip
 import hashlib
+import io
 import json
 import pathlib
 import re
 import sys
 import urllib.request
+import zipfile
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -86,6 +90,61 @@ def replace_once(text, old, new, what):
     return text.replace(old, new)
 
 
+def norm(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def bundled_libraries(script_js):
+    """BUNDLED_LIBRARIES from the marker block in src/script.js (strict JSON)."""
+    m = re.search(r"// @bundled:start\nconst BUNDLED_LIBRARIES = (\{.*?\n\});\n// @bundled:end", script_js, re.S)
+    if not m:
+        fail("BUNDLED_LIBRARIES block (// @bundled:start … // @bundled:end) not found in src/script.js.")
+    try:
+        return json.loads(m.group(1))
+    except ValueError as e:
+        fail(f"BUNDLED_LIBRARIES isn't strict JSON: {e}")
+
+
+def requirement_applies(line, lib, what):
+    """Whether a Requires-Dist line applies in Pyodide (CPython 3.13, emscripten): extras
+    and other platforms don't. An unknown marker fails the build for a human to look at."""
+    marker = line.split(";", 1)[1].strip() if ";" in line else ""
+    if not marker:
+        return True
+    if "extra ==" in marker or re.fullmatch(r'sys_platform\s*==\s*"win32"', marker):
+        return False
+    v = re.fullmatch(r'python_version\s*<\s*"3\.(\d+)"', marker)
+    if v:
+        return 13 < int(v.group(1))
+    fail(f"{lib}: {what} has a requirement marker build.py doesn't understand: {line!r}")
+
+
+def check_wheel(lib, spec, data, wheel_dists):
+    """A wheel's own metadata against the manifest: pure, licensed, and its dependencies
+    either bundled with it or listed as Pyodide packages. Returns its top-level names."""
+    if not spec["file"].endswith("-none-any.whl"):
+        fail(f"{lib}: {spec['file']} is not a pure-Python wheel.")
+    z = zipfile.ZipFile(io.BytesIO(data))
+    names = z.namelist()
+    meta = [n for n in names if re.fullmatch(r"[^/]+\.dist-info/METADATA", n)]
+    if len(meta) != 1:
+        fail(f"{lib}: {spec['file']} has no METADATA.")
+    info = meta[0].split("/")[0]
+    if not any(n.startswith(info + "/") and re.search(r"(LICEN[CS]E|COPYING)", n.upper()) for n in names):
+        fail(f"{lib}: {spec['file']} carries no license file (the bundle must carry each license text).")
+    pyodide = {norm(p) for p in BUNDLED[lib]["pyodide"]}
+    for line in z.read(meta[0]).decode("utf-8", "replace").splitlines():
+        if not line.startswith("Requires-Dist:") or not requirement_applies(line, lib, spec["file"]):
+            continue
+        dep = norm(re.match(r"Requires-Dist:\s*([A-Za-z0-9_.-]+)", line).group(1))
+        if dep not in wheel_dists and dep not in pyodide:
+            fail(f"{lib}: {spec['file']} requires {dep}, which is neither bundled with it nor in its \"pyodide\" list.")
+    return {n.split("/")[0].removesuffix(".py") for n in names if not n.split("/")[0].endswith((".dist-info", ".data"))}
+
+
+BUNDLED = {}
+
+
 def main():
     LIBS.mkdir(exist_ok=True)
     (LIBS / "fonts").mkdir(exist_ok=True)
@@ -118,7 +177,7 @@ def main():
             if digest != integrity[url]:
                 fail(f"{name}: sha384 mismatch against the SRI pin in src/index.html ({url}).")
         if check and hashlib.sha256(data).hexdigest() != check:
-            fail(f"{name}: sha256 mismatch against PYODIDE_SHA256 in build.py ({url}).")
+            fail(f"{name}: sha256 mismatch against its pin ({url}).")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         manifest[name] = url
@@ -156,6 +215,46 @@ def main():
         inline[name] = base64.b64encode(gzip.compress(data, 9)).decode()
     pyodide_script = "<script>window.__PYODIDE_INLINE__ = " + json.dumps(inline) + ";</script>"
 
+    print("📥 Bundled libraries")
+    BUNDLED.update(bundled_libraries(script_js))
+    lock = json.loads((LIBS / f"pyodide-{v.group(1)}" / "pyodide-lock.json").read_text())["packages"]
+    lock_names = {norm(k) for k in lock} | {norm(p["name"]) for p in lock.values()}
+    lock_imports = {i for p in lock.values() for i in p.get("imports", [])}
+    dist_of = lambda f: norm(f.split("-")[0])   # noqa: E731
+    wheels, wheel_total = {}, 0
+    for lib, spec in BUNDLED.items():
+        if norm(lib) in lock_names or set(spec["imports"]) & lock_imports:
+            fail(f"{lib}: Pyodide already has it (by name or import name); don't bundle it.")
+        for p in spec["pyodide"]:
+            if p not in lock:
+                fail(f"{lib}: \"pyodide\" lists {p}, which isn't a package in pyodide-lock.json.")
+        for r in spec["requires"]:
+            if r not in BUNDLED:
+                fail(f"{lib}: requires {r}, which isn't in BUNDLED_LIBRARIES.")
+    for lib, spec in BUNDLED.items():
+        # Its own wheels and those of the bundled libraries it requires, transitively.
+        dists, todo, seen = set(), [lib], set()
+        while todo:
+            n = todo.pop()
+            if n not in seen:
+                seen.add(n)
+                dists |= {dist_of(w["file"]) for w in BUNDLED[n]["wheels"]}
+                todo += BUNDLED[n]["requires"]
+        tops = set()
+        for w in spec["wheels"]:
+            if not re.fullmatch(r"https://files\.pythonhosted\.org/packages/[0-9a-f/]+/" + re.escape(w["file"]), w["url"]):
+                fail(f"{lib}: {w['file']} must come from files.pythonhosted.org under its own file name.")
+            data = cached(w["url"], "wheels/" + w["file"], check=w["sha256"])
+            tops |= check_wheel(lib, w, data, dists)
+            if w["file"] not in wheels:
+                wheels[w["file"]] = base64.b64encode(data).decode()
+                wheel_total += len(data)
+        missing = set(spec["imports"]) - tops
+        if missing:
+            fail(f"{lib}: its wheels provide no top-level {', '.join(sorted(missing))}.")
+    wheels_script = "<script>window.__HERMIT_WHEELS__ = " + json.dumps(wheels) + ";</script>"
+    print(f"  -> {len(BUNDLED)} libraries, {len(wheels)} wheels, {wheel_total / 1e6:.2f} MB")
+
     if re.search(r'</style', css, re.IGNORECASE):
         fail("src/style.css contains a literal '</style'.")
 
@@ -175,7 +274,7 @@ def main():
     out = replace_once(out, '<link rel="stylesheet" href="style.css">', f"<style>\n{css}\n</style>", "style.css")
     out = replace_once(out, '<script src="worker.js"></script>', f"<script>\n{escape_script_close(worker_js)}\n</script>", "worker.js")
     out = replace_once(out, '<script src="script.js"></script>', f"<script>\n{escape_script_close(script_js)}\n</script>", "script.js")
-    out = replace_once(out, "<!-- @pyodide:inline -->", pyodide_script, "@pyodide:inline placeholder")
+    out = replace_once(out, "<!-- @pyodide:inline -->", pyodide_script + "\n" + wheels_script, "@pyodide:inline placeholder")
     favicon = base64.b64encode((SRC / "favicon.svg").read_bytes()).decode()
     out = replace_once(out, '<link rel="icon" href="favicon.svg">',
                        f'<link rel="icon" href="data:image/svg+xml;base64,{favicon}">', "favicon")
@@ -185,7 +284,7 @@ def main():
     target = DIST / "hermit-agent-standalone.html"
     target.write_text(out, encoding="utf-8")
     print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e6:.2f} MB "
-          f"(Pyodide core {raw_total / 1e6:.1f} MB raw)")
+          f"(Pyodide core {raw_total / 1e6:.1f} MB raw, bundled libraries {wheel_total / 1e6:.2f} MB raw)")
 
 
 if __name__ == "__main__":

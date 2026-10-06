@@ -4,6 +4,9 @@
 Decided before the study: the libraries are **bundled** in the HTML (ROADMAP, Phase 3.5).
 This study decides **which**; the owner makes the final pick.*
 
+> **Picked (2026-10-06): Tier 1 and Tier 2**, ten libraries, as recommended below. Built
+> in Phase 3.5 (ROADMAP; DESIGN §8, "bundled pure-Python libraries").
+
 ## The question
 
 The libraries most people and models reach for to write Office files, PDFs and similar

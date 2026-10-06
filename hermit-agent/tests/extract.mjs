@@ -30,6 +30,14 @@ function constDecl(name) {
     return m[0].trim();
 }
 
+// A marker block's `const NAME = <strict JSON>;` (BUNDLED_LIBRARIES, which build.py
+// parses the same way).
+function jsonBlock(marker, name) {
+    const m = src.match(new RegExp(`// @${marker}:start\\nconst ${name} = (\\{[\\s\\S]*?\\n\\});\\n// @${marker}:end`));
+    if (!m) throw new Error(`extract.mjs: ${name} block not found in src/script.js`);
+    return `const ${name} = ${JSON.stringify(JSON.parse(m[1]))};`;
+}
+
 const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES"];
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
@@ -45,7 +53,7 @@ const FUNCS = [
     "crc32", "streamThrough", "sha256Hex", "sha256HexJs", "zipWrite", "zipRead", "cleanForExport",
     "transcriptMarkdown", "buildSessionArchive", "validateManifest", "validateSession", "parseSessionArchive", "workspaceEntriesFromZip",
     "lineDiff", "diffHunks", "elideHistory", "isRetryableError", "retryDelayMs", "contextGauge", "uploadWarning",
-    "packageImportNames", "importPackageIndex", "packageFailureMessage", "moduleNotFoundHint", "referencedPythonFiles", "rewritePyodideInstallAdvice", "readEntry",
+    "packageImportNames", "importPackageIndex", "normalizePackageName", "bundledImportIndex", "planBundledLoad", "packageLoadNote", "packageFailureMessage", "moduleNotFoundHint", "referencedPythonFiles", "rewritePyodideInstallAdvice", "readEntry",
     "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
     "awaitsModel", "copyMessage", "agentToolDefs", "resolveProtocol", "toolSupportFromProps", "toolSupportFromOllamaShow", "findListedModel",
     "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "parseToolCalls", "toolCallAsText",
@@ -54,8 +62,9 @@ const FUNCS = [
 
 const mod = `
 ${CONSTS.map(constDecl).join("\n")}
+${jsonBlock("bundled", "BUNDLED_LIBRARIES")}
 ${FUNCS.map(fn).join("\n")}
-export { ${[...CONSTS, ...FUNCS].join(", ")} };
+export { ${[...CONSTS, "BUNDLED_LIBRARIES", ...FUNCS].join(", ")} };
 `;
 
 export default await import("data:text/javascript;base64," + Buffer.from(mod).toString("base64"));

@@ -19,6 +19,7 @@ function hermitWorkerMain() {
     let ns = null;          // the agent's persistent namespace (notebook-like)
     let harness = null;     // the harness's own namespace, out of the agent's sight
     let baseline = {};      // path -> sha256 of the workspace the main thread knows about
+    let installed = [];     // bundled libraries unpacked into site-packages (Phase 3.5)
 
     // ---------- Network guard (DESIGN §10) ----------
     // Best effort, not a sandbox: while agent code runs, the network APIs reachable from
@@ -235,6 +236,27 @@ def hermit_forget_workspace_modules():
             del sys.modules[name]
     importlib.invalidate_caches()
 
+# ---- Bundled libraries (Phase 3.5): a pinned wheel, already checked by the main thread,
+# unpacked into site-packages the way pip would (purelib/platlib data folders included,
+# scripts and headers left out). It lives in memory, like everything in this interpreter.
+def hermit_install_wheel(path):
+    import site, zipfile
+    sp = site.getsitepackages()[0]
+    with zipfile.ZipFile(path) as z:
+        for info in z.infolist():
+            parts = info.filename.split("/")
+            if parts[0].endswith(".data"):
+                if len(parts) < 3 or parts[1] not in ("purelib", "platlib"):
+                    continue
+                parts = parts[2:]
+            if info.is_dir() or not parts[-1] or ".." in parts or info.filename.startswith("/"):
+                continue
+            dest = os.path.join(sp, *parts)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with z.open(info) as src, open(dest, "wb") as fh:
+                fh.write(src.read())
+    importlib.invalidate_caches()
+
 def hermit_clear_workspace():
     import shutil
     for entry in os.listdir("/workspace"):
@@ -356,33 +378,56 @@ def hermit_clear_workspace():
             names = found.toJs();
             found.destroy();
         } catch (e) { /* a syntax error: the run reports it */ }
-        return { imports: names.map(String), loaded: Object.keys(py.loadedPackages) };
+        return { imports: names.map(String), loaded: [...Object.keys(py.loadedPackages), ...installed] };
     }
 
     // Packages the code imports, loaded by the harness (never by agent code) from the
     // pinned CDN, in memory only (DESIGN §8). Pyodide doesn't throw when a package fails:
     // it reports "Loaded …" / "Failed to load …" and the reasons through the callbacks.
-    async function load({ code }) {
+    // packages: Pyodide packages by name (what bundled libraries import); wheels: the
+    // bundled libraries to install, [{ name, files: [{ file, bytes }] }], after those.
+    async function load({ code, packages, wheels }) {
         const t0 = performance.now();
-        const loaded = [], failed = [], errors = [];
+        const loaded = [], failed = [], errors = [], done = [];
         netAttempts = [];
         const names = (m, prefix) => m.slice(prefix.length).split(",").map(s => s.trim()).filter(Boolean);
+        const options = {
+            messageCallback: (m) => {
+                if (/^Loaded /.test(m)) loaded.push(...names(m, "Loaded "));
+                else if (/^Failed to load /.test(m)) failed.push(...names(m, "Failed to load "));
+            },
+            errorCallback: (m) => { if (errors.length < 20) errors.push(String(m).slice(0, 500)); },
+        };
         netMode = "cdn";
         try {
-            await py.loadPackagesFromImports(code, {
-                messageCallback: (m) => {
-                    if (/^Loaded /.test(m)) loaded.push(...names(m, "Loaded "));
-                    else if (/^Failed to load /.test(m)) failed.push(...names(m, "Failed to load "));
-                },
-                errorCallback: (m) => { if (errors.length < 20) errors.push(String(m).slice(0, 500)); },
-            });
+            if (code) await py.loadPackagesFromImports(code, options);
+            if (Array.isArray(packages) && packages.length) await py.loadPackage(packages.map(String), options);
         } catch (e) {
             errors.push(String(e && e.message || e).split("\n")[0].slice(0, 500));
             if (!failed.length) failed.push("(packages)");
         } finally {
             netMode = "closed";
         }
-        return { loaded, failed, errors, netAttempts: netAttempts.slice(), ms: Math.round(performance.now() - t0) };
+        // No network needed: the bytes came with the request. Not after a failed package:
+        // a library counted as installed would never get its packages loaded again.
+        for (const lib of !failed.length && Array.isArray(wheels) ? wheels : []) {
+            const name = String(lib && lib.name);
+            if (installed.includes(name)) continue;
+            try {
+                py.FS.mkdirTree("/hermit/wheels");
+                for (const f of lib.files) {
+                    const path = "/hermit/wheels/" + String(f.file).replace(/[^\w.+-]/g, "_");
+                    py.FS.writeFile(path, f.bytes);
+                    try { harness.get("hermit_install_wheel")(path); } finally { py.FS.unlink(path); }
+                }
+                installed.push(name);
+                done.push(name);
+            } catch (e) {
+                failed.push(name);
+                errors.push((name + ": " + String(e && e.message || e).split("\n").filter(Boolean).pop()).slice(0, 500));
+            }
+        }
+        return { loaded, installed: done, failed, errors, netAttempts: netAttempts.slice(), ms: Math.round(performance.now() - t0) };
     }
 
     async function run({ code, allowNetwork, step }) {

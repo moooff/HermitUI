@@ -289,23 +289,53 @@ and the CSP, DESIGN §10).
       on 18 format tasks without a library hint. Recommendation, Tier 1 (1.33 MB):
       openpyxl, XlsxWriter, python-docx, python-pptx, Markdown, qrcode; Tier 2 optional
       (0.35 MB): tabulate, xmltodict, markdownify, seaborn; no extra PDF library.
-      **Waiting for the owner's pick** (REVIEW_NOTES).
-- [ ] Bundle the chosen wheels: `build.py` downloads them pinned by sha256 and inlines
-      them; the harness installs one into memory when a step's imports need it (the
-      same loading phase as Pyodide packages); the import index and the package list in
-      the system prompt include them.
-- [ ] Rewrite the system prompt's library guidance to suggest the bundled libraries for
+      **The owner picked Tier 1 and Tier 2** (2026-10-06).
+- [x] Bundle the chosen wheels: `build.py` downloads them pinned by sha256, checks them
+      against their own metadata and inlines them; the harness installs one into memory
+      when a step's imports (or pandas calls that need it, such as `to_excel`) call for it,
+      in the same loading phase as Pyodide packages, together with the Pyodide packages
+      it imports; the import index and the package list in the system prompt include
+      them (DESIGN §8).
+- [x] Rewrite the system prompt's library guidance to suggest the bundled libraries for
       the matching tasks.
-- [ ] Tests: unit (import index, prompt), e2e (an import of each bundled library loads
-      it offline), and success-measurement tasks for the new formats.
+- [x] Tests: unit (`tests/bundled.test.mjs`: manifest, load plan, notes, hints, prompt),
+      e2e (`bundled`: each library works; the five without Pyodide packages with no
+      network at all, and again after a restart; PyPI never asked), and five
+      success-measurement tasks for the new formats (Excel, Word, PowerPoint, Markdown →
+      HTML, QR).
 
-**Exit criteria** (proposed by the study; confirm with the pick):
+**Exit criteria** (proposed by the study, confirmed with the pick):
 - Each bundled library imports and works **offline** in Chromium and Firefox (e2e),
   together with the Pyodide packages it needs, and the file grows by no more than the
   chosen set's size.
 - The success measurement grows by one task per bundled format (Excel, Word, PowerPoint,
   Markdown → HTML, QR), each checking the produced file with the library itself, and the
   suite passes **≥ 90 %** over 3 runs against a real model, in both protocols.
+
+**Result (2026-10-06): met.** v0.3.0.
+- **Offline, both engines:** `tests/e2e_agent.py` 546/546 checks in Chromium and
+  Playwright's Firefox, with the new `bundled` scenario. openpyxl, XlsxWriter, Markdown,
+  tabulate and xmltodict work with every request that leaves the machine refused (and
+  again after an interpreter restart); python-docx, python-pptx, qrcode, markdownify and
+  seaborn work with their Pyodide packages from the CDN; PyPI is never asked. The
+  libraries that import Pyodide packages need those from the CDN (DESIGN §8).
+- **Size:** 9.04 → 11.31 MB, +2.27 MB: the 1.69 MB of wheels base64-encoded, the study's
+  estimate for both tiers (1.8 + 0.47 MB).
+- **Success measurement**, Qwen3.8-27B (IQ4_XS, llama.cpp), reasoning effort Low,
+  risk-based, 24 tasks (19 + Excel, Word, PowerPoint, Markdown → HTML, QR) × 3 runs:
+  - **Code blocks and tags: 71/72 = 99 %** (15 min); the miss is the known int32
+    overflow in the calculation task.
+  - **Native tool calls: 72/72.** The first run measured 68/72, but two of its misses
+    were a bug in the suite: the Excel task's new `orders.csv` fixture shadowed the
+    SQLite task's, which then had no customer column (the model said so, 0/3). The
+    other was a PowerPoint check that only accepted `2026-01`-style labels and failed a
+    correct chart labelled "Jan 2026" (2/3). Both are fixed. The 22 unaffected tasks
+    passed 66/66 in that run, and the SQLite and PowerPoint tasks passed 6/6 when re-run.
+  - Every run of the five new tasks used the bundled library (`library_used`). They took
+    9–18 s on average, against 58 s (Excel), 85 s (Word) and 239 s (PowerPoint) built by
+    hand in the study.
+- The system prompt also gained a line about `AGENTS.md` in the workspace (DESIGN §5.3)
+  after the native run; the text run includes it.
 
 ---
 

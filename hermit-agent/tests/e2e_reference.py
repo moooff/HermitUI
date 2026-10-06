@@ -5,6 +5,7 @@ risk-based supervision, several runs each, reported as one pass rate.
     ../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 [--runs 3]
     ../benchmark/.venv/bin/python tests/e2e_reference.py --only "data processing,code + tests,calculation"   # Phase 1's three
     ../benchmark/.venv/bin/python tests/e2e_reference.py --tool-mode native   # Phase 3: native tool calls (also: text, auto)
+    ../benchmark/.venv/bin/python tests/e2e_reference.py --quick --tool-mode native   # after a small change: 5 fast tasks, ~1 min
 
 Drives dist/hermit-agent-standalone.html like a user would: uploads the task's files,
 starts the task, approves held steps (each one is logged with its reasons), answers
@@ -137,6 +138,27 @@ CUSTOMERS_CSV = "id,name,city\n1,Alice,Berlin\n2,Bob,Paris\n3,Chen,Rome\n4,Dana,
 ORDERS_CSV = "id,customer_id,amount\n1,1,120.0\n2,2,80.5\n3,1,30.0\n4,3,200.25\n5,2,99.5\n6,4,10\n"
 MONTHLY_CSV = "month,total\n2026-01,200.5\n2026-02,300.0\n2026-03,350.0\n2026-04,280.75\n"
 INVENTORY_CSV = "item,qty,min_qty\nbolts,120,100\nnuts,40,100\nwashers,5,50\nscrews,300,250\nrivets,0,20\n"
+REGION_SALES_CSV = "date,region,amount\n2026-01-05,north,100\n2026-01-09,south,50\n2026-02-11,north,25.5\n2026-02-20,east,70\n2026-03-02,south,30\n2026-03-15,north,12\n"
+NOTES_MD = """# Release notes
+
+Version **2.4** brings two changes. See the [changelog](https://example.org/changes) for details.
+
+## Changes
+
+- Faster *imports*
+- A new `--dry-run` flag
+
+## Timings
+
+| step | before | after |
+|------|-------:|------:|
+| load | 4.2 s | 1.1 s |
+| save | 2.0 s | 1.9 s |
+
+```python
+print("hello")
+```
+"""
 
 
 
@@ -163,7 +185,9 @@ def library_db():
 # `answer_contains` (all of them) is matched against the final answer with commas and
 # spaces removed; `needs_approval` means a step must have been held because it changed
 # one of your files; `figure_shown` means a figure must have been captured (plt.show() or
-# still open at the end of a step) and shown inline on its step card.
+# still open at the end of a step) and shown inline on its step card. `library` (Phase 3.5)
+# is informational: whether the agent's code used one of these (a bundled library), or
+# built the format some other way; it doesn't decide the pass.
 TASKS = [
     {
         "name": "data processing",
@@ -401,6 +425,128 @@ print("CHECK OK")
 ]
 
 
+# Phase 3.5: one task per bundled format, each file checked with a library.
+TASKS += [
+    {
+        "name": "excel workbook",
+        "files": {"orders.csv": REGION_SALES_CSV},
+        "prompt": "Make sales.xlsx from orders.csv: one sheet per region, named after the region, holding that region's rows, and a sheet named Summary that lists each region with its total amount.",
+        "library": ["openpyxl", "xlsxwriter", "to_excel"],
+        "check": """
+import openpyxl
+wb = openpyxl.load_workbook("/workspace/sales.xlsx")
+names = {n.lower(): n for n in wb.sheetnames}
+assert {"north", "south", "east", "summary"} <= set(names), wb.sheetnames
+for region, n in {"north": 3, "south": 2, "east": 1}.items():
+    rows = [r for r in wb[names[region]].iter_rows(values_only=True) if any(c not in (None, "") for c in r)]
+    assert len(rows) == n + 1, (region, rows)   # a header and the region's rows
+totals = {"north": 137.5, "south": 80, "east": 70}
+for r in wb[names["summary"]].iter_rows(values_only=True):
+    cells = [c for c in r if c not in (None, "")]
+    key = next((str(c).strip().lower() for c in cells if str(c).strip().lower() in totals), None)
+    if key:
+        nums = [c for c in cells if isinstance(c, (int, float))]
+        formulas = [c for c in cells if isinstance(c, str) and c.startswith("=")]
+        assert any(abs(x - totals[key]) < 0.01 for x in nums) or formulas, (key, r)
+        totals.pop(key)
+assert not totals, ("regions missing from Summary", totals)
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "word report",
+        "files": {"inventory.csv": INVENTORY_CSV},
+        "prompt": "Read inventory.csv and write report.docx: a Word document with the heading \"Inventory status\", one sentence saying how many items need reordering, and a table of the items whose qty is below min_qty with the columns Item, Qty and Missing (min_qty minus qty).",
+        "library": ["docx"],
+        "check": """
+import docx
+d = docx.Document("/workspace/report.docx")
+assert any("inventory status" in p.text.lower() and (p.style.name.lower().startswith(("heading", "title"))) for p in d.paragraphs), [(p.style.name, p.text) for p in d.paragraphs][:6]
+assert d.tables, "no table"
+rows = [[c.text.strip().lower() for c in r.cells] for r in d.tables[0].rows]
+assert rows[0][:3] == ["item", "qty", "missing"], rows[0]
+body = {r[0]: (int(float(r[1])), int(float(r[2]))) for r in rows[1:] if r[0]}
+assert body == {"nuts": (40, 60), "washers": (5, 45), "rivets": (0, 20)}, body
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "powerpoint deck",
+        "files": {"monthly.csv": MONTHLY_CSV},
+        "prompt": "Make deck.pptx: a title slide \"Quarterly sales\", then a slide with a native PowerPoint column chart (editable in PowerPoint, not a picture) of the total per month in monthly.csv.",
+        "library": ["pptx"],
+        "check": """
+from pptx import Presentation
+from pptx.enum.chart import XL_CHART_TYPE
+p = Presentation("/workspace/deck.pptx")
+assert len(p.slides) >= 2, len(p.slides)
+texts = [sh.text_frame.text.lower() for sh in p.slides[0].shapes if sh.has_text_frame]
+assert any("quarterly sales" in t for t in texts), texts
+charts = [sh.chart for s in p.slides for sh in s.shapes if sh.has_chart]
+assert charts, "no native chart"
+c = charts[0]
+assert c.chart_type in (XL_CHART_TYPE.COLUMN_CLUSTERED, XL_CHART_TYPE.COLUMN_STACKED), c.chart_type
+values = [round(v, 2) for v in c.plots[0].series[0].values]
+assert values == [200.5, 300.0, 350.0, 280.75], values
+cats = [str(x) for x in c.plots[0].categories]   # "2026-01" or "Jan 2026": any label naming the month
+assert len(cats) == 4 and all(iso in cat or abbr in cat.lower() for cat, (iso, abbr) in zip(cats, [("2026-01", "jan"), ("2026-02", "feb"), ("2026-03", "mar"), ("2026-04", "apr")])), cats
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "markdown to html",
+        "files": {"notes.md": NOTES_MD},
+        "prompt": "Convert notes.md into notes.html, a complete HTML page that keeps its headings, the list, the table, the link and the code block.",
+        "library": ["import markdown", "from markdown"],
+        "check": """
+from bs4 import BeautifulSoup
+s = BeautifulSoup(open("/workspace/notes.html", encoding="utf-8").read(), "html.parser")
+assert s.find("h1") and "Release notes" in s.find("h1").text, s.find("h1")
+assert [h.text.strip() for h in s.find_all("h2")] == ["Changes", "Timings"], s.find_all("h2")
+assert len(s.find_all("li")) == 2 and s.find("li").find("em"), s.find_all("li")
+assert s.find("strong") and s.find("strong").text == "2.4", s.find("strong")
+a = s.find("a", href="https://example.org/changes")
+assert a and a.text == "changelog", a
+rows = [[c.text.strip() for c in tr.find_all(["td", "th"])] for tr in s.find("table").find_all("tr")]
+assert rows == [["step", "before", "after"], ["load", "4.2 s", "1.1 s"], ["save", "2.0 s", "1.9 s"]], rows
+assert any('print("hello")' in c.text for c in s.find_all("code")), s.find_all("code")
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "qr code",
+        "files": {},
+        "prompt": "Make qr.png: a QR code PNG for the URL https://example.org/hermit.",
+        "library": ["qrcode"],
+        "check": """
+import cv2, numpy as np
+from PIL import Image
+im = Image.open("/workspace/qr.png")
+assert im.format == "PNG", im.format
+rgb = np.array(im.convert("RGB"))
+if max(rgb.shape[:2]) < 200:   # small images decode better scaled up
+    rgb = np.array(im.convert("RGB").resize((rgb.shape[1] * 4, rgb.shape[0] * 4), Image.NEAREST))
+data, _, _ = cv2.QRCodeDetector().detectAndDecode(rgb)
+assert data == "https://example.org/hermit", repr(data)
+print("CHECK OK")
+""",
+    },
+]
+
+
+# After a small change, these five instead of the whole suite (AGENTS.md): fast (under
+# ~20 s each against Qwen3.8 on :8080, 2026-10-06), not flaky, and each on a different
+# path: messy data through code, file actions with a held edit of your file, a binary
+# upload, a figure captured from a CDN package, a bundled library.
+QUICK = ["data processing", "rename a setting in your files", "question about a binary file", "chart shown (plt.show)", "excel workbook"]
+
+
+def agent_code(page):
+    """Everything the agent ran or wrote as Python: step code and workspace .py files."""
+    return ev(page, """() => [...S.timeline.filter(t => t.type === 'step').map(t => t.ranCode || t.proposedCode || ''),
+        ...[...WS.files].filter(([p]) => p.endsWith('.py')).map(([p, f]) => new TextDecoder().decode(WS.blobs.get(f.hash)))].join('\\n')""")
+
+
 def ev(page, js, arg=None):
     return page.evaluate(js, arg) if arg is not None else page.evaluate(js)
 
@@ -465,11 +611,10 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
         out = ev(page, "async (c) => { const r = await runInWorker(c, { timeoutMs: 120000 }); return r.output; }", code)
         if "CHECK OK" not in out:
             problems.append("check: " + out[-500:])
+    if task.get("library"):
+        base["library_used"] = any(w in agent_code(page) for w in task["library"])
     if task.get("code_never"):
-        # Everything the agent ran or wrote as Python: step code and workspace .py files.
-        code = ev(page, """() => [...S.timeline.filter(t => t.type === 'step').map(t => t.ranCode || t.proposedCode || ''),
-            ...[...WS.files].filter(([p]) => p.endsWith('.py')).map(([p, f]) => new TextDecoder().decode(WS.blobs.get(f.hash)))].join('\\n')""")
-        hits = [w for w in task["code_never"] if w in code]
+        hits = [w for w in task["code_never"] if w in agent_code(page)]
         if hits:
             problems.append(f"built by hand: the code contains {hits}")
     if task.get("needs_approval") and not any(any("your file" in r for r in a) for a in approvals):
@@ -498,10 +643,11 @@ def main():
     ap.add_argument("--runs", type=int, default=1, help="runs of the whole suite")
     ap.add_argument("--deadline", type=int, default=1200, help="seconds per task")
     ap.add_argument("--only", default="", help="comma-separated substrings of task names")
+    ap.add_argument("--quick", action="store_true", help="only the QUICK tasks: the check after a small change")
     ap.add_argument("--app", default=str(APP_PATH), help="the built HTML file to test")
     ap.add_argument("--out", default="", help="results JSON (default: tests/results/success-<time>.json)")
     args = ap.parse_args()
-    tasks = [t for t in TASKS if not args.only or any(o.strip() and o.strip() in t["name"] for o in args.only.split(","))]
+    tasks = [t for t in TASKS if (t["name"] in QUICK if args.quick else not args.only or any(o.strip() and o.strip() in t["name"] for o in args.only.split(",")))]
     out = pathlib.Path(args.out) if args.out else ROOT / "tests" / "results" / f"success-{datetime.datetime.now():%Y%m%d-%H%M%S}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     results = []
@@ -525,7 +671,8 @@ def main():
                 print(f"▶ run {run}/{args.runs} · {task['name']} …")
                 r = run_task(page, task, args.deadline, args.tool_mode)
                 r["run"] = run
-                print(f"  {'✅' if r['passed'] else '❌'} {task['name']}: {r['steps']} steps, {r['secs']} s {r.get('detail', '')}")
+                lib = "" if "library_used" not in r else (" · library used" if r["library_used"] else " · built WITHOUT the library")
+                print(f"  {'✅' if r['passed'] else '❌'} {task['name']}: {r['steps']} steps, {r['secs']} s{lib} {r.get('detail', '')}")
                 results.append(r)
                 out.write_text(json.dumps({"base_url": args.base_url, "model": args.model, "effort": args.effort, "tool_mode": args.tool_mode, "results": results}, indent=1))
         browser.close()

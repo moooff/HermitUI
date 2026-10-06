@@ -2,8 +2,8 @@
 
 *A supervised, sandboxed, ephemeral agent that runs entirely in your browser.*
 
-> **Status: v0.2.0** (Phase 3, native tool calls). One self-contained HTML file,
-> [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (≈ 9 MB,
+> **Status: v0.3.0** (Phase 3.5, bundled libraries). One self-contained HTML file,
+> [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (≈ 11 MB,
 > Python included). It is developed here, separately from the main app in
 > [`../src/`](../src/), so it can move fast without destabilising HermitUI.
 
@@ -23,7 +23,10 @@ The agent needs a model that can recover from its own errors. The reference task
 pass with Qwen3.8-27B at reasoning effort Low (see [ROADMAP.md](ROADMAP.md)).
 Packages such as numpy or pandas load on demand from the pinned Pyodide CDN, so they
 need a connection; the standard library works fully offline, and a package that can't
-load says why. If the server goes away mid-task, the agent retries for two minutes and
+load says why. Ten common pure-Python libraries that Pyodide leaves out ship inside the
+file: openpyxl and XlsxWriter (Excel), python-docx (Word), python-pptx (PowerPoint),
+Markdown, markdownify, tabulate, xmltodict, qrcode and seaborn. Those that need no
+Pyodide package (openpyxl, XlsxWriter, Markdown, tabulate, xmltodict) work offline too. If the server goes away mid-task, the agent retries for two minutes and
 then pauses: nothing is lost, and Retry carries on where it stopped.
 
 Agent code runs in a WebAssembly Python inside the tab. Its network access is
@@ -81,5 +84,5 @@ See [DESIGN.md §11](DESIGN.md#11-project-layout--merge-path).
 | [PHASE0_FINDINGS.md](PHASE0_FINDINGS.md) | What the Phase 0 spike measured: offline boot, kill & re-seed, network blocking, GitHub Pages |
 | [PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md) | Which pure-Python libraries to bundle: cost, whether they work in Pyodide, and what the model reaches for |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or AI) working in this folder, build & test commands |
-| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Open decisions (MVP, Phases 2a, 2b and 3), waiting for a review |
+| [REVIEW_NOTES.md](REVIEW_NOTES.md) | Open decisions (MVP, Phases 2a, 2b, 3 and 3.5), waiting for a review |
 | [tests/README.md](tests/README.md) | What the unit, end-to-end and real-model tests cover |

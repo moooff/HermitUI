@@ -82,6 +82,14 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   and `fileCallResults`, answering a pending `ask_user`/`finish`, `toolHistoryAsText`
   (calls written out parse back to the same actions), elision and compaction with tool
   calls, the native system prompt and hints, and session format 2.
+- **`bundled.test.mjs`** covers the bundled libraries (Phase 3.5, DESIGN §8): the real
+  `BUNDLED_LIBRARIES` manifest (Tier 1 and Tier 2, pinned pure wheels from PyPI, known
+  `requires`), `bundledImportIndex`, `planBundledLoad` (python-pptx brings XlsxWriter and
+  Pillow, what is loaded is skipped with names compared normalized, pandas' `to_excel`,
+  `engine="xlsxwriter"` and `to_markdown` pull in openpyxl, XlsxWriter and tabulate, a
+  word inside a longer name doesn't), `packageLoadNote`, `moduleNotFoundHint` for a
+  bundled import and pandas' "Missing optional dependency", and the system prompt naming
+  a library per format in both protocols.
 - **`files.test.mjs`** covers the file actions (DESIGN §5.1):
   - `extractFileActions`: both quote styles, fences inside written content,
     line-start only, unclosed tags, path normalising and unsafe paths.
@@ -192,6 +200,15 @@ it stall, on cue; see its docstring):
 16b. **Packages through a script** (in the packages scenario): a package imported only by
     a workspace script that the step runs with `runpy` is loaded before the step, and
     `import micropip` gets "nothing needs installing" instead of Pyodide's micropip advice.
+16c. **Bundled libraries** (Phase 3.5; `bundled`). One page refuses every request that
+    leaves the machine: openpyxl (a formula round trip), XlsxWriter (a chart), Markdown
+    (a table), tabulate and xmltodict work, each step notes it was installed from the
+    bundle, nothing left the machine, and after an interpreter restart openpyxl installs
+    again. A second page blocks only PyPI: python-docx, python-pptx (a native chart; it
+    brings XlsxWriter), qrcode (a PNG), markdownify and seaborn work with their Pyodide
+    packages from the CDN, pandas' `to_excel`/`read_excel`/`to_markdown` work without an
+    import of openpyxl or tabulate, and PyPI is never asked. The prompt's package list
+    includes the bundled libraries.
 17. **Native tool calls** (Phase 3; `native`, `native_fallback`), against the mock's
     `/tools/v1`, whose `/props` reports tool support, and `/notools/v1`, which refuses
     `tools` like llama.cpp without `--jinja`. The mock checks every request's history like
@@ -220,20 +237,29 @@ Waits poll `page.evaluate()` instead, which goes through the browser protocol.
 ## Real model — `e2e_reference.py`
 
 The success measurement (Phase 2a; its first three tasks are the Phase 1 exit
-criterion). A real model does 19 tasks in the built app under risk-based supervision:
+criterion). A real model does 24 tasks in the built app under risk-based supervision:
 data processing, code plus tests, calculation, fixing a bug in an uploaded file, a JSON
 transform, word frequencies, log analysis, code from a spec, a matplotlib chart, a
 pandas pivot, renaming a setting across two uploaded files, SQLite, counting, dates and
 a Markdown report, plus Phase 2b's three: a chart it must *show* (the figure has to be
 captured and shown inline on its card), a Pillow image, and a question about an
 uploaded SQLite file, and a PDF report that must come from a library (its text is
-checked with pymupdf, and no step's code or workspace script may hold raw PDF syntax). `--runs N` repeats the suite; the result is one pass rate, plus a
+checked with pymupdf, and no step's code or workspace script may hold raw PDF syntax), plus
+Phase 3.5's five, one per bundled format, each file checked with a library: an Excel
+workbook (a sheet per region and a Summary, read with openpyxl), a Word report (heading
+and table, python-docx), a PowerPoint deck with a native column chart (its values and
+categories, python-pptx), Markdown → HTML (headings, list, table, link and code block,
+beautifulsoup4) and a QR code (decoded with OpenCV). For those, whether the agent's code
+used a bundled library is recorded (`library_used`) but doesn't decide the pass. `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks
 the results inside the same interpreter, or against the final answer. The two tasks
 that change an uploaded file must have been held for it: that is the real-model gating
 check. It takes minutes per task, so launch it detached and watch the log; `--app`
 tests a copy of the build, so rebuilding meanwhile doesn't change what is measured.
+`--quick` runs only the five tasks in `QUICK` (data processing, rename a setting, the
+binary-file question, the shown chart, the Excel workbook), once: the check after a small
+change, about a minute per protocol; the full suite is for bigger ones (AGENTS.md).
 `--tool-mode native|text|auto` sets Settings → Actions (Phase 3); with `native` or `text`
 a run fails unless every step used that protocol, and each result records how many
 steps used which.

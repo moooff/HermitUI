@@ -13,9 +13,43 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
+// Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
+// them to micropip and PyPI, which agent code can't reach. build.py reads this block as
+// JSON, downloads each wheel, checks its sha256 and inlines it (window.__HERMIT_WHEELS__);
+// the unbuilt source fetches them from PyPI instead, checked against the same hashes.
+// Per library: `imports` (the first is the one the prompt names) and `uses` (words in a
+// step's code that need it without an import: pandas imports openpyxl itself) make the
+// harness install it; `requires`: other bundled libraries; `pyodide`: Pyodide packages
+// it imports, by lock-file name, loaded with it (some are undeclared or optional extras,
+// PHASE3_5_LIBRARY_STUDY.md). Strict JSON between the markers.
+// @bundled:start
+const BUNDLED_LIBRARIES = {
+    "openpyxl": { "imports": ["openpyxl", "et_xmlfile"], "uses": ["read_excel", "to_excel", "ExcelWriter", "ExcelFile"], "requires": [], "pyodide": [], "wheels": [
+        { "file": "openpyxl-3.1.5-py2.py3-none-any.whl", "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", "url": "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl" },
+        { "file": "et_xmlfile-2.0.0-py3-none-any.whl", "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", "url": "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl" }] },
+    "XlsxWriter": { "imports": ["xlsxwriter"], "uses": ["xlsxwriter"], "requires": [], "pyodide": [], "wheels": [
+        { "file": "xlsxwriter-3.2.9-py3-none-any.whl", "sha256": "9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3", "url": "https://files.pythonhosted.org/packages/3a/0c/3662f4a66880196a590b202f0db82d919dd2f89e99a27fadef91c4a33d41/xlsxwriter-3.2.9-py3-none-any.whl" }] },
+    "python-docx": { "imports": ["docx"], "uses": [], "requires": [], "pyodide": ["lxml", "typing-extensions"], "wheels": [
+        { "file": "python_docx-1.2.0-py3-none-any.whl", "sha256": "3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7", "url": "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl" }] },
+    "python-pptx": { "imports": ["pptx"], "uses": [], "requires": ["XlsxWriter"], "pyodide": ["lxml", "typing-extensions", "pillow"], "wheels": [
+        { "file": "python_pptx-1.0.2-py3-none-any.whl", "sha256": "160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba", "url": "https://files.pythonhosted.org/packages/d9/4f/00be2196329ebbff56ce564aa94efb0fbc828d00de250b1980de1a34ab49/python_pptx-1.0.2-py3-none-any.whl" }] },
+    "Markdown": { "imports": ["markdown"], "uses": [], "requires": [], "pyodide": [], "wheels": [
+        { "file": "markdown-3.11-py3-none-any.whl", "sha256": "cd6c89e7eb308c8b332ed673215a52d208a43f8bacc030b1419376129408719e", "url": "https://files.pythonhosted.org/packages/ec/1e/32971905a7ab47f8b66866ed949fa48b104ba1c4a6fa57794c4f2c4b2cb8/markdown-3.11-py3-none-any.whl" }] },
+    "qrcode": { "imports": ["qrcode"], "uses": [], "requires": [], "pyodide": ["pillow"], "wheels": [
+        { "file": "qrcode-8.2-py3-none-any.whl", "sha256": "16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f", "url": "https://files.pythonhosted.org/packages/dd/b8/d2d6d731733f51684bbf76bf34dab3b70a9148e8f2cef2bb544fccec681a/qrcode-8.2-py3-none-any.whl" }] },
+    "tabulate": { "imports": ["tabulate"], "uses": ["to_markdown"], "requires": [], "pyodide": [], "wheels": [
+        { "file": "tabulate-0.10.0-py3-none-any.whl", "sha256": "f0b0622e567335c8fabaaa659f1b33bcb6ddfe2e496071b743aa113f8774f2d3", "url": "https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl" }] },
+    "xmltodict": { "imports": ["xmltodict"], "uses": [], "requires": [], "pyodide": [], "wheels": [
+        { "file": "xmltodict-1.0.4-py3-none-any.whl", "sha256": "a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a", "url": "https://files.pythonhosted.org/packages/38/34/98a2f52245f4d47be93b580dae5f9861ef58977d73a79eb47c58f1ad1f3a/xmltodict-1.0.4-py3-none-any.whl" }] },
+    "markdownify": { "imports": ["markdownify"], "uses": [], "requires": [], "pyodide": ["beautifulsoup4", "six"], "wheels": [
+        { "file": "markdownify-1.2.3-py3-none-any.whl", "sha256": "a189a0bedfd14009030fde5f85bb6f77c56897cb839b5c25315dd7d4e3e290ba", "url": "https://files.pythonhosted.org/packages/04/10/fa543d484e8b1199243fe20eedd02cc5af050edebce98a7293a5773df592/markdownify-1.2.3-py3-none-any.whl" }] },
+    "seaborn": { "imports": ["seaborn"], "uses": [], "requires": [], "pyodide": ["numpy", "pandas", "matplotlib"], "wheels": [
+        { "file": "seaborn-0.13.2-py3-none-any.whl", "sha256": "636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987", "url": "https://files.pythonhosted.org/packages/83/11/00d3c3dfc25ad54e731d91449895a79e4bf2384dc3ac01809010ba88f6d5/seaborn-0.13.2-py3-none-any.whl" }] }
+};
+// @bundled:end
 const SESSION_FORMAT = "hermit-agent-session";
 // 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
 const SESSION_FORMAT_VERSION = 2;
@@ -311,7 +345,7 @@ function looksLikeReasoningRejection(detail) {
 // protocol: "tools" describes the native tools (DESIGN §5.6), else code-as-action (§5.1).
 function buildSystemPrompt(instructions, packages, protocol) {
     const pkgs = Array.isArray(packages) && packages.length
-        ? `Only these packages from the Pyodide distribution can be imported besides the standard library; each is loaded automatically on its first import: ${packages.join(", ")}.`
+        ? `Only these packages (the Pyodide distribution plus a few bundled libraries) can be imported besides the standard library; each is loaded automatically on its first import: ${packages.join(", ")}.`
         : "Packages from the Pyodide distribution (numpy, pandas, matplotlib, scipy, scikit-learn, sympy, ...) are loaded automatically when you import them.";
     // Code-as-action (DESIGN §5.1).
     const textFormat = `
@@ -364,10 +398,11 @@ Rules:
 
 Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the user's browser.
 - The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
+- If /workspace has an AGENTS.md file, read it before you start: it holds the project's instructions for agents (conventions, commands, what not to touch). Follow them unless they conflict with the user's task or these rules.
 - The standard library is available. ${pkgs} Don't install anything: there is no pip or micropip and no network access, so nothing else can be installed. input() does not work.
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
-- Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables); matplotlib for charts, also as PDF pages; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Nothing here writes .xlsx, .docx or .pptx (no openpyxl, xlsxwriter or python-docx; for PDFs no reportlab or fpdf either, use pymupdf): write CSV, Markdown or HTML instead and tell the user, rather than assembling those formats yourself.
+- Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; openpyxl or xlsxwriter for Excel .xlsx files (pandas read_excel and to_excel work too); python-docx (import docx) for Word .docx; python-pptx (import pptx) for PowerPoint .pptx, charts included; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables; there is no reportlab or fpdf); matplotlib or seaborn for charts, also as PDF pages; markdown to turn Markdown into HTML, markdownify for HTML into Markdown; tabulate for plain-text tables; qrcode for QR codes; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML, xmltodict to turn XML into dicts; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Don't assemble these file formats by hand.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
 - matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
 - Each step has a time limit. A step that runs too long is killed.
@@ -1402,6 +1437,62 @@ function importPackageIndex(lock) {
     return map;
 }
 
+// ---------- Bundled libraries (Phase 3.5) ----------
+// Package names compare normalized, the way pip does: Pyodide reports "Pillow" for the
+// lock entry "pillow", and "typing-extensions" is "typing_extensions" elsewhere.
+function normalizePackageName(name) {
+    return String(name || "").toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+// Import name -> bundled library name (BUNDLED_LIBRARIES shape).
+function bundledImportIndex(libs) {
+    const map = new Map();
+    for (const [name, lib] of Object.entries(libs && typeof libs === "object" ? libs : {})) {
+        for (const i of Array.isArray(lib && lib.imports) ? lib.imports : []) if (typeof i === "string" && !map.has(i)) map.set(i, name);
+    }
+    return map;
+}
+
+// What a step needs from the bundle. imports: top-level names its code (and the workspace
+// files it uses) import; texts: that code, searched for each library's `uses` words;
+// loaded: package and library names already in the interpreter. Returns { bundles, pyodide }:
+// the libraries to install, those they require first, and the Pyodide packages they import
+// (lock-file names) that aren't loaded yet.
+function planBundledLoad(imports, texts, libs, loaded) {
+    const all = libs && typeof libs === "object" ? libs : {};
+    const have = new Set([...(loaded || [])].map(normalizePackageName));
+    const index = bundledImportIndex(all);
+    const wanted = [];
+    for (const i of imports || []) { const n = index.get(i); if (n && !wanted.includes(n)) wanted.push(n); }
+    for (const [name, lib] of Object.entries(all)) {
+        if (wanted.includes(name)) continue;
+        const uses = Array.isArray(lib.uses) ? lib.uses : [];
+        if (uses.some(w => (texts || []).some(t => new RegExp(`\\b${w.replace(/[^\w]/g, "")}\\b`).test(String(t || ""))))) wanted.push(name);
+    }
+    const bundles = [], pyodide = [];
+    const visit = (name, depth) => {
+        const lib = all[name];
+        if (!lib || depth > 10 || bundles.includes(name) || have.has(normalizePackageName(name))) return;
+        for (const r of Array.isArray(lib.requires) ? lib.requires : []) visit(r, depth + 1);
+        bundles.push(name);
+        for (const p of Array.isArray(lib.pyodide) ? lib.pyodide : []) {
+            if (!have.has(normalizePackageName(p)) && !pyodide.includes(p)) pyodide.push(p);
+        }
+    };
+    for (const n of wanted) visit(n, 0);
+    return { bundles, pyodide };
+}
+
+// The note a step gets after its packages loaded. r: the validated load result.
+function packageLoadNote(r) {
+    const loaded = (r && r.loaded) || [], installed = (r && r.installed) || [];
+    if (!loaded.length && !installed.length) return "";
+    const parts = [];
+    if (loaded.length) parts.push(`${loaded.join(", ")} from the Pyodide CDN`);
+    if (installed.length) parts.push(`${installed.join(", ")} from the libraries bundled with HermitUI Agent`);
+    return `Loaded ${parts.join(" and ")} (${((r.ms || 0) / 1000).toFixed(1)} s).`;
+}
+
 // Why a step's packages didn't load, for the step and the model. r: the worker's load
 // result { failed, errors, netAttempts }; online: navigator.onLine; cdn: the pinned
 // package URL. A blocked download outside the CDN means the registry was tampered with.
@@ -1471,15 +1562,17 @@ function rewritePyodideInstallAdvice(output) {
 // A note for a step that failed on an import nothing can provide: Pyodide has no pip.
 // For a package it has but that wasn't loaded (an import the harness couldn't see, such
 // as one built at run time), how to get it loaded instead.
-function moduleNotFoundHint(output, available) {
-    const m = String(output || "").match(/ModuleNotFoundError: No module named '([\w.]+)'/);
+// bundled: the import names of the bundled libraries, which Pyodide knows nothing about,
+// so its own "not installed" note never appears for them. pandas' "Missing optional
+// dependency 'openpyxl'" (it imports the library itself) counts as an import of it.
+function moduleNotFoundHint(output, available, bundled) {
+    const m = String(output || "").match(/ModuleNotFoundError: No module named '([\w.]+)'|ImportError: Missing optional dependency '([\w.-]+)'/);
     if (!m) return "";
-    const top = m[1].split(".")[0];
+    const top = (m[1] || m[2]).split(".")[0];
+    const notLoaded = `${top} is available but wasn't loaded: packages are loaded before a step, from the imports in its code and in the workspace .py files it imports or runs by name. Add "import ${top}" at the top of the step's code and run it again. Don't use micropip or loadPackage.`;
     if (top === "micropip" || top === "pip") return `There is no ${top} here, and nothing needs installing: a package from the list in your instructions loads by itself when you import it. Just import it.`;
-    if (/is included in the Pyodide distribution, but it is not installed|is unvendored from the Python standard library/.test(output)) {
-        return `${top} is available but wasn't loaded: packages are loaded before a step, from the imports in its code and in the workspace .py files it imports or runs by name. Add "import ${top}" at the top of the step's code and run it again. Don't use micropip or loadPackage.`;
-    }
-    if ((available || []).includes(top)) return "";
+    if (/is included in the Pyodide distribution, but it is not installed|is unvendored from the Python standard library/.test(output) || (bundled || []).includes(top)) return notLoaded;
+    if ((available || []).includes(top)) return m[2] ? notLoaded : "";
     return `${top} isn't part of the Pyodide distribution and can't be installed here (no pip, no network). Use the standard library or one of the packages listed in your instructions, or write the code yourself.`;
 }
 
@@ -2189,7 +2282,8 @@ function loadPyodideCore() {
             }
             try {
                 const lock = JSON.parse(new TextDecoder().decode(core.lock));
-                PKG.names = packageImportNames(lock);
+                const bundled = Object.values(BUNDLED_LIBRARIES).map(l => l.imports[0]);
+                PKG.names = [...new Set([...packageImportNames(lock), ...bundled])].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 PKG.byImport = importPackageIndex(lock);
             } catch (e) { console.error("pyodide-lock.json unreadable:", e); }
             return core;
@@ -2197,6 +2291,32 @@ function loadPyodideCore() {
         PY.corePromise.catch(() => { PY.corePromise = null; });
     }
     return PY.corePromise;
+}
+
+// A bundled wheel's bytes: inlined by build.py (base64), or fetched from PyPI when running
+// the unbuilt source. Either way checked against its sha256 pin in BUNDLED_LIBRARIES, and
+// kept for the page's life: a restarted worker gets them again from here.
+const WHEELS = new Map();   // file name -> Promise<Uint8Array>
+function loadBundledWheel(w) {
+    if (!WHEELS.has(w.file)) {
+        const p = (async () => {
+            const inl = window.__HERMIT_WHEELS__;
+            let bytes;
+            if (inl) {
+                if (typeof inl[w.file] !== "string") throw new Error(`${w.file} is missing from this build.`);
+                bytes = Uint8Array.from(atob(inl[w.file]), (c) => c.charCodeAt(0));
+            } else {
+                const res = await fetch(w.url);
+                if (!res.ok) throw new Error(`couldn't download ${w.file} from PyPI (${res.status}).`);
+                bytes = new Uint8Array(await res.arrayBuffer());
+            }
+            if (await sha256Hex(bytes) !== w.sha256) throw new Error(`${w.file} doesn't match its pinned sha256.`);
+            return bytes;
+        })();
+        p.catch(() => WHEELS.delete(w.file));
+        WHEELS.set(w.file, p);
+    }
+    return WHEELS.get(w.file);
 }
 
 function rejectAllPending(reason) {
@@ -2330,32 +2450,36 @@ function validateRunResult(r) {
 
 const PKG_NAME = /^[A-Za-z0-9_.-]{1,100}$/;
 
-// The packages a step's imports need that aren't loaded yet (by package name).
 // The packages a step needs that aren't loaded yet, from the imports in its code and in
-// the workspace .py files it uses (referencedPythonFiles). Returns { packages, imports }:
-// imports holds one import name per package, for the load op.
+// the workspace .py files it uses (referencedPythonFiles). Returns { packages, imports,
+// pyodide, bundles }: imports holds one import name per Pyodide package, for the load op;
+// bundles the bundled libraries to install, pyodide the Pyodide packages those import
+// (planBundledLoad); packages names all of it, for the status bar.
 async function packagesToLoad(code) {
     const read = (p) => { const f = WS.files.get(p); return f ? decodeTextFile(WS.blobs.get(f.hash)) : null; };
     const files = referencedPythonFiles(code, [...WS.files.keys()], read);
     const list = (v) => (Array.isArray(v) ? v.filter(x => typeof x === "string" && PKG_NAME.test(x)).slice(0, 500) : []);
-    const packages = [], imports = [];
+    const texts = [code, ...files.map(read)];
+    const packages = [], imports = [], all = [];
     let loaded = new Set();
-    for (const text of [code, ...files.map(read)]) {
+    for (const text of texts) {
         const r = await workerCall("imports", { code: text }, 30000);
         loaded = new Set(list(r && r.loaded));
         for (const i of list(r && r.imports)) {
+            if (!all.includes(i)) all.push(i);
             const p = PKG.byImport.get(i);
             if (p && !loaded.has(p) && !packages.includes(p) && /^[A-Za-z_]\w*$/.test(i)) { packages.push(p); imports.push(i); }
         }
     }
-    if (files.length && packages.length) debugLog("tool", `imports read from the step's code and ${files.join(", ")}`);
-    return { packages, imports };
+    const { bundles, pyodide } = planBundledLoad(all, texts, BUNDLED_LIBRARIES, [...loaded, ...packages]);
+    if (files.length && (packages.length || bundles.length)) debugLog("tool", `imports read from the step's code and ${files.join(", ")}`);
+    return { packages: [...packages, ...pyodide, ...bundles], imports, pyodide, bundles };
 }
 
 function validateLoadResult(r) {
     const strs = (v, max, len) => (Array.isArray(v) ? v.filter(x => typeof x === "string").slice(0, max).map(x => x.slice(0, len)) : []);
     if (!r || typeof r !== "object") throw new Error("The worker sent an invalid result (load).");
-    return { loaded: strs(r.loaded, 200, 100), failed: strs(r.failed, 200, 100), errors: strs(r.errors, 20, 500), netAttempts: strs(r.netAttempts, 50, 300), ms: Number.isFinite(r.ms) ? r.ms : 0 };
+    return { loaded: strs(r.loaded, 200, 100), installed: strs(r.installed, 50, 100), failed: strs(r.failed, 200, 100), errors: strs(r.errors, 20, 500), netAttempts: strs(r.netAttempts, 50, 300), ms: Number.isFinite(r.ms) ? r.ms : 0 };
 }
 
 // Run one step. Returns the validated result, or { status: "timeout" | "killed" |
@@ -2371,27 +2495,42 @@ async function runInWorker(code, opts) {
     const gen = PY.gen;
     let phase = "packages", pkgNotes = [], pkgAttempts = [];
     try {
-        const { packages: need, imports: needImports } = await packagesToLoad(code);
+        const { packages: need, imports: needImports, pyodide, bundles } = await packagesToLoad(code);
         if (need.length) {
             PKG.loading = need;
             if (typeof setActivity === "function" && RUN.active) setActivity("packages");
             debugLog("tool", `loading packages: ${need.join(", ")}`);
+            const listing = () => { const l = {}; for (const [p, f] of WS.files) l[p] = f.hash; return l; };
+            let wheels = [];
+            try {
+                wheels = await Promise.all(bundles.map(async (name) => ({
+                    name, files: await Promise.all(BUNDLED_LIBRARIES[name].wheels.map(async (w) => ({ file: w.file, bytes: await loadBundledWheel(w) }))),
+                })));
+            } catch (e) {
+                // Only the unbuilt source downloads wheels; a build that lacks one is broken.
+                PKG.loading = [];
+                setInterpreterState("idle");
+                const msg = `Couldn't load ${bundles.join(", ")}: ${e.message} Nothing ran. The standard library and packages that loaded earlier still work.`;
+                debugLog("error", "bundled library failed: " + e.message);
+                return { status: "error", output: msg, notes: [], netAttempts: [], listing: listing(), files: {}, figures: [], packageError: true };
+            }
             // The load op reads imports from code: give it one line per needed package, which
-            // also covers packages that only the step's workspace modules import.
-            const lr = validateLoadResult(await workerCall("load", { code: needImports.map(i => "import " + i).join("\n") }, LIMITS.packageTimeoutMs));
+            // also covers packages that only the step's workspace modules import. The bundled
+            // libraries' own Pyodide packages go by name, their wheels as bytes (copied: the
+            // cache keeps the originals for the next worker).
+            const lr = validateLoadResult(await workerCall("load", { code: needImports.map(i => "import " + i).join("\n"), packages: pyodide, wheels }, LIMITS.packageTimeoutMs));
             PKG.loading = [];
             pkgAttempts = lr.netAttempts;
             if (lr.failed.length) {
                 const msg = packageFailureMessage(lr, typeof navigator !== "undefined" ? navigator.onLine : true, PYODIDE_CDN);
                 debugLog("error", "package load failed: " + lr.failed.join(", "), lr.errors.join("\n"));
                 setInterpreterState("idle");
-                const listing = {};
-                for (const [p, f] of WS.files) listing[p] = f.hash;
-                return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing, files: {}, figures: [], packageError: true };
+                return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing: listing(), files: {}, figures: [], packageError: true };
             }
-            if (lr.loaded.length) {
-                pkgNotes = [`Loaded ${lr.loaded.join(", ")} from the Pyodide CDN (${(lr.ms / 1000).toFixed(1)} s).`];
-                debugLog("result", pkgNotes[0]);
+            const note = packageLoadNote(lr);
+            if (note) {
+                pkgNotes = [note];
+                debugLog("result", note);
             }
             if (typeof setActivity === "function" && RUN.active) setActivity("python");
         }
@@ -3602,7 +3741,7 @@ async function executeStep(step, idx, notes) {
         step.notes.push(...binaryFileNotes([...effect.pending].map(([p, h]) => ({ path: p, bytes: WS.blobs.get(h) })), step.figures));
         const fileHint = filenameCommentHint(code, Object.keys(r.listing), step.protocol === "tools");
         if (fileHint) step.notes.push(fileHint);
-        const modHint = moduleNotFoundHint(r.output, PKG.names);
+        const modHint = moduleNotFoundHint(r.output, PKG.names, [...bundledImportIndex(BUNDLED_LIBRARIES).keys()]);
         if (modHint) step.notes.push(modHint);
 
         let decision = { action: "approve" };

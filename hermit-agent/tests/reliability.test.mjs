@@ -182,7 +182,7 @@ section("8. Packages: the list, the index, failures");
         check("…without micropip", !r.includes("micropip"));
     }
     const p = X.buildSystemPrompt("", ["numpy", "pandas"]);
-    check("system prompt lists the packages", p.includes("Only these packages from the Pyodide distribution can be imported besides the standard library") && p.includes("numpy, pandas."));
+    check("system prompt lists the packages", p.includes("Only these packages (the Pyodide distribution plus a few bundled libraries) can be imported besides the standard library") && p.includes("numpy, pandas."));
     check("…and names examples without a list", X.buildSystemPrompt("").includes("(numpy, pandas, matplotlib"));
 
     const CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";

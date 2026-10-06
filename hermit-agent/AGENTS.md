@@ -8,12 +8,12 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-Phase 1 (MVP), Phase 2a (reliability), Phase 2b (rich output) and Phase 3 (native tool
-calls) are built: `src/` →
+Phase 1 (MVP), Phase 2a (reliability), Phase 2b (rich output), Phase 3 (native tool
+calls) and Phase 3.5 (bundled pure-Python libraries) are built: `src/` →
 `build.py` → `dist/hermit-agent-standalone.html`. The source of truth is
 [DESIGN.md](DESIGN.md), and the current phase is in [ROADMAP.md](ROADMAP.md). If an
 implementation needs to deviate from the design, update DESIGN.md in the same commit.
-Open decisions waiting for review (the MVP build, Phases 2a, 2b and 3) are listed in
+Open decisions waiting for review (the MVP build, Phases 2a, 2b, 3 and 3.5) are listed in
 [REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ## Build & test
@@ -24,6 +24,13 @@ node tests/run.mjs                                 # unit tests (pure logic)
 ../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:8080/v1 --runs 3   # real model: success rate (--tool-mode native|text)
 ../benchmark/.venv/bin/python tests/e2e_longrun.py --base-url http://localhost:8080/v1           # real model: 20+ steps through outages
 ```
+**Real-model runs scale with the change.** The full suite (24 tasks × 3 runs, ~20 min
+per protocol) is for bigger changes: a phase, the agent loop, the system prompt's
+structure, packaging. After a small change, run the quick selection instead (5 fast
+tasks, about a minute per protocol): `tests/e2e_reference.py --quick --tool-mode native`
+(and `--tool-mode text` if the change touches that protocol). A change that touches no
+agent behaviour needs no real-model run.
+
 See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwright's
 `wait_for_function` can't run inside it: poll with `page.evaluate` instead.
 
@@ -60,12 +67,16 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **A minor version per phase.** When a phase meets its exit criterion, raise the
   minor version (`APP_VERSION` in `src/script.js`, the header badge in `src/index.html`,
   the status line in `README.md`) in the commit that completes it. v0.1.0 was Phase 1,
-  v0.2.0 Phase 3 (2a and 2b had no bump of their own).
+  v0.2.0 Phase 3 (2a and 2b had no bump of their own), v0.3.0 Phase 3.5.
 - **Never send the API key to the worker or into an export.**
 - **Never auto-execute imported sessions.** Import restores in a paused state (DESIGN
   §3.3).
 - **Be honest about the sandbox.** UI text about network isolation must match what
   the Phase 0 spike actually proved (DESIGN §10). Don't overclaim.
+- **Bundled libraries live in one manifest**, `BUNDLED_LIBRARIES` in `src/script.js`
+  (strict JSON between the `@bundled` markers; `build.py` and the unit tests parse it).
+  Adding one means a pinned wheel (URL + sha256) and its Pyodide packages there; the
+  build checks the rest against the wheel's metadata (DESIGN §8).
 - **Tests:** pure logic (parsers, risk classifier, zip, session schema) goes in unit
   tests that slice real functions out of the source, following
   `../tests/extract.mjs`. DOM and worker behaviour goes in the e2e tests.

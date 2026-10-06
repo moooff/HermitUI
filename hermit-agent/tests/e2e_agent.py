@@ -238,6 +238,65 @@ plt.figure(); plt.plot([1, 1])
             calls(("ask_user", {"question": "Go on?"})),
             final("Switched and done."),
         ],
+        # Phase 3.5: one small real task per bundled library. Offline: the ones that need no
+        # Pyodide package; the other script needs the CDN for lxml, Pillow, pandas, ….
+        "E2E-BUNDLED-OFFLINE": [
+            py('''
+import openpyxl
+wb = openpyxl.Workbook(); ws = wb.active; ws.append(["month", "total"]); ws.append(["2026-01", 200.5]); ws["C2"] = "=B2*2"; wb.save("t.xlsx")
+ws2 = openpyxl.load_workbook("t.xlsx").active
+print("OK openpyxl", ws2["A1"].value, ws2["B2"].value, ws2["C2"].value)'''),
+            py('''
+import xlsxwriter, zipfile
+wb = xlsxwriter.Workbook("c.xlsx"); ws = wb.add_worksheet(); ws.write_column("A1", [1, 2, 3])
+ch = wb.add_chart({"type": "line"}); ch.add_series({"values": "=Sheet1!$A$1:$A$3"}); ws.insert_chart("C1", ch); wb.close()
+print("OK xlsxwriter", any(n.startswith("xl/charts/") for n in zipfile.ZipFile("c.xlsx").namelist()))'''),
+            py('''
+import markdown
+print("OK markdown", markdown.markdown("# T\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |", extensions=["tables"]).replace("\\n", ""))'''),
+            py('''
+from tabulate import tabulate
+print("OK tabulate\\n" + tabulate([["nuts", 40], ["bolts", 120]], headers=["item", "qty"], tablefmt="github"))'''),
+            py('''
+import xmltodict
+d = xmltodict.parse("<a><b x='1'>t</b></a>"); print("OK xmltodict", d["a"]["b"]["@x"], d["a"]["b"]["#text"])'''),
+            final("Offline libraries done."),
+        ],
+        "E2E-BUNDLED": [
+            py('''
+import docx
+d = docx.Document(); d.add_heading("Report", 1); d.add_paragraph("Umlauts äöü")
+t = d.add_table(rows=2, cols=2); t.cell(0, 0).text = "Item"; t.cell(1, 0).text = "nuts"; d.save("r.docx")
+r = docx.Document("r.docx"); print("OK docx", [p.text for p in r.paragraphs], r.tables[0].cell(1, 0).text)'''),
+            py('''
+from pptx import Presentation
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.util import Inches
+p = Presentation(); s = p.slides.add_slide(p.slide_layouts[5]); s.shapes.title.text = "Q1"
+cd = CategoryChartData(); cd.categories = ["a", "b"]; cd.add_series("s", (1, 2))
+s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(2), Inches(6), Inches(4), cd); p.save("d.pptx")
+q = Presentation("d.pptx"); print("OK pptx", len(q.slides), [sh.has_chart for sh in q.slides[0].shapes])'''),
+            py('''
+import qrcode
+from PIL import Image
+qrcode.make("https://example.org").save("q.png"); print("OK qrcode", Image.open("q.png").size)'''),
+            py('''
+from markdownify import markdownify
+print("OK markdownify", markdownify("<h1>T</h1><p>a <b>b</b></p>", heading_style="ATX").strip().replace("\\n", " | "))'''),
+            py('''
+import seaborn as sns, pandas as pd
+ax = sns.barplot(data=pd.DataFrame({"x": ["a", "b"], "y": [1, 3]}), x="x", y="y"); ax.figure.savefig("s.png")
+print("OK seaborn", sns.__version__)'''),
+            # No Excel or tabulate import: pandas imports them itself.
+            py('''
+import pandas as pd
+pd.DataFrame({"a": [1, 2]}).to_excel("p.xlsx", index=False)
+df = pd.read_excel("p.xlsx")
+print("OK pandas", df["a"].tolist())
+print(df.to_markdown(index=False))'''),
+            final("Bundled libraries done."),
+        ],
         "E2E-APPROVE": [
             py('print("original")'),
             py("while True:\n    pass"),
@@ -1087,7 +1146,7 @@ def packages_scenario(browser, port, state):
     page.click("#sendBtn")
     wait_until(page, "() => S.status === 'done'", 120, "packages task")
     system = state.requests[n0]["messages"][0]["content"]
-    check("the system prompt lists the loadable packages", "Only these packages from the Pyodide distribution" in system and "numpy" in system and "sklearn" in system)
+    check("the system prompt lists the loadable packages", "Only these packages (the Pyodide distribution plus a few bundled libraries)" in system and "numpy" in system and "sklearn" in system)
     st = steps(page)
     check("six loaded from the CDN and ran", st[0]["output"].startswith("six 1."), st[0])
     check("…and the step says what was loaded", any("Loaded six from the Pyodide CDN" in n for n in st[0]["notes"]), st[0]["notes"])
@@ -1137,6 +1196,74 @@ def packages_scenario(browser, port, state):
     wait_until(page, "() => S.status === 'done'", 60, "back online")
     m = [r["messages"][-1]["content"] for r in state.requests if "E2E-OFFLINE" in r["messages"][1]["content"]]
     check("…the model is told, once the endpoint is reachable again", 'status="error"' in m[-1] and why in m[-1], m[-1][-300:])
+    page.context.close()
+
+
+def bundled_scenario(browser, port, state):
+    print("— bundled libraries: offline from the HTML, reinstalled after a restart, with their Pyodide packages, PyPI never asked")
+    page = open_app(browser)
+    configure(page, port, 60)
+    page.select_option("#autonomySelect", "autopilot")
+    # Nothing but the mock endpoint: the CDN and PyPI are refused, and any request that
+    # leaves this machine is recorded.
+    outside = []
+    def local_only(route):
+        url = route.request.url
+        if url.startswith(("http://127.0.0.1", "file:", "blob:", "data:")):
+            route.continue_()
+        else:
+            outside.append(url)
+            route.abort()
+    page.context.route("**/*", local_only)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-BUNDLED-OFFLINE: use the bundled libraries")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 120, "offline bundled task")
+    system = state.requests[n0]["messages"][0]["content"]
+    listed = system.split("each is loaded automatically on its first import: ")[1].split(".")[0].split(", ")
+    check("the prompt's package list includes the bundled libraries", all(n in listed for n in ["openpyxl", "xlsxwriter", "docx", "pptx", "markdown", "qrcode", "tabulate", "xmltodict", "markdownify", "seaborn"]), listed)
+    st = steps(page)
+    for i, (lib, want) in enumerate([("openpyxl", "OK openpyxl month 200.5 =B2*2"), ("XlsxWriter", "OK xlsxwriter True"),
+                                     ("Markdown", "OK markdown <h1>T</h1><table>"), ("tabulate", "OK tabulate\n| item"),
+                                     ("xmltodict", "OK xmltodict 1 t")]):
+        s1 = st[i] if i < len(st) else {}
+        check(f"offline: {lib} works", s1.get("status") == "ok" and s1.get("output", "").startswith(want), s1)
+        check(f"…and was installed from the bundle", any(f"Loaded {lib} from the libraries bundled with HermitUI Agent" in n for n in s1.get("notes", [])), s1.get("notes"))
+    check("no request left the machine (no CDN, no PyPI)", not outside, outside[:5])
+    # A fresh interpreter installs it again, from the page's copy.
+    r = page.evaluate("""async () => { await restartInterpreter();
+        const r = await runInWorker("import openpyxl\\nprint(openpyxl.__version__)", { timeoutMs: 60000 });
+        return { status: r.status, output: r.output, notes: r.notes }; }""")
+    check("after an interpreter restart it is installed again, still offline", r["status"] == "ok" and r["output"].strip() == "3.1.5"
+          and any("Loaded openpyxl from the libraries bundled" in n for n in r["notes"]) and not outside, r)
+    page.context.close()
+
+    page = open_app(browser)
+    configure(page, port, 180)   # lxml, Pillow, pandas and matplotlib come from the CDN
+    page.select_option("#autonomySelect", "autopilot")
+    pypi = []
+    page.context.route(re.compile(r"https://(files\.pythonhosted\.org|pypi\.org)/.*"), lambda route: (pypi.append(route.request.url), route.abort()))
+    page.fill("#taskInput", "E2E-BUNDLED: use the bundled libraries")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 600, "bundled task")
+    st = steps(page)
+    for i, (lib, want, cdn) in enumerate([
+            ("python-docx", "OK docx ['Report', 'Umlauts äöü'] nuts", ["lxml", "typing-extensions"]),
+            ("python-pptx", "OK pptx 1 [False, True]", ["Pillow"]),
+            ("qrcode", "OK qrcode (", []),
+            ("markdownify", "OK markdownify # T |", ["beautifulsoup4", "six"]),
+            ("seaborn", "OK seaborn 0.13.2", ["matplotlib", "pandas"]),
+            ("openpyxl", "OK pandas [1, 2]\n|", [])]):
+        s1 = st[i] if i < len(st) else {}
+        notes = " ".join(s1.get("notes", []))
+        check(f"{lib} works", s1.get("status") == "ok" and s1.get("output", "").startswith(want), s1)
+        check(f"…installed from the bundle" + (f", with {', '.join(cdn)} from the CDN" if cdn else ""),
+              re.search(rf"Loaded .*{re.escape(lib)}.* from the libraries bundled with HermitUI Agent", notes) is not None
+              and all(re.search(rf"Loaded [^.]*\b{re.escape(c)}\b[^.]* from the Pyodide CDN", notes) for c in cdn), notes)
+    check("python-pptx brought XlsxWriter along (its charts need it)", "XlsxWriter" in " ".join(st[1]["notes"]) if len(st) > 1 else False)
+    check("pandas' to_excel/read_excel and to_markdown loaded openpyxl and tabulate without an import of them",
+          len(st) > 5 and "tabulate" in " ".join(st[5]["notes"]), st[5]["notes"] if len(st) > 5 else st)
+    check("PyPI was never asked", not pypi, pypi[:5])
     page.context.close()
 
 
@@ -1415,7 +1542,7 @@ def main():
                         fn(browser, port, state)
                 if want("module"):
                     module_scenario(browser, port, state, downloads=not exe)
-                for n, fn in [("packages", packages_scenario), ("elide", elide_scenario)]:
+                for n, fn in [("packages", packages_scenario), ("bundled", bundled_scenario), ("elide", elide_scenario)]:
                     if want(n):
                         fn(browser, port, state)
                 if want("figures"):

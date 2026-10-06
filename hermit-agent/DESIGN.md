@@ -488,7 +488,13 @@ The system prompt describes:
 
 The user's custom instructions are appended after it, like HermitUI personas.
 
-*As built:* the prompt lists every package Pyodide can load, by import name (about 300
+*Added 2026-10-06:* if the workspace has an `AGENTS.md`, the agent is told to read it
+before it starts and follow it, unless it conflicts with the task or the prompt's rules.
+That's the common convention for a project's agent instructions. It is still an
+uploaded file: whatever it asks for goes through the same gating (§2.3).
+
+*As built:* the prompt lists every package Pyodide can load, plus the bundled libraries
+(§8, Phase 3.5), by import name (about 300
 names, ~1k tokens, read from the inlined `pyodide-lock.json`: real packages only, no
 shared libraries, `*-tests` or `_private` names). Nor `micropip`: it installs at run time, which agent code can't (no network), and with it on the list the agent was seen reaching for `micropip.install` instead of a plain import, which failed (2026-10-05). A package loads by being imported; an `import micropip` gets that advice. Before the core is read it names a
 few examples instead. It costs a fixed prefix the server caches, and it stops the model
@@ -752,13 +758,56 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   "add `import x` to the step's own code", and Pyodide's own advice in the traceback,
   "await micropip.install(…)", is replaced in the output: agent code can't download.
 - **Libraries for common jobs** (in the system prompt, both protocols): pandas for
-  tables, pymupdf for creating and reading PDFs (`insert_htmlbox` lays out HTML), matplotlib
-  for charts, Pillow, jinja2, beautifulsoup4/lxml, python-dateutil, pyyaml, sqlite3. The
-  distribution has nothing that writes `.xlsx`, `.docx` or `.pptx`, and no reportlab or
-  fpdf: the agent is told to write CSV, Markdown or HTML instead and say so. Without this
-  the agent was seen assembling a PDF by hand. This is a stopgap: the common libraries
-  for those formats are pure-Python, which Pyodide leaves to micropip from PyPI, so they
-  need a load mechanism first (ROADMAP, Phase 3.5).
+  tables, openpyxl or xlsxwriter for Excel (and pandas `read_excel`/`to_excel`),
+  python-docx for Word, python-pptx for PowerPoint, pymupdf for creating and reading PDFs
+  (`insert_htmlbox` lays out HTML; there is no reportlab or fpdf), matplotlib or seaborn
+  for charts, markdown and markdownify between Markdown and HTML, tabulate for plain-text
+  tables, qrcode, Pillow, jinja2, beautifulsoup4/lxml and xmltodict, python-dateutil,
+  pyyaml, sqlite3; and "don't assemble these file formats by hand". Without such a line the
+  agent was seen assembling a PDF by hand. Until Phase 3.5 the line said nothing here
+  writes `.xlsx`, `.docx` or `.pptx`.
+
+*As built (Phase 3.5): bundled pure-Python libraries.* Pyodide leaves pure-Python
+packages to micropip and PyPI, which agent code can't reach. Ten are bundled in the HTML,
+picked by [PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md) (Tier 1 and Tier 2):
+openpyxl (with et-xmlfile), XlsxWriter, python-docx, python-pptx, Markdown, qrcode,
+tabulate, xmltodict, markdownify, seaborn: 11 wheels, 1.69 MB, +2.27 MB on the file once
+base64-encoded.
+- **One manifest**, `BUNDLED_LIBRARIES` in `src/script.js` (strict JSON between
+  `@bundled:start`/`@bundled:end`): per library its import names, `uses` (words that need
+  it without an import), the bundled libraries it requires, the Pyodide packages it
+  imports (by lock-file name), and its wheels pinned by URL and sha256.
+- **`build.py`** reads the manifest, downloads each wheel from files.pythonhosted.org,
+  checks its sha256, and checks it against its own metadata: a pure wheel, a license file
+  in its `.dist-info` (the wheels are inlined unmodified, so each carries its license
+  text), every `Requires-Dist` that applies in Pyodide either bundled with it or in its
+  Pyodide list, its import names present, and no clash with a Pyodide package. The wheels
+  are inlined base64-encoded as `window.__HERMIT_WHEELS__` (gzip saves 3 % on wheels,
+  which are zips already; a solid archive would save ~14 % but lose the pinned
+  per-wheel artefacts). The unbuilt source fetches the same wheels from PyPI instead,
+  checked against the same hashes.
+- **Installed on first use, in the loading phase.** `planBundledLoad` adds to a step's
+  plan the libraries its imports (and those of the workspace files it uses) name, the
+  ones whose `uses` words appear in its code (pandas imports openpyxl, XlsxWriter and
+  tabulate itself: `to_excel`, `read_excel`, `ExcelWriter`, `engine="xlsxwriter"`,
+  `to_markdown`), the bundled libraries those require (XlsxWriter for python-pptx's
+  charts), and the Pyodide packages they import, some undeclared or optional extras
+  (lxml, typing-extensions, Pillow, beautifulsoup4, six, numpy/pandas/matplotlib). The
+  `load` call first loads those Pyodide packages from the CDN, then unpacks the wheels,
+  sent with the request, into site-packages like pip (MEMFS: gone with the worker). A
+  restarted worker installs them again from the page's copy. The step notes "Loaded lxml
+  from the Pyodide CDN and python-docx from the libraries bundled with HermitUI Agent".
+  If a Pyodide package fails, the libraries aren't installed, so a later step retries both.
+- **Offline:** openpyxl, XlsxWriter, Markdown, tabulate and xmltodict need nothing else and
+  work with no network at all. python-docx and python-pptx need lxml (and Pillow), qrcode
+  Pillow for PNGs, markdownify beautifulsoup4, seaborn numpy, pandas and matplotlib: those
+  come from the CDN like any Pyodide package, so offline they fail with the usual message.
+  Inlining those too is the "offline pack" question (below: not for now, revisit with
+  Phase 4).
+- **A bundled import the harness couldn't see** (built at run time) fails with a plain
+  `ModuleNotFoundError`, since Pyodide knows nothing about these: the step gets "add
+  `import docx` to the step's own code", as for an unloaded Pyodide package. pandas'
+  "Missing optional dependency 'openpyxl'" gets the same advice.
 - **Offline: decided, no offline pack for now.** Inlining even numpy + pandas would
   roughly double the 9 MB file, and a curated set would still miss what a given task
   needs. Packages load from the CDN on first import and stay in memory for the tab's

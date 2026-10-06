@@ -1,7 +1,7 @@
-# Decisions to review (Phase 1 MVP build, Phases 2a, 2b and 3)
+# Decisions to review (Phase 1 MVP build, Phases 2a, 2b, 3 and 3.5)
 
-Open decisions from the MVP (2026-10-03), Phases 2a and 2b (2026-10-05) and Phase 3
-(2026-10-05), waiting for the owner's call. Each entry says what was decided, why, and
+Open decisions from the MVP (2026-10-03), Phases 2a and 2b (2026-10-05), Phase 3
+(2026-10-05) and Phase 3.5 (2026-10-06), waiting for the owner's call. Each entry says what was decided, why, and
 what the alternative is. When you confirm or reverse one, delete it
 here; if you reverse it, update DESIGN.md too. The ⭐ entries are the ones most worth a
 look.
@@ -287,21 +287,40 @@ look.
   tested does.
 - **Session format 2.** Older builds refuse format-2 exports with "made with a newer
   HermitUI Agent" rather than a malformed-message error. Format-1 exports still import.
-- ⭐ **The system prompt's library list names what the distribution has**: pymupdf for
-  PDFs, matplotlib for charts, no writer for `.xlsx`/`.docx`/`.pptx` (write CSV,
-  Markdown or HTML instead). Those aren't the common choices: openpyxl, python-docx,
-  fpdf2, pypdf and the like are pure-Python and left out of Pyodide by design (it expects
-  micropip from PyPI), so they need a load mechanism this sandbox doesn't have yet.
-  Phase 3.5 will bundle them (decided 2026-10-05); a study picks which, and this entry
-  goes once the prompt names them.
-- ⭐ **Phase 3.5: which libraries to bundle — your pick.** The study
-  ([PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md)) recommends Tier 1 (openpyxl,
-  XlsxWriter, python-docx, python-pptx, Markdown, qrcode; 1.33 MB, about +1.8 MB on the
-  file), Tier 2 as an option (tabulate, xmltodict, markdownify, seaborn; 0.35 MB), and
-  no new PDF library (pymupdf and matplotlib already serve). Alternatives: Tier 1 only,
-  both tiers, or a different set.
 - **The Actions setting is exported but not restored on import**, like the connection
   settings: it is about the endpoint, and the history works in either protocol.
+
+## Phase 3.5 (bundled libraries), decided while building it
+
+The pick itself (Tier 1 and Tier 2 of the study) was the owner's; these are the choices
+made building it (DESIGN §8, "bundled pure-Python libraries").
+
+- ⭐ **Only the libraries are bundled, not the Pyodide packages they import.** openpyxl,
+  XlsxWriter, Markdown, tabulate and xmltodict work fully offline; python-docx and
+  python-pptx still load lxml (and Pillow) from the CDN, qrcode Pillow, markdownify
+  beautifulsoup4, seaborn numpy/pandas/matplotlib. That keeps the growth to the chosen
+  set's size (+2.27 MB, 9.04 → 11.31 MB). Alternative: also inline lxml, Pillow and
+  typing-extensions (2.7 MB of wheels, about 3.6 MB more on the file) so Word, PowerPoint
+  and QR codes work offline: a step
+  towards the offline pack DESIGN §8 deferred to Phase 4.
+- **Wheels are inlined unmodified, base64 without gzip.** gzip gains 3 % on wheels; a
+  solid `.tar.gz` of their contents would save ~0.3 MB but replace the pinned artefacts
+  with a repacked one. Unmodified wheels also carry each library's license text in their
+  `.dist-info`, which the build checks; there is no separate licenses page in the UI.
+  Alternative: list the bundled libraries and their licenses in an About box.
+- **`uses` words trigger a library without an import:** pandas imports openpyxl,
+  XlsxWriter and tabulate itself, so `to_excel`, `read_excel`, `ExcelWriter`,
+  `ExcelFile`, `"xlsxwriter"` and `to_markdown` anywhere in a step's code (comments
+  included) install them. A false hit costs an unpacked wheel, nothing more.
+- **The manifest lives in `src/script.js`** as strict JSON between markers, read by
+  `build.py` and the unit tests, rather than in a separate file: the unbuilt source needs
+  it too and can't read local files from `file://`.
+- **The unbuilt dev source fetches the wheels from files.pythonhosted.org** (main thread,
+  sha256-checked); the built file never does. The dev CSP's `connect-src *` allows it.
+- **The reference tasks for the new formats don't require the library.** Whether the
+  agent used one is recorded (`library_used`); the pass is the file checked with a
+  library. Alternative: fail a task built without its library (as the PDF task fails on
+  raw PDF syntax).
 
 ## Not covered by automated tests
 
