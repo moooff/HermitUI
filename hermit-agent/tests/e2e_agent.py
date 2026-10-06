@@ -233,6 +233,25 @@ plt.figure(); plt.plot([1, 1])
             calls(("finish", {"answer": "More done."})),
             calls(("finish", {"answer": "After import."})),
         ],
+        # Phase 3.6: search, delete, move, the syntax check and ask options, in both protocols.
+        "E2E-FILETOOLS": [
+            final('Setting up.\n<write_file path="tmp/scratch.txt">\nx\n</write_file>\n<write_file path="lib/broken.py">\ndef f(\n    return 1\n</write_file>\n<search_files pattern="todo|north" ignore_case="true"/>'),
+            final('<edit_file path="lib/broken.py">\n<old>def f(</old>\n<new>def f():</new>\n</edit_file>'),
+            final('<delete_file path="tmp/"/>'),
+            py('import os\nprint(os.path.exists("tmp"), sorted(os.listdir(".")))'),
+            final('<move_file path="notes.txt" new_path="docs/notes.txt"/>'),
+            final('<delete_file path="data.csv"/>'),
+            final('<write_file path="docs/notes.txt">\nagent\n</write_file>'),
+            py('import os\nprint(sorted(os.listdir("docs")), os.path.exists("notes.txt"))'),
+            final("I need one thing.\nask: Which format?\n- CSV\n- Excel"),
+            final("Done: Excel it is."),
+        ],
+        "E2E-NTOOLS": [
+            calls(("search_files", {"pattern": "north", "glob": "*.csv"}), ("move_file", {"path": "data.csv", "new_path": "in/data.csv"})),
+            calls(("write_file", {"path": "s.py", "content": "x = (\n"})),
+            calls(("ask_user", {"question": "Unit?", "options": ["euros", "dollars"]})),
+            calls(("finish", {"answer": "Done in dollars."})),
+        ],
         "E2E-NOTOOLS": [
             py('print("fell back")'),
             final("Fallback done."),
@@ -937,6 +956,106 @@ def native_scenario(browser, port, state, downloads=True):
     page.context.close()
 
 
+def filetools_scenario(browser, port, state, downloads=True):
+    print("— Phase 3.6 file tools: search, delete, move (held, origin kept), syntax check, ask options, export → import")
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV},
+                                                 {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"TODO: buy milk\n"}])
+    wait_until(page, "() => WS.files.has('data.csv') && WS.files.has('notes.txt')", 10, "upload")
+    page.fill("#taskInput", "E2E-FILETOOLS: tidy up")
+    page.click("#sendBtn")
+
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "held move of notes.txt")
+    held = page.locator(".step-card.phase-pending-approval")
+    check("moving your file is held, and says it's a move", "moves your file notes.txt to docs/notes.txt" in held.locator(".decision-why").inner_text(), held.locator(".decision-why").inner_text())
+    check("…nothing moved yet", page.evaluate("() => WS.files.has('notes.txt') && !WS.files.has('docs/notes.txt')"))
+    held.locator("[data-action=approve]").click()
+    wait_until(page, "() => S.status === 'awaiting-approval' && S.stepCount === 6", 60, "held delete of data.csv")
+    check("deleting your file is held", "deletes your file data.csv" in page.locator(".step-card.phase-pending-approval .decision-why").inner_text())
+    page.locator(".step-card.phase-pending-approval [data-action=reject]").click()
+    wait_until(page, "() => S.status === 'awaiting-approval' && S.stepCount === 7", 60, "held overwrite of the moved file")
+    check("a moved file stays yours: overwriting it is held", "overwrites your file docs/notes.txt" in page.locator(".step-card.phase-pending-approval .decision-why").inner_text())
+    page.locator(".step-card.phase-pending-approval [data-action=reject]").click()
+
+    wait_until(page, "() => S.status === 'awaiting-user'", 60, "question with options")
+    opts = page.locator(".step-card .ask-option")
+    check("the question shows its options as buttons", opts.count() == 2 and opts.nth(0).inner_text() == "CSV" and opts.nth(1).inner_text() == "Excel", opts.all_inner_texts())
+    check("…and the question without them", page.locator(".step-card").last.locator("strong").inner_text() == "Which format?")
+    opts.nth(1).click()
+    wait_until(page, "() => S.status === 'done'", 60, "final")
+    check("after answering, the options are disabled", page.locator(".step-card .ask-option:disabled").count() == 2)
+
+    st = steps(page)
+    check("step kinds", [s["kind"] for s in st] == ["files", "files", "files", "code", "files", "files", "files", "code", "ask", "final"], [s["kind"] for s in st])
+    m = [r["messages"][-1]["content"] for r in state.requests if "E2E-FILETOOLS" in r["messages"][1]["content"]]
+    check("the model gets the search results", '[3] search_files "todo|north" in .: 3 matches in 2 files' in m[1] and "data.csv:2: north,120.5" in m[1] and "notes.txt:1: TODO: buy milk" in m[1], m[1])
+    check("…and the syntax error of the .py it wrote", "lib/broken.py doesn't compile at line 1" in m[1] and "SyntaxError" in m[1], m[1])
+    check("the card shows it too", "lib/broken.py doesn't compile" in page.locator(".step-card").first.inner_text())
+    check("a fixed .py gets no syntax note", "doesn't compile" not in m[2] and "[1] edit_file lib/broken.py: edited (1 change)" in m[2], m[2])
+    check("deleting the agent's own folder ran on its own", "[1] delete_file tmp: deleted the folder (1 file)" in m[3] and "-tmp/scratch.txt" in m[3] and st[2]["decision"] == "auto", (m[3], st[2]))
+    check("…and it's gone in the interpreter too, folder included", st[3]["output"].startswith("False ") and "tmp" not in st[3]["output"], st[3]["output"])
+    check("the approved move reached the interpreter", st[7]["output"] == "['notes.txt'] False\n", st[7]["output"])
+    check("the rejected delete and overwrite changed nothing",
+          {p: o for p, h, o in workspace(page)} == {"data.csv": "user", "docs/notes.txt": "user", "lib/broken.py": "agent"} and file_text(page, "docs/notes.txt") == "TODO: buy milk\n", workspace(page))
+    check("the clicked option is the answer", m[9] == "Excel", m[9])
+    check("the timeline records it as your answer", page.evaluate("() => S.timeline.filter(t => t.type === 'user').pop().text") == "Excel")
+    rows = page.locator(".step-card .file-action")
+    check("file-action rows: search query, move target", page.locator(".step-card .file-action-query").first.inner_text() == '"todo|north"'
+          and page.locator(".step-card .file-action-arrow").count() >= 1, rows.all_inner_texts()[:8])
+
+    if not downloads:
+        page.context.close()
+        return
+    with page.expect_download() as dl:
+        page.click("#exportBtn")
+        page.click("#exportSessionBtn")
+    zpath = str(pathlib.Path(tempfile.mkdtemp()) / "filetools-session.zip")
+    dl.value.save_as(zpath)
+    transcript = zipfile.ZipFile(zpath).read("transcript.md").decode()
+    check("the transcript lists the search, the move and the options",
+          '- `search_files` "todo|north" in .: 3 matches in 2 files' in transcript and "- `move_file` notes.txt → docs/notes.txt: moved to docs/notes.txt" in transcript and "**Question:** Which format?\n\n- CSV\n- Excel" in transcript, transcript[:3000])
+    before = page.evaluate("() => JSON.stringify(S.timeline.map(t => [t.fileActions || null, t.options || null]))")
+    page.context.close()
+    page = open_app(browser)
+    page.set_input_files("#importInput", zpath)
+    wait_until(page, "() => S.status === 'paused' && S.timeline.length > 0", 30, "import")
+    after = page.evaluate("() => JSON.stringify(S.timeline.slice(0, -1).map(t => [t.fileActions || null, t.options || null]))")
+    check("file actions and options survive export → import", after == before, next((f"{i}: {a!r} vs {b!r}" for i, (a, b) in enumerate(zip(json.loads(before), json.loads(after))) if a != b), (before[-300:], after[-300:])))
+    check("…and imported options can't be clicked", page.locator(".step-card .ask-option").count() == 2 and page.locator(".step-card .ask-option:disabled").count() == 2)
+    page.context.close()
+
+
+def native_filetools_scenario(browser, port, state):
+    print("— Phase 3.6 native: search_files + move_file batch, syntax check, ask_user options")
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV}])
+    wait_until(page, "() => WS.files.has('data.csv')", 10, "upload")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-NTOOLS: go")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "held move")
+    why = page.evaluate("() => JSON.stringify(S.timeline.slice(-2).map(t => [t.type, t.kind, t.status, t.risk, t.notes, t.skippedCalls]))")
+    check("a native move of your file is held", page.evaluate("() => S.timeline[S.timeline.length - 1].risk.reasons.join()") == "moves your file data.csv to in/data.csv", why)
+    page.locator(".step-card.phase-pending-approval [data-action=approve]").click()
+    wait_until(page, "() => S.status === 'awaiting-user'", 60, "ask_user with options")
+    check("ask_user's options are buttons", page.locator(".step-card .ask-option").all_inner_texts() == ["euros", "dollars"])
+    page.locator(".step-card .ask-option").nth(1).click()
+    wait_until(page, "() => S.status === 'done'", 60, "finish")
+    reqs = state.requests[n0:]
+    check("the new tools are offered", all(n in [t["function"]["name"] for t in reqs[0]["tools"]] for n in ["search_files", "delete_file", "move_file"]))
+    m1 = reqs[1]["messages"]
+    check("search and move each get their result", m1[-2]["role"] == "tool" and 'search_files "north" · glob *.csv in .: 2 matches in 1 file' in m1[-2]["content"]
+          and "data.csv:2: north,120.5" in m1[-2]["content"] and "move_file data.csv → in/data.csv: moved to in/data.csv" in m1[-1]["content"], m1[-2:])
+    check("the moved file is still yours", {p: o for p, h, o in workspace(page)}.get("in/data.csv") == "user", workspace(page))
+    m2 = reqs[2]["messages"]
+    check("a .py that doesn't compile is reported in the tool result", "s.py doesn't compile at line 1" in m2[-1]["content"], m2[-1])
+    m3 = reqs[3]["messages"]
+    check("the clicked option is ask_user's result", m3[-1]["role"] == "tool" and m3[-1]["content"] == "dollars", m3[-1])
+    page.context.close()
+
+
 def native_fallback_scenario(browser, port, state):
     print("— native tool calls refused → code blocks and tags; switching protocols mid-session")
     page = open_app(browser)
@@ -1593,6 +1712,10 @@ def main():
                     native_scenario(browser, port, state, downloads=not exe)
                 if want("native_fallback"):
                     native_fallback_scenario(browser, port, state)
+                if want("filetools"):
+                    filetools_scenario(browser, port, state, downloads=not exe)
+                if want("native_filetools"):
+                    native_filetools_scenario(browser, port, state)
             except AssertionError as e:
                 check(f"{name}: scenario completed", False, str(e))
             finally:

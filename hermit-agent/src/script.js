@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -59,7 +59,7 @@ const BUNDLED_LIBRARIES = {
 const SESSION_FORMAT = "hermit-agent-session";
 // 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
 const SESSION_FORMAT_VERSION = 2;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -359,11 +359,13 @@ Every reply must be exactly ONE of:
 1. Short reasoning, then exactly ONE \`\`\`python code block. It is executed and you get its output back in an <observation> message. Write nothing after the code block. Only \`\`\`python blocks are executed. To show output, data or other non-Python text, use a \`\`\`text block.
 2. Short reasoning, then one or more file actions (see below). They are applied in order and you get the results back in an <observation> message. Never put file actions and a \`\`\`python block in the same reply.
 3. The final answer for the user, with NO python code block and no file actions, once the task is complete. Mention the files you created.
-4. A line starting with "ask:" followed by your question, if you cannot continue without information from the user.
+4. A line starting with "ask:" followed by your question, if you cannot continue without information from the user. To offer choices, put each one on its own line after the question, starting with "- " (at most 6); the user can still answer in their own words.
 
-File actions read and change text files in /workspace directly. Prefer them over Python for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. Start each tag on its own line:
+File actions read, search and change files in /workspace directly. Prefer them over Python for finding text, and for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. Start each tag on its own line:
 <read_file path="notes.txt"/>
   Shows the file with line numbers, at most 400 lines at a time; add start="401" end="800" for more. The line numbers are not part of the file.
+<search_files pattern="def load" path="src" glob="*.py"/>
+  Searches text files for a regular expression and shows the matching lines as path:line: text, at most 100. Without pattern it lists the files instead. path (a folder or a file) and glob narrow it down; a glob without "/" matches file names in every folder (*.py), one with "/" matches whole paths (src/**/*.md). Add ignore_case="true" to ignore case. Leave out path to search all of /workspace.
 <write_file path="docs/report.md">
 the complete content of the file
 </write_file>
@@ -377,7 +379,11 @@ the replacement text
 </new>
 </edit_file>
   Replaces text in an existing file. Each <old> must match the file exactly, indentation included, and occur exactly once: add surrounding lines to make it unique. Several <old>/<new> pairs may follow each other inside one edit_file. An empty <new></new> deletes the text.
-Paths are relative to /workspace. If any write or edit in a reply fails, none of that reply's changes are applied.
+<delete_file path="tmp/old.csv"/>
+  Deletes a file, or a folder with everything in it.
+<move_file path="draft.md" new_path="docs/final.md"/>
+  Moves or renames a file or a folder, binary files too. Nothing may exist at new_path yet: to replace a file, delete it first, in the same reply.
+Paths are relative to /workspace. If any write, edit, delete or move in a reply fails, none of that reply's changes are applied. A .py file you write or edit is checked for syntax errors, and you are told if it doesn't compile.
 
 Rules:
 - Inspect files before you modify them.
@@ -389,11 +395,11 @@ Rules:
     const toolsFormat = `
 You act only through tool calls, and you get each call's result back in an <observation>:
 - run_python: runs Python code. Code you run is not saved: to create a file, use write_file (or write it from your code).
-- read_file, write_file, edit_file: read and change text files in /workspace directly. Prefer them over Python for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. read_file shows at most 400 lines at a time: ask for more with start_line. Each old_text of edit_file must match the file exactly, indentation included, and occur exactly once.
+- read_file, search_files, write_file, edit_file, delete_file, move_file: read, search and change files in /workspace directly. Prefer them over Python for finding text, and for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. read_file shows at most 400 lines at a time: ask for more with start_line. Each old_text of edit_file must match the file exactly, indentation included, and occur exactly once. A .py file you write or edit is checked for syntax errors, and you are told if it doesn't compile.
 - finish: ends the task with your final answer for the user, once the task is complete. Mention the files you created.
-- ask_user: asks the user a question, if you cannot continue without information from them.
+- ask_user: asks the user a question, if you cannot continue without information from them. Offer options when the answer is one of a few choices.
 
-Each reply is ONE step: one run_python call, OR one or more file tool calls (applied in order; if any write or edit fails, none of that reply's changes are applied), OR finish, OR ask_user. Don't combine run_python with other tools in one reply: only the first action runs. Code or file contents written in your message text are not run.
+Each reply is ONE step: one run_python call, OR one or more file tool calls (applied in order; if any write, edit, delete or move fails, none of that reply's changes are applied), OR finish, OR ask_user. Don't combine run_python with other tools in one reply: only the first action runs. Code or file contents written in your message text are not run.
 
 Rules:
 - Inspect files before you modify them.
@@ -477,13 +483,13 @@ function parseReply(text, finishReason) {
     }
     if (unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim() };
     if (finishReason === "length") return { kind: "cutoff", prose: t.trim() };
-    const tool = t.match(/^[ \t]*<(tool_call|function_call|function=|run_python|execute_python|run_code|execute_code|code_interpreter|bash|shell|terminal)\b/im);
+    const tool = t.match(/^[ \t]*<(tool_call|function_call|function=|(?:run|execute)[ _-]?(?:python|code)|code_interpreter|bash|shell|terminal)\b/im);
     if (tool) return { kind: "toolcall", prose: t.trim(), tag: tool[1].replace(/=$/, "") };
     // Observations only ever come from the harness: a reply that writes one imitates a
     // result instead of acting (seen with Qwen3.8: "<observation>Now let me run it.").
     if (/^[ \t]*<\/?observation\b/im.test(t)) return { kind: "fakeobs", prose: t.trim() };
     const ask = t.match(/^[ \t]*\**ask:\**[ \t]*([\s\S]+)/im);
-    if (ask) return { kind: "ask", question: ask[1].trim(), prose: t.slice(0, ask.index).trim() };
+    if (ask) return { kind: "ask", ...splitAskOptions(ask[1]), prose: t.slice(0, ask.index).trim() };
     if (!t.trim()) return { kind: "empty", prose: "" };
     return { kind: "final", answer: t.trim() };
 }
@@ -526,7 +532,10 @@ function classifyEffect(diff, origins, opts) {
     const maxFiles = o.maxFiles ?? LIMITS.riskMaxFiles;
     const maxBytes = o.maxBytes ?? LIMITS.riskMaxBytes;
     const reasons = [];
-    for (const p of diff.deleted || []) if (origins[p] === "user") reasons.push(`deletes your file ${p}`);
+    const movedTo = new Map(o.moves || []);
+    for (const p of diff.deleted || []) {
+        if (origins[p] === "user") reasons.push(movedTo.has(p) ? `moves your file ${p} to ${movedTo.get(p)}` : `deletes your file ${p}`);
+    }
     for (const p of diff.modified || []) if (origins[p] === "user") reasons.push(`overwrites your file ${p}`);
     const touched = (diff.added || []).length + (diff.modified || []).length + (diff.deleted || []).length;
     if (touched > maxFiles) reasons.push(`touches ${touched} files (more than ${maxFiles})`);
@@ -588,7 +597,7 @@ function copyMessage(m) {
 // The tools offered when the endpoint supports OpenAI `tools`. The file tools take the
 // argument shapes applyFileActions consumes; run_python, ask_user and finish are the
 // code block, the ask: line and the final answer of code-as-action.
-const AGENT_TOOL_NAMES = ["run_python", "read_file", "write_file", "edit_file", "ask_user", "finish"];
+const AGENT_TOOL_NAMES = ["run_python", "read_file", "search_files", "write_file", "edit_file", "delete_file", "move_file", "ask_user", "finish"];
 function agentToolDefs() {
     const fn = (name, description, properties, required) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required } } });
     const path = { type: "string", description: "Path relative to /workspace, e.g. \"data/report.md\"" };
@@ -597,12 +606,20 @@ function agentToolDefs() {
             { code: { type: "string", description: "The Python code to run" } }, ["code"]),
         fn("read_file", "Show a text file from /workspace with line numbers, at most 400 lines per call. The line numbers are not part of the file.",
             { path, start_line: { type: "integer", minimum: 1, description: "First line to show (default 1)" }, end_line: { type: "integer", minimum: 1, description: "Last line to show" } }, ["path"]),
+        fn("search_files", "Search the text files in /workspace for a regular expression; the matching lines come back as path:line: text, at most 100. Without pattern, list the files instead (with sizes). Binary files are skipped.",
+            { pattern: { type: "string", description: "Regular expression to search for, e.g. \"def load\" or \"TODO|FIXME\". Leave it out to list files" },
+                path: { type: "string", description: "Folder or file to search in, relative to /workspace (default: all of /workspace)" },
+                glob: { type: "string", description: "Only files matching this pattern: without \"/\" it matches file names in every folder (\"*.py\"), with \"/\" whole paths (\"src/**/*.md\")" },
+                ignore_case: { type: "boolean", description: "Ignore upper and lower case (default false)" } }, []),
         fn("write_file", "Create a text file in /workspace, or replace all of its content. Folders are created as needed.",
             { path, content: { type: "string", description: "The complete content of the file" } }, ["path", "content"]),
         fn("edit_file", "Replace text in an existing text file. Each old_text must match the file exactly, indentation included, and occur exactly once: include surrounding lines to make it unique. An empty new_text deletes the text.",
             { path, edits: { type: "array", minItems: 1, items: { type: "object", properties: { old_text: { type: "string" }, new_text: { type: "string" } }, required: ["old_text", "new_text"] } } }, ["path", "edits"]),
+        fn("delete_file", "Delete a file, or a folder with everything in it.", { path }, ["path"]),
+        fn("move_file", "Move or rename a file or a folder (binary files too). Nothing may exist at new_path yet: to replace a file, delete it first, in the same reply.",
+            { path, new_path: { type: "string", description: "The new path, relative to /workspace" } }, ["path", "new_path"]),
         fn("ask_user", "Ask the user a question when you cannot continue without their input. The task pauses until they answer.",
-            { question: { type: "string" } }, ["question"]),
+            { question: { type: "string" }, options: { type: "array", maxItems: 6, items: { type: "string" }, description: "Optional: up to 6 short answers the user can pick with one click; they can still answer in their own words" } }, ["question"]),
         fn("finish", "End the task with your final answer for the user, once the task is complete. Mention the files you created.",
             { answer: { type: "string", description: "The final answer, in Markdown" } }, ["answer"]),
     ];
@@ -676,6 +693,19 @@ function fallbackToolCallId(step, i) {
 function toolCallToFileAction(name, args) {
     const a = args || {};
     const action = { tool: name, args: { path: typeof a.path === "string" ? a.path : "" } };
+    if (name === "search_files") {
+        // Everything is optional: no path searches all of /workspace.
+        const path = a.path === undefined || a.path === null ? "" : normalizeSearchPath(a.path);
+        if (path === null) action.error = `Unsafe path ${JSON.stringify(String(a.path).slice(0, 100))}: use a relative path inside /workspace.`;
+        else action.args.path = path;
+        for (const key of ["pattern", "glob"]) {
+            if (a[key] === undefined || a[key] === null || a[key] === "") continue;
+            if (typeof a[key] === "string") action.args[key] = a[key];
+            else action.error = action.error || `${key} must be a string.`;
+        }
+        action.args.ignore_case = a.ignore_case === true || a.ignore_case === "true";
+        return action;
+    }
     const path = normalizeActionPath(a.path);
     if (typeof a.path !== "string" || !a.path.trim()) action.error = `${name} needs a path, e.g. {"path": "notes.txt"}.`;
     else if (!path) action.error = `Unsafe path ${JSON.stringify(a.path.slice(0, 100))}: use a relative path inside /workspace.`;
@@ -690,13 +720,47 @@ function toolCallToFileAction(name, args) {
     } else if (name === "write_file") {
         if (typeof a.content !== "string") action.error = action.error || "write_file needs content: the complete text of the file.";
         action.args.content = typeof a.content === "string" ? a.content : "";
-    } else {
+    } else if (name === "move_file") {
+        const to = normalizeActionPath(a.new_path);
+        action.args.new_path = to || (typeof a.new_path === "string" ? a.new_path : "");
+        if (typeof a.new_path !== "string" || !a.new_path.trim()) action.error = action.error || "move_file needs new_path, e.g. {\"path\": \"a.txt\", \"new_path\": \"docs/a.txt\"}.";
+        else if (!to) action.error = action.error || `Unsafe new_path ${JSON.stringify(a.new_path.slice(0, 100))}: use a relative path inside /workspace.`;
+    } else if (name === "edit_file") {
         const edits = Array.isArray(a.edits) ? a.edits : [];
         action.args.edits = edits.filter(e => e && typeof e === "object").map(e => ({ old_text: typeof e.old_text === "string" ? e.old_text : "", new_text: typeof e.new_text === "string" ? e.new_text : "" }));
         if (!action.args.edits.length) action.error = action.error || "edit_file needs edits: a list of {\"old_text\": …, \"new_text\": …}.";
         else if (edits.some(e => !e || typeof e.old_text !== "string" || typeof e.new_text !== "string")) action.error = action.error || "Every edit needs old_text and new_text, both strings.";
     }
     return action;
+}
+
+// The choices an ask_user call offers: 2 to askMaxOptions distinct non-empty strings,
+// each clipped, else none (the question is still asked).
+function cleanAskOptions(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const o of raw) {
+        const t = typeof o === "string" || typeof o === "number" ? String(o).trim().replace(/\s+/g, " ").slice(0, LIMITS.askMaxOptionChars) : "";
+        if (t && !out.includes(t)) out.push(t);
+    }
+    return out.length >= 2 ? out.slice(0, LIMITS.askMaxOptions) : [];
+}
+
+// Code-as-action's ask: the choices are the "- " (or "* ", "1. ") lines that end the
+// question, when there are 2 to askMaxOptions of them. Returns { question, options }:
+// with options, the question without those lines.
+function splitAskOptions(text) {
+    const lines = String(text || "").trim().split(/\r?\n/);
+    const opts = [];
+    while (lines.length > 1) {
+        const m = lines[lines.length - 1].match(/^[ \t]*(?:[-*•]|\d{1,2}[.)])[ \t]+(.+)$/);
+        if (!m) break;
+        opts.unshift(m[1]);
+        lines.pop();
+    }
+    const options = opts.length <= LIMITS.askMaxOptions ? cleanAskOptions(opts) : [];
+    const question = lines.join("\n").trim();
+    return options.length && question ? { question, options } : { question: String(text || "").trim(), options: [] };
 }
 
 // DESIGN §5.6: what one native reply does. calls: [{ id, name, arguments }] as streamed
@@ -744,7 +808,7 @@ function parseToolCalls(calls, text, finishReason, step) {
     }
     const isAction = (c) => c.name === "run_python" || FILE_TOOLS.includes(c.name);
     const known = (c) => AGENT_TOOL_NAMES.includes(c.name);
-    const unknownReason = (c) => `There is no tool ${JSON.stringify(c.name)}. The tools are ${AGENT_TOOL_NAMES.join(", ")}` + (/bash|shell|terminal|exec|command/i.test(c.name) ? " (no shell: run Python, e.g. runpy.run_path(\"script.py\"))." : ".");
+    const unknownReason = (c) => `There is no tool ${JSON.stringify(c.name)}. The tools are ${AGENT_TOOL_NAMES.join(", ")}` + (/bash|shell|terminal|exec|command/i.test(c.name) ? " (no shell: run Python, e.g. runpy.run_path(\"script.py\"))." : /grep|glob|find|search|list|ls$/i.test(c.name) ? " (to find files or text in them, use search_files)." : ".");
     const first = ok.findIndex(c => known(c) && isAction(c));
     if (first < 0) {
         const end = ok.find(c => c.name === "finish" || c.name === "ask_user");
@@ -755,7 +819,7 @@ function parseToolCalls(calls, text, finishReason, step) {
             // the user replies (appendToLastUserMessage).
             out.stored = [{ id: end.id, name: end.name, arguments: end.json }];
             if (end.name === "finish") return { ...out, kind: "final", answer: value };
-            return { ...out, kind: "ask", question: value };
+            return { ...out, kind: "ask", question: value, options: cleanAskOptions(end.args.options) };
         }
         out.kind = "badcall";
         out.stored = ok.map(c => ({ id: c.id, name: c.name, arguments: c.json }));
@@ -808,8 +872,15 @@ function toolCallAsText(call) {
         case "read_file": return `<read_file path=${attr(a.path)}${a.start_line ? ` start="${a.start_line}"` : ""}${a.end_line ? ` end="${a.end_line}"` : ""}/>`;
         case "write_file": return `<write_file path=${attr(a.path)}>\n${s(a.content)}</write_file>`;
         case "edit_file": return `<edit_file path=${attr(a.path)}>\n` + (Array.isArray(a.edits) ? a.edits : []).map(e => `<old>\n${s(e && e.old_text)}\n</old>\n<new>\n${s(e && e.new_text)}\n</new>`).join("\n") + "\n</edit_file>";
+        case "search_files": {
+            // A pattern often holds double quotes: single-quote the attribute then.
+            const q = (v) => (s(v).includes('"') && !s(v).includes("'") ? `'${s(v)}'` : attr(v));
+            return "<search_files" + (s(a.pattern) ? ` pattern=${q(a.pattern)}` : "") + (s(a.path) ? ` path=${attr(a.path)}` : "") + (s(a.glob) ? ` glob=${q(a.glob)}` : "") + (a.ignore_case === true ? ` ignore_case="true"` : "") + "/>";
+        }
+        case "delete_file": return `<delete_file path=${attr(a.path)}/>`;
+        case "move_file": return `<move_file path=${attr(a.path)} new_path=${attr(a.new_path)}/>`;
         case "finish": return s(a.answer);
-        case "ask_user": return "ask: " + s(a.question);
+        case "ask_user": return "ask: " + s(a.question) + cleanAskOptions(a.options).map(o => "\n- " + o).join("");
         default: return `[call to ${String(f.name || "?")}: ${String(f.arguments || "").slice(0, 2000)}]`;
     }
 }
@@ -838,11 +909,11 @@ function toolHistoryAsText(messages) {
 // What the model gets back per call of a native file step: each read, write or edit its
 // own result, the step's file changes and notes with the last one.
 function fileCallResults(results, failed) {
-    const failedAt = failed ? results.findIndex(r => !r.ok && r.tool !== "read_file") : -1;
+    const failedAt = failed ? results.findIndex(r => !r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) : -1;
     const native = (s) => String(s).replace(/<old>/g, "old_text").replace(/<new>/g, "new_text").replace(/<write_file>/g, "write_file");
     return results.map((r, i) => {
-        let head = `${r.tool} ${r.path || "?"}: ${r.ok ? r.message : "ERROR: " + native(r.message)}`;
-        if (failed && r.ok && r.tool !== "read_file") head = `${r.tool} ${r.path}: not applied, because the ${results[failedAt].tool} call for ${results[failedAt].path || "?"} failed: no file changes of this reply were written. Fix it and send all of the changes again.`;
+        let head = `${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + native(r.message)}`;
+        if (failed && r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) head = `${fileActionLabel(r)}: not applied, because the ${results[failedAt].tool} call for ${results[failedAt].path || "?"} failed: no file changes of this reply were written. Fix it and send all of the changes again.`;
         else if (failed && i === failedAt) head += "\nNo file changes of this reply were applied. Fix this and send all of the changes again.";
         return r.output !== undefined && r.ok ? head + "\n" + r.output : head;
     });
@@ -861,13 +932,13 @@ function noActionAdvice(parsed, native, ctxCut) {
             ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
             : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.";
         case "mixed": return "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.";
-        case "toolcall": return `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py")); to read or change files, use the file-action tags (<read_file>, <write_file>, <edit_file>).`;
+        case "toolcall": return `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py")); to read, search or change files, use the file-action tags (<read_file>, <search_files>, <write_file>, <edit_file>, <delete_file>, <move_file>).`;
         case "fakeobs": return native
             ? "Your reply contained an <observation> tag, but observations only come back after a tool call ran, so nothing ran. Call a tool."
             : "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.";
         case "textaction": return parsed.what === "toolcall"
             ? `Your reply contained a tool call written as text (<${parsed.tag || "tool_call"}>) that wasn't received as a tool call, so nothing ran. Make the call again through the tools interface.`
-            : `Your reply had ${parsed.what === "files" ? "file-action tags" : "a ```python block"} in its text, but here code and file changes only run as tool calls, so nothing ran. Call ${parsed.what === "files" ? "read_file, write_file or edit_file" : "run_python"} instead, or call finish if that was your final answer.`;
+            : `Your reply had ${parsed.what === "files" ? "file-action tags" : "a ```python block"} in its text, but here code and file changes only run as tool calls, so nothing ran. Call ${parsed.what === "files" ? "the file tools (read_file, search_files, write_file, edit_file, delete_file, move_file)" : "run_python"} instead, or call finish if that was your final answer.`;
         case "badcall": return "None of your tool calls could run; each one's result says why.";
         default: return "Nothing ran.";
     }
@@ -1036,12 +1107,98 @@ function missingMentionedFiles(answer, paths) {
 // File actions (DESIGN §5.1): read, write and edit text files without Python. The tag
 // names are also the tool names a native tool-call parser will feed into
 // applyFileActions (DESIGN §5.6), which knows nothing about the wire format.
-const FILE_TOOLS = ["read_file", "write_file", "edit_file"];
+const FILE_TOOLS = ["read_file", "search_files", "write_file", "edit_file", "delete_file", "move_file"];
+// The file tools that change nothing: they never fail a batch, and never need approval.
+const READONLY_FILE_TOOLS = ["read_file", "search_files"];
 
-// A path as models write it ("/workspace/x", "./x") made relative, or null if unsafe.
+// A path as models write it ("/workspace/x", "./x", "folder/") made relative, or null if unsafe.
 function normalizeActionPath(raw) {
-    const p = String(raw || "").trim().replace(/^\/?workspace\//, "").replace(/^(?:\.\/)+/, "");
+    const p = String(raw || "").trim().replace(/^\/?workspace\//, "").replace(/^(?:\.\/)+/, "").replace(/\/+$/, "");
     return isSafeRelPath(p) ? p : null;
+}
+
+// search_files' path: "" for all of /workspace ("", ".", "/", "/workspace"), else as
+// normalizeActionPath.
+function normalizeSearchPath(raw) {
+    const t = String(raw ?? "").trim();
+    if (/^(?:\.?\/?|\/?workspace\/?)$/.test(t)) return "";
+    return normalizeActionPath(t);
+}
+
+// A glob as a RegExp over a workspace path: * and ? stay within a folder, ** spans
+// folders, {a,b} and [abc] as in a shell. Without a "/" it matches the file name in any
+// folder. null for an empty glob.
+function globToRegExp(glob) {
+    const g = String(glob || "").trim().replace(/^\.\//, "");
+    if (!g) return null;
+    let re = "", depth = 0;
+    for (let i = 0; i < g.length; i++) {
+        const c = g[i];
+        if (c === "*") {
+            if (g[i + 1] === "*") {
+                i++;
+                if (g[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*";
+            } else re += "[^/]*";
+        } else if (c === "?") re += "[^/]";
+        else if (c === "[") {
+            const j = g.indexOf("]", i + 2);
+            if (j < 0) { re += "\\["; continue; }
+            const body = g.slice(i + 1, j).replace(/^!/, "^").replace(/\\/g, "\\\\");
+            re += "[" + body + "]";
+            i = j;
+        } else if (c === "\x7b") { depth++; re += "(?:"; }
+        else if (c === "\x7d" && depth > 0) { depth--; re += ")"; }
+        else if (c === "," && depth > 0) re += "|";
+        else re += c.replace(/[.+^$()|\\\x7b\x7d\]\[]/g, "\\$&");
+    }
+    if (depth > 0) return null;
+    const body = g.includes("/") ? re : "(?:.*/)?" + re;
+    try { return new RegExp("^" + body + "$"); } catch (e) { return null; }
+}
+
+// Does the pattern repeat a group that itself repeats, as in (a+)+ or (\w+\s?)*? Such a
+// pattern can backtrack for hours on one line, and a search runs on the main thread,
+// where nothing can stop it. Character classes and escapes are skipped.
+function hasNestedQuantifier(p) {
+    const s = String(p);
+    const stack = [];   // per open group: does it repeat anything inside?
+    let inClass = false;
+    const repeatAt = (i) => {
+        const c = s[i];
+        if (c === "*" || c === "+") return 1;
+        if (c !== "\x7b") return 0;
+        const m = s.slice(i).match(/^\x7b(\d+)(,(\d*))?\x7d/);
+        if (!m) return 0;
+        return (m[2] ? m[3] === "" || Number(m[3]) > 1 : Number(m[1]) > 1) ? m[0].length : 0;
+    };
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (c === "\\") { i++; continue; }
+        if (inClass) { if (c === "]") inClass = false; continue; }
+        if (c === "[") { inClass = true; continue; }
+        if (c === "(") { stack.push(false); continue; }
+        if (c === ")") {
+            const inner = stack.pop() || false;
+            const rep = repeatAt(i + 1);
+            if (rep && inner) return true;
+            if (stack.length && (inner || rep)) stack[stack.length - 1] = true;
+            if (rep) i += rep;
+            continue;
+        }
+        if (repeatAt(i) && stack.length) stack[stack.length - 1] = true;
+    }
+    return false;
+}
+
+// search_files' pattern as a RegExp. A leading (?i) (Python and grep style) ignores case.
+// A pattern that isn't a valid JavaScript regex is searched as plain text, and said so;
+// one that could backtrack without end is refused. Returns { re, literal } or { error }.
+function searchRegExp(pattern, ignoreCase) {
+    let p = String(pattern), flags = ignoreCase ? "i" : "";
+    if (p.startsWith("(?i)")) { p = p.slice(4); flags = "i"; }
+    if (hasNestedQuantifier(p)) return { error: `The pattern ${JSON.stringify(p.slice(0, 100))} repeats a group that itself repeats (like (a+)+), which can take practically forever to search. Simplify it, e.g. drop the outer repetition.` };
+    try { return { re: new RegExp(p, flags), literal: false }; }
+    catch (e) { return { re: new RegExp(p.replace(/[.*+?^$()|[\]\\\x7b\x7d]/g, "\\$&"), flags), literal: true }; }
 }
 
 function parseTagAttrs(s) {
@@ -1055,21 +1212,24 @@ function parseTagAttrs(s) {
 // Tags count only at the start of a line. Content runs to the first closing tag, so a
 // file can hold ``` fences but not its own closing tag. One newline after an opening
 // tag is dropped; a write keeps its trailing newline, <old>/<new> drop one at each end.
+// An attribute value may hold ">" when it is quoted (a search pattern such as "->").
 // Returns { actions: [{ tool, args, error? }], rest (the reply without the tags),
 // unclosed (the tool name of a tag that never closed, or "") }.
 function extractFileActions(text) {
     const t = String(text || "");
-    const open = /^[ \t]*<(read_file|write_file|edit_file)\b([^>\n]*?)(\/?)>/gm;
+    const open = new RegExp(`^[ \\t]*<(${FILE_TOOLS.join("|")})\\b((?:[^>\\n"']|"[^"\\n]*"|'[^'\\n]*')*?)(\\/?)>`, "gm");
     const lead = (s) => s.replace(/^\r?\n/, "");
     const snippet = (s) => lead(s).replace(/\r?\n$/, "");
     const actions = [];
     let rest = "", pos = 0, unclosed = "", m;
     while ((m = open.exec(t))) {
         const tool = m[1], attrs = parseTagAttrs(m[2]), selfClosing = m[3] === "/";
+        // Tags without content: self-closing, or closed right away.
+        const empty = tool !== "write_file" && tool !== "edit_file";
         rest += t.slice(pos, m.index);
         let end = m.index + m[0].length, body = "";
-        if (tool === "read_file") {
-            const close = !selfClosing && t.slice(end).match(/^\s*<\/read_file>/);
+        if (empty) {
+            const close = !selfClosing && t.slice(end).match(new RegExp(`^\\s*<\\/${tool}>`));
             if (close) end += close[0].length;
         } else if (!selfClosing) {
             const ci = t.indexOf(`</${tool}>`, end);
@@ -1079,11 +1239,21 @@ function extractFileActions(text) {
         }
         pos = open.lastIndex = end;
         const action = { tool, args: { path: attrs.path === undefined ? "" : attrs.path } };
+        if (tool === "search_files") {
+            const path = attrs.path === undefined ? "" : normalizeSearchPath(attrs.path);
+            if (path === null) action.error = `Unsafe path ${JSON.stringify(String(attrs.path).slice(0, 100))}: use a relative path inside /workspace.`;
+            else action.args.path = path;
+            if (attrs.pattern) action.args.pattern = attrs.pattern;
+            if (attrs.glob) action.args.glob = attrs.glob;
+            action.args.ignore_case = /^(?:true|1|yes)$/i.test(attrs.ignore_case || "");
+            actions.push(action);
+            continue;
+        }
         const path = normalizeActionPath(attrs.path);
         if (attrs.path === undefined || !String(attrs.path).trim()) action.error = `<${tool}> needs a path attribute, e.g. <${tool} path="notes.txt">.`;
         else if (!path) action.error = `Unsafe path ${JSON.stringify(String(attrs.path).slice(0, 100))}: use a relative path inside /workspace.`;
         else action.args.path = path;
-        if (selfClosing && tool !== "read_file") action.error = action.error || `<${tool} … /> has no content: put it between <${tool} path="…"> and </${tool}>.`;
+        if (selfClosing && !empty) action.error = action.error || `<${tool} … /> has no content: put it between <${tool} path="…"> and </${tool}>.`;
         if (tool === "read_file") {
             for (const [attr, key] of [["start", "start_line"], ["end", "end_line"]]) {
                 if (attrs[attr] === undefined) continue;
@@ -1091,9 +1261,15 @@ function extractFileActions(text) {
                 if (Number.isInteger(n) && n >= 1) action.args[key] = n;
                 else action.error = action.error || `${attr}="${attrs[attr]}" is not a line number (lines start at 1).`;
             }
+        } else if (tool === "move_file") {
+            const raw = attrs.new_path ?? attrs.to;
+            const to = normalizeActionPath(raw);
+            action.args.new_path = to || String(raw ?? "");
+            if (raw === undefined || !String(raw).trim()) action.error = action.error || `<move_file> needs a new_path attribute, e.g. <move_file path="a.txt" new_path="docs/a.txt"/>.`;
+            else if (!to) action.error = action.error || `Unsafe new_path ${JSON.stringify(String(raw).slice(0, 100))}: use a relative path inside /workspace.`;
         } else if (tool === "write_file") {
             action.args.content = lead(body);
-        } else {
+        } else if (tool === "edit_file") {
             const edits = [...body.matchAll(/<old>([\s\S]*?)<\/old>\s*<new>([\s\S]*?)<\/new>/g)].map(e => ({ old_text: snippet(e[1]), new_text: snippet(e[2]) }));
             action.args.edits = edits;
             if (!edits.length) action.error = action.error || "<edit_file> needs at least one <old>…</old> <new>…</new> pair.";
@@ -1117,35 +1293,181 @@ function countOccurrences(hay, needle) {
 }
 
 // Run file actions against the workspace without touching it. ws: { paths: [...],
-// read(path) -> Uint8Array | null }. Actions run in order on an overlay, so a read sees
-// an earlier write. Writes and edits are all-or-nothing: the first one that fails stops
-// the batch and nothing is written. Returns { results: [{ tool, path, ok, message,
-// output?, startLine?, endLine?, edits? }], writes: Map(path -> text), failed }.
+// read(path) -> Uint8Array | null }. Actions run in order on an overlay, so a read or a
+// search sees an earlier write, delete or move. Writes, edits, deletes and moves are
+// all-or-nothing: the first one that fails stops the batch and nothing is changed, and
+// the model is told which one failed. Returns { results: [{ tool, path, ok, message,
+// output?, startLine?, endLine?, edits?, newPath?, query? }], writes: Map(path -> text,
+// or the Uint8Array of a moved file), deletes: [paths of ws files that go], moves:
+// [[from, to]] per file moved, failed }.
 function applyFileActions(actions, ws, opts) {
     const lim = { ...LIMITS, ...(opts || {}) };
-    const overlay = new Map();
+    const overlay = new Map();   // path -> { text } | { bytes } | null (deleted)
     const paths = new Set(ws.paths || []);
     const results = [];
+    const moves = [];
     let budget = lim.readMaxTotalChars, failed = false;
+    const exists = (p) => (overlay.has(p) ? overlay.get(p) !== null : paths.has(p));
+    const allPaths = () => {
+        const out = new Set(paths);
+        for (const [p, v] of overlay) { if (v === null) out.delete(p); else out.add(p); }
+        return [...out].sort();
+    };
+    const under = (dir) => allPaths().filter(p => p.startsWith(dir + "/"));
+    const rawBytes = (p) => {
+        if (overlay.has(p)) { const v = overlay.get(p); return v === null ? null : v.bytes || new TextEncoder().encode(v.text); }
+        return paths.has(p) ? ws.read(p) : null;
+    };
     const current = (p) => {
-        if (overlay.has(p)) return { text: overlay.get(p) };
+        if (overlay.has(p)) {
+            const v = overlay.get(p);
+            if (v === null) return null;
+            if (v.text !== undefined) return { text: v.text };
+            const text = decodeTextFile(v.bytes);
+            return text === null ? { binary: v.bytes } : { text };
+        }
         const bytes = paths.has(p) ? ws.read(p) : null;
         if (!bytes) return null;
         const text = decodeTextFile(bytes);
         return text === null ? { binary: bytes } : { text };
     };
+    // Can a file go at p? "" when it can, else why not (a folder is there, or a file
+    // where one of its folders would be).
+    const blocked = (p) => {
+        if (under(p).length) return `${p} is a folder.`;
+        const segs = p.split("/");
+        const parent = segs.slice(1).map((_, i) => segs.slice(0, i + 1).join("/")).find(exists);
+        return parent ? `${parent} is a file, so it can't contain ${p}.` : "";
+    };
     const lineCount = (s) => (s === "" ? 0 : s.split("\n").length - (s.endsWith("\n") ? 1 : 0));
+    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     for (const a of actions || []) {
         const path = a.args && a.args.path || "";
         const r = { tool: a.tool, path, ok: false, message: "" };
         results.push(r);
         if (failed) { r.message = "not run: an earlier action failed"; continue; }
         if (a.tool === "edit_file") r.edits = ((a.args && a.args.edits) || []).map(e => ({ old: e.old_text, new: e.new_text }));
-        const fail = (msg) => { r.message = msg; if (a.tool !== "read_file") failed = true; };
+        if (a.tool === "move_file") r.newPath = a.args && a.args.new_path || "";
+        const fail = (msg) => { r.message = msg; if (!READONLY_FILE_TOOLS.includes(a.tool)) failed = true; };
         if (a.error || !FILE_TOOLS.includes(a.tool)) { fail(a.error || `Unknown file action ${a.tool}.`); continue; }
+        if (a.tool === "search_files") {
+            const { pattern, glob } = a.args;
+            r.path = path || ".";
+            r.query = [pattern !== undefined ? JSON.stringify(pattern) : "", glob ? `glob ${glob}` : ""].filter(Boolean).join(" · ");
+            let scope = allPaths();
+            if (path) {
+                scope = exists(path) ? [path] : under(path);
+                if (!scope.length) { fail(`There is no file or folder ${path} in /workspace.`); continue; }
+            }
+            if (glob) {
+                const g = globToRegExp(glob);
+                if (!g) { fail(`The glob ${JSON.stringify(glob)} isn't valid: use *, ** and ? (e.g. "*.py" or "src/**/*.md").`); continue; }
+                scope = scope.filter(p => g.test(p));
+            }
+            if (budget <= 0) { fail("Not searched: this reply's read budget is used up. Search in your next reply."); continue; }
+            const cap = Math.min(lim.readMaxChars, budget);
+            const out = [];
+            let used = 0;
+            const push = (row) => { if (used + row.length + 1 > cap && out.length) return false; out.push(row); used += row.length + 1; return true; };
+            if (pattern === undefined) {
+                // No pattern: list the files.
+                let shown = 0;
+                for (const p of scope) {
+                    if (shown >= lim.searchMaxFiles) break;
+                    const b = rawBytes(p);
+                    if (!push(`${p} (${formatBytes(b ? b.length : 0)})`)) break;
+                    shown++;
+                }
+                if (shown < scope.length) out.push(`[… ${scope.length - shown} more files; narrow it down with path or glob …]`);
+                budget -= used;
+                r.ok = true;
+                r.message = scope.length ? plural(scope.length, "file") : "no files" + (glob ? ` match ${glob}` : "");
+                r.output = out.join("\n") || "(no files)";
+                continue;
+            }
+            const { re, literal, error } = searchRegExp(pattern, a.args.ignore_case);
+            if (error) { fail(error); continue; }
+            // A time budget too: a slow pattern over a large workspace must not hang the tab.
+            const deadline = Date.now() + lim.searchMaxMs;
+            let matches = 0, files = 0, shown = 0, binary = 0, big = 0, full = false, searched = 0, timedOut = false;
+            for (const p of scope) {
+                if (Date.now() > deadline) { timedOut = true; break; }
+                searched++;
+                const b = rawBytes(p);
+                if (!b) continue;
+                if (b.length > lim.searchMaxFileBytes) { big++; continue; }
+                const cur = current(p);
+                if (!cur || cur.text === undefined) { binary++; continue; }
+                const lines = cur.text.split(/\r?\n/);
+                let hit = false;
+                for (let i = 0; i < lines.length; i++) {
+                    if (i % 1000 === 999 && Date.now() > deadline) { timedOut = true; break; }
+                    const m = re.exec(lines[i]);
+                    if (!m) continue;
+                    matches++;
+                    if (!hit) { hit = true; files++; }
+                    if (full || shown >= lim.searchMaxMatches) { full = true; continue; }
+                    let line = lines[i];
+                    if (line.length > lim.searchMaxLineChars) {
+                        // Long lines (minified code, data) are cut around the match.
+                        const from = Math.max(0, Math.min(m.index - 80, line.length - lim.searchMaxLineChars));
+                        line = (from > 0 ? "…" : "") + line.slice(from, from + lim.searchMaxLineChars) + (from + lim.searchMaxLineChars < line.length ? "…" : "");
+                    }
+                    if (push(`${p}:${i + 1}: ${line}`)) shown++;
+                    else full = true;
+                }
+                if (timedOut) break;
+            }
+            budget -= used;
+            const notes = [];
+            if (literal) notes.push(`(searched as plain text: ${JSON.stringify(pattern)} isn't a valid regular expression)`);
+            if (shown < matches) notes.push(`[… ${matches - shown} more matches; narrow it down with the pattern, path or glob …]`);
+            if (binary) notes.push(`(${plural(binary, "binary file")} not searched: inspect ${binary === 1 ? "it" : "them"} with python)`);
+            if (big) notes.push(`(${plural(big, "file")} over ${formatBytes(lim.searchMaxFileBytes)} not searched: use python)`);
+            if (timedOut) notes.push(`(stopped after ${lim.searchMaxMs / 1000} s, ${searched} of ${plural(scope.length, "file")} searched: narrow it down with the pattern, path or glob)`);
+            r.ok = true;
+            r.message = matches ? `${matches} match${matches === 1 ? "" : "es"} in ${plural(files, "file")}` : `no matches in ${plural(scope.length - binary - big, "file")}`;
+            r.output = [...out, ...notes].join("\n") || "(no matches)";
+            continue;
+        }
+        if (a.tool === "delete_file") {
+            if (exists(path)) {
+                const b = rawBytes(path);
+                overlay.set(path, null);
+                r.ok = true;
+                r.message = `deleted (${formatBytes(b ? b.length : 0)})`;
+                continue;
+            }
+            const inside = under(path);
+            if (!inside.length) { fail(`There is no file or folder ${path} in /workspace.`); continue; }
+            for (const p of inside) overlay.set(p, null);
+            r.ok = true;
+            r.message = `deleted the folder (${plural(inside.length, "file")})`;
+            continue;
+        }
+        if (a.tool === "move_file") {
+            const to = r.newPath;
+            const pairs = exists(path) ? [[path, to]] : under(path).map(p => [p, to + p.slice(path.length)]);
+            if (!pairs.length) { fail(`There is no file or folder ${path} in /workspace.`); continue; }
+            if (to === path) { fail("path and new_path are the same."); continue; }
+            if (to.startsWith(path + "/")) { fail(`Can't move ${path} into itself (${to}).`); continue; }
+            if (exists(to)) { fail(`${to} already exists. Delete it first (in the same reply), or pick another new_path.`); continue; }
+            if (under(to).length) { fail(`${to} is a folder that already exists. Name the full new path, e.g. ${to}/${path.split("/").pop()}.`); continue; }
+            const why = blocked(to);
+            if (why) { fail(why); continue; }
+            for (const [from, dest] of pairs) {
+                // The bytes as they are: decoding and encoding again would drop a BOM.
+                overlay.set(dest, { bytes: rawBytes(from) || new Uint8Array(0) });
+                overlay.set(from, null);
+                moves.push([from, dest]);
+            }
+            r.ok = true;
+            r.message = pairs.length === 1 && pairs[0][0] === path ? `moved to ${to}` : `moved the folder to ${to} (${plural(pairs.length, "file")})`;
+            continue;
+        }
         const cur = current(path);
         if (a.tool === "read_file") {
-            if (!cur) { fail(`There is no file ${path} in /workspace.`); continue; }
+            if (!cur) { fail(under(path).length ? `${path} is a folder. List it with search_files.` : `There is no file ${path} in /workspace.`); continue; }
             if (cur.binary !== undefined) { fail(`${path} is a binary file (${binarySummary(cur.binary)}); inspect it with python.`); continue; }
             if (budget <= 0) { fail("Not read: this reply's read budget is used up. Read it in your next reply."); continue; }
             const lines = cur.text.split(/\r?\n/);
@@ -1180,14 +1502,11 @@ function applyFileActions(actions, ws, opts) {
         }
         if (a.tool === "write_file") {
             const content = String(a.args.content ?? "");
-            const exists = (p) => paths.has(p) || overlay.has(p);
-            if ([...paths, ...overlay.keys()].some(p => p.startsWith(path + "/"))) { fail(`${path} is a folder.`); continue; }
-            const segs = path.split("/");
-            const parent = segs.slice(1).map((_, i) => segs.slice(0, i + 1).join("/")).find(exists);
-            if (parent) { fail(`${parent} is a file, so it can't contain ${path}.`); continue; }
+            const why = blocked(path);
+            if (why) { fail(why); continue; }
             r.ok = true;
             if (cur && cur.text === content) { r.message = "unchanged (same content)"; continue; }
-            overlay.set(path, content);
+            overlay.set(path, { text: content });
             const size = formatBytes(new TextEncoder().encode(content).length);
             r.message = `${cur ? "replaced" : "created"} (${lineCount(content)} line${lineCount(content) === 1 ? "" : "s"}, ${size})`;
             continue;
@@ -1219,22 +1538,63 @@ function applyFileActions(actions, ws, opts) {
             }
         }
         if (error) { fail(error); continue; }
-        overlay.set(path, text);
+        overlay.set(path, { text });
         r.ok = true;
         r.message = `edited (${edits.length} change${edits.length === 1 ? "" : "s"})`;
     }
-    return { results, writes: failed ? new Map() : overlay, failed };
+    if (failed) return { results, writes: new Map(), deletes: [], moves: [], failed };
+    const writes = new Map(), deletes = [];
+    for (const [p, v] of overlay) {
+        if (v === null) { if (paths.has(p)) deletes.push(p); }
+        else writes.set(p, v.text !== undefined ? v.text : v.bytes);
+    }
+    // A move whose source a later action recreated, or whose target a later action
+    // deleted, isn't a move in the result.
+    const kept = moves.filter(([from, to]) => overlay.get(from) === null && overlay.get(to) !== null);
+    return { results, writes, deletes: deletes.sort(), moves: kept, failed };
+}
+
+// The worker's syntax check (checkPythonSyntax), validated like every worker message:
+// { results: { path: null | { line, col, error, text } } } for the paths asked about.
+// Anything else is dropped. Returns { path: null | { line, col, error, text } }.
+function validateSyntaxResult(r, paths) {
+    const out = {};
+    const res = r && typeof r === "object" && r.results && typeof r.results === "object" ? r.results : {};
+    const int = (v) => (Number.isInteger(v) && v >= 0 && v < 1e9 ? v : 0);
+    for (const p of paths || []) {
+        if (!Object.prototype.hasOwnProperty.call(res, p)) continue;
+        const e = res[p];
+        if (e === null) { out[p] = null; continue; }
+        if (!e || typeof e !== "object" || typeof e.error !== "string" || !e.error) continue;
+        out[p] = { line: int(e.line), col: int(e.col), error: e.error.slice(0, 300), text: typeof e.text === "string" ? e.text.slice(0, 200) : "" };
+    }
+    return out;
+}
+
+// What the model (and the card) is told about a Python file that doesn't compile.
+function syntaxErrorNote(path, e) {
+    const where = e.line ? ` at line ${e.line}${e.col ? `, column ${e.col}` : ""}` : "";
+    const text = String(e.text || "").trim();
+    return `${path} doesn't compile${where}: ${e.error}${text ? ` (${text})` : ""}. The file was saved as written; fix it before you run it.`;
+}
+
+// How a file action's result names it: the tool and its path, a search's pattern, a
+// move's target.
+function fileActionLabel(r) {
+    if (r.tool === "search_files") return `search_files ${r.query ? r.query + " in " : ""}${r.path || "."}`;
+    if (r.tool === "move_file") return `move_file ${r.path || "?"} → ${r.newPath || "?"}`;
+    return `${r.tool} ${r.path || "?"}`;
 }
 
 // What the model gets back from a file step (the observation body).
 function formatFileResults(results, failed) {
     const out = [];
     results.forEach((r, i) => {
-        const head = `[${i + 1}] ${r.tool} ${r.path || "?"}: ${r.ok ? r.message : "ERROR: " + r.message}`;
+        const head = `[${i + 1}] ${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + r.message}`;
         out.push(r.output !== undefined ? head + "\n" + r.output : head);
     });
     if (failed) {
-        const i = results.findIndex(r => !r.ok && r.tool !== "read_file");
+        const i = results.findIndex(r => !r.ok && !READONLY_FILE_TOOLS.includes(r.tool));
         out.push(`No file changes were applied, because action ${i + 1} failed. Fix it and send all of the changes again.`);
     }
     return out.join("\n");
@@ -2007,12 +2367,12 @@ function transcriptMarkdown(session) {
             if (item.retryNote) md.push(`> ${item.retryNote}`, ``);
             if (item.reasoning) md.push(`<details><summary>Reasoning</summary>`, ``, block("text", item.reasoning), ``, `</details>`, ``);
             if (item.kind === "final") md.push(item.content || "", ``);
-            else if (item.kind === "ask") md.push(`**Question:** ${item.question || ""}`, ``);
+            else if (item.kind === "ask") md.push(`**Question:** ${item.question || ""}`, ``, ...((item.options || []).length ? [...item.options.map(o => `- ${o}`), ``] : []));
             else {
                 if (item.prose) md.push(item.prose, ``);
                 if (item.proposedCode) md.push(block("python", item.proposedCode), ``);
                 for (const a of item.fileActions || []) {
-                    md.push(`- \`${a.tool}\` ${a.path}: ${a.ok ? "" : "failed: "}${a.message}`);
+                    md.push(`- \`${a.tool}\` ${a.query ? a.query + " in " : ""}${a.path}${a.newPath ? " → " + a.newPath : ""}: ${a.ok ? "" : "failed: "}${a.message}`);
                     for (const e of a.edits || []) md.push(``, block("text", e.old), ``, `replaced by`, ``, block("text", e.new));
                 }
                 if ((item.fileActions || []).length) md.push(``);
@@ -2136,6 +2496,8 @@ function validateSession(raw) {
                 s.notes = strArr(it.notes);
                 s.netAttempts = strArr(it.netAttempts);
                 s.skippedCalls = strArr(it.skippedCalls);
+                const options = cleanAskOptions(it.options);
+                if (options.length) s.options = options;
                 s.blockCount = num(it.blockCount, 0);
                 s.changes = it.changes && typeof it.changes === "object"
                     ? { added: fileList(it.changes.added), modified: fileList(it.changes.modified, true), deleted: fileList(it.changes.deleted, true) }
@@ -2152,6 +2514,8 @@ function validateSession(raw) {
                         if (Number.isInteger(a.startLine)) r.startLine = a.startLine;
                         if (Number.isInteger(a.endLine)) r.endLine = a.endLine;
                         if (Array.isArray(a.edits)) r.edits = a.edits.filter(e => e && typeof e === "object").map(e => ({ old: str(e.old), new: str(e.new) }));
+                        if (typeof a.newPath === "string" && a.newPath) r.newPath = a.newPath;
+                        if (typeof a.query === "string" && a.query) r.query = a.query;
                         return r;
                     });
                 }
@@ -3574,6 +3938,7 @@ async function agentTurn() {
     if (parsed.kind === "ask") {
         debugLog("tool", "ask_user", parsed.question);
         step.question = parsed.question;
+        step.options = parsed.options || [];
         step.prose = parsed.prose;
         step.phase = "done";
         step.endedAt = nowIso();
@@ -3829,7 +4194,7 @@ async function executeFileStep(step, idx, actions, notes) {
     const applied = applyFileActions(actions, ws);
     for (const r of applied.results) {
         const edits = r.edits ? ` · ${r.edits.length} edit${r.edits.length === 1 ? "" : "s"}` : "";
-        debugLog(r.ok ? "tool" : "error", `${r.tool} ${r.path}${edits} → ${r.ok ? "ok" : "failed"}${r.message ? ": " + r.message : ""}`,
+        debugLog(r.ok ? "tool" : "error", `${fileActionLabel(r)}${edits} → ${r.ok ? "ok" : "failed"}${r.message ? ": " + r.message : ""}`,
             r.edits ? clipForDebug(r.edits.map((e, i) => `--- edit ${i + 1}: old\n${e.old}\n+++ new\n${e.new}`).join("\n\n"), 4000)
                 : r.tool === "write_file" && applied.writes.has(r.path) ? clipForDebug(applied.writes.get(r.path), 4000)
                 : r.output ? clipForDebug(r.output, 4000) : "");
@@ -3838,31 +4203,36 @@ async function executeFileStep(step, idx, actions, notes) {
         const a = { tool: r.tool, path: r.path, ok: r.ok, message: r.message };
         if (r.startLine) { a.startLine = r.startLine; a.endLine = r.endLine; }
         if (r.edits) a.edits = r.edits;
+        if (r.newPath) a.newPath = r.newPath;
+        if (r.query) a.query = r.query;
         return a;
     });
     step.output = formatFileResults(applied.results, applied.failed);
     step.status = applied.results.every(r => r.ok) ? "ok" : "error";
     step.notes = [...notes];
     let effect = null;
-    if (applied.writes.size) {
+    const origins = {};
+    for (const [p, f] of WS.files) origins[p] = f.origin;
+    if (applied.writes.size || applied.deletes.length) {
         const enc = new TextEncoder();
         const listing = {}, files = {};
         for (const [p, f] of WS.files) listing[p] = f.hash;
-        for (const [p, text] of applied.writes) {
-            files[p] = enc.encode(text);
+        for (const p of applied.deletes) delete listing[p];
+        for (const [p, v] of applied.writes) {
+            files[p] = typeof v === "string" ? enc.encode(v) : v;   // bytes: a moved file
             listing[p] = await sha256Hex(files[p]);
         }
         effect = await collectEffect({ listing, files });
         effect.gen = -1;   // not in the worker yet: commitEffect mustn't mark it in sync
-        if (!effect.diff.added.length && !effect.diff.modified.length) effect = null;
+        if (!effect.diff.added.length && !effect.diff.modified.length && !effect.diff.deleted.length) effect = null;
     }
     if (effect) {
         step.changes = effect.changes;
         step._held = effect.hashes;
-        const origins = {};
-        for (const [p, f] of WS.files) origins[p] = f.origin;
-        step.risk = classifyEffect(effect.diff, origins, { bytesWritten: effect.bytesWritten, overLimit: effect.overLimit });
-    } else if (applied.writes.size || actions.some(a => a.tool !== "read_file")) {
+        // A moved file's bytes aren't new writing (a folder of large files moves freely).
+        const moved = applied.moves.reduce((n, [, to]) => n + (applied.writes.get(to) instanceof Uint8Array ? applied.writes.get(to).length : 0), 0);
+        step.risk = classifyEffect(effect.diff, origins, { bytesWritten: effect.bytesWritten - moved, overLimit: effect.overLimit, moves: applied.moves });
+    } else if (applied.writes.size || actions.some(a => !READONLY_FILE_TOOLS.includes(a.tool))) {
         step.changes = { added: [], modified: [], deleted: [] };
     }
 
@@ -3883,7 +4253,25 @@ async function executeFileStep(step, idx, actions, notes) {
         if (effect) {
             const prevVersion = WS.version;
             commitEffect(effect);
+            // A moved file stays the user's, so overwriting it later still asks.
+            for (const [from, to] of applied.moves) {
+                const f = WS.files.get(to);
+                if (f && origins[from]) f.origin = origins[from];
+            }
             await pushEffectToWorker(effect, prevVersion);
+            // Python files written or edited here are compiled (not run), so a syntax
+            // error comes back in this step instead of the next one.
+            const sources = {};
+            for (const c of [...effect.changes.added, ...effect.changes.modified]) {
+                const v = applied.writes.get(c.path);
+                if (/\.pyw?$/i.test(c.path) && typeof v === "string") sources[c.path] = v;
+            }
+            const errors = await checkPythonSyntax(sources);
+            for (const [p, err] of Object.entries(errors)) {
+                if (!err) continue;
+                step.notes.push(syntaxErrorNote(p, err));
+                debugLog("error", `syntax check: ${p} line ${err.line}: ${err.error}`);
+            }
         }
         if (effect || hold) {
             step.decision = hold ? "approved" : "auto";
@@ -3894,7 +4282,7 @@ async function executeFileStep(step, idx, actions, notes) {
             const texts = fileCallResults(applied.results, applied.failed);
             const last = actions.length - 1;
             perCall = new Map(actions.map((a, i) => [a.id, buildObservation({
-                step: step.n, status: applied.results[i].ok && !(applied.failed && a.tool !== "read_file") ? "ok" : "error", output: texts[i], truncate: false,
+                step: step.n, status: applied.results[i].ok && !(applied.failed && !READONLY_FILE_TOOLS.includes(a.tool)) ? "ok" : "error", output: texts[i], truncate: false,
                 ...(i === last ? { changes: step.changes, notes: step.notes } : {}),
             })]));
         }
@@ -3905,8 +4293,24 @@ async function executeFileStep(step, idx, actions, notes) {
     step.rejectReason = decision.reason || "";
     step.status = "rejected";
     WS.lastChanged = new Set();
-    const nothing = actions.some(a => a.tool === "read_file") ? "Nothing was applied and you don't get the read results; files are unchanged." : "Nothing was applied; files are unchanged.";
+    const nothing = actions.some(a => READONLY_FILE_TOOLS.includes(a.tool)) ? "Nothing was applied and you don't get the read or search results; files are unchanged." : "Nothing was applied; files are unchanged.";
     return { observation: buildObservation({ step: step.n, status: "rejected", reason: decision.reason, notes: [...notes, nothing] }), stop: !!decision.stop };
+}
+
+// Compile Python sources in the worker without running them (DESIGN §5.1). sources:
+// { path: text }. Returns { path: null | { line, col, error, text } }; {} when the
+// interpreter isn't available, since a syntax check must never fail a step.
+async function checkPythonSyntax(sources) {
+    const paths = Object.keys(sources || {});
+    if (!paths.length) return {};
+    try {
+        await ensureInterpreter();
+        if (PY.state !== "idle") return {};
+        return validateSyntaxResult(await workerCall("check", { sources }, 15000), paths);
+    } catch (e) {
+        debugLog("error", "syntax check skipped: " + (e.message || e));
+        return {};
+    }
 }
 
 // After a committed file step, hand the new bytes to the worker if it held exactly the
@@ -3918,6 +4322,7 @@ async function pushEffectToWorker(effect, prevVersion) {
     const files = {};
     for (const [p, hash] of effect.pending) files[p] = WS.blobs.get(hash);
     try {
+        if (effect.diff.deleted.length) await workerCall("remove", { paths: effect.diff.deleted }, 30000);
         await workerCall("write", { files }, 30000);
         if (gen === PY.gen && WS.version === version) PY.syncedVersion = version;
     } catch (e) { /* the next python step re-seeds */ }
@@ -4102,8 +4507,8 @@ function renderThink(item, card, streaming) {
     return d;
 }
 
-const FILE_ACTION_ICONS = { read_file: "📄", write_file: "✍️", edit_file: "✏️" };
-const FILE_ACTION_VERBS = { read_file: "read", write_file: "write", edit_file: "edit" };
+const FILE_ACTION_ICONS = { read_file: "📄", search_files: "🔎", write_file: "✍️", edit_file: "✏️", delete_file: "🗑️", move_file: "🚚" };
+const FILE_ACTION_VERBS = { read_file: "read", search_files: "search", write_file: "write", edit_file: "edit", delete_file: "delete", move_file: "move" };
 
 // One row per file action; edits expand to their old/new text (as text, never HTML).
 function renderFileActions(actions) {
@@ -4112,7 +4517,9 @@ function renderFileActions(actions) {
         const li = el("li", "file-action" + (a.ok ? "" : " is-error"));
         li.appendChild(el("span", "file-action-icon", a.ok ? FILE_ACTION_ICONS[a.tool] || "•" : "❌"));
         li.appendChild(el("span", "file-action-verb", FILE_ACTION_VERBS[a.tool] || a.tool));
+        if (a.query) li.appendChild(el("code", "file-action-query", a.query));
         li.appendChild(el("code", "file-action-path", a.path || "?"));
+        if (a.newPath) { li.appendChild(el("span", "file-action-arrow", "→")); li.appendChild(el("code", "file-action-path", a.newPath)); }
         li.appendChild(el("span", "file-action-msg", a.message));
         if ((a.edits || []).length) {
             const d = el("details", "file-edits");
@@ -4296,7 +4703,19 @@ function buildStepCard(item, idx, old) {
     if (item.kind === "ask") {
         if (item.prose) card.appendChild(renderMarkdown(item.prose));
         card.appendChild(renderMarkdown("**" + (item.question || "") + "**"));
-        if (S.status === "awaiting-user" && idx === lastStepIndex()) card.appendChild(el("p", "hint", "Answer in the box below."));
+        const waiting = S.status === "awaiting-user" && idx === lastStepIndex();
+        if ((item.options || []).length) {
+            // One click answers with the option's text; it stays text, never HTML.
+            const row = el("div", "ask-options");
+            item.options.forEach((o, i) => {
+                const b = button(o, "answer-option", idx, "ask-option");
+                b.dataset.option = String(i);
+                b.disabled = !waiting;
+                row.appendChild(b);
+            });
+            card.appendChild(row);
+        }
+        if (waiting) card.appendChild(el("p", "hint", (item.options || []).length ? "Pick an answer, or write your own in the box below." : "Answer in the box below."));
         return finishCard(card, item, idx);
     }
     if (item.prose) card.appendChild(renderMarkdown(item.prose));
@@ -5318,6 +5737,14 @@ function handleTimelineClick(e) {
         return;
     }
     if (action === "send-now") { sendNotesNow(); return; }
+    if (action === "answer-option") {
+        const opt = item && (item.options || [])[Number(b.dataset.option)];
+        if (opt && S.status === "awaiting-user" && idx === lastStepIndex() && !RUN.active) {
+            submitUserText(opt);
+            renderTimelineItem(idx);
+        }
+        return;
+    }
     if (!RUN.decision || RUN.decision.idx !== idx) return;
     if (action === "run") resolveDecision({ action: "run", code: code !== null ? code : item.proposedCode });
     else if (action === "approve") resolveDecision({ action: "approve" });

@@ -1,7 +1,7 @@
-# Decisions to review (Phase 1 MVP build, Phases 2a, 2b, 3 and 3.5)
+# Decisions to review (Phase 1 MVP build, Phases 2a, 2b, 3, 3.5 and 3.6)
 
 Open decisions from the MVP (2026-10-03), Phases 2a and 2b (2026-10-05), Phase 3
-(2026-10-05) and Phase 3.5 (2026-10-06), waiting for the owner's call. Each entry says what was decided, why, and
+(2026-10-05), Phase 3.5 and Phase 3.6 (2026-10-06), waiting for the owner's call. Each entry says what was decided, why, and
 what the alternative is. When you confirm or reverse one, delete it
 here; if you reverse it, update DESIGN.md too. The ⭐ entries are the ones most worth a
 look.
@@ -331,6 +331,50 @@ made building it (DESIGN §8, "bundled pure-Python libraries").
   itself (unmodified, but about 1 MB inlined instead of 0.17 MB, mostly docs and tests), or a
   piwheels wheel (a third-party host). The unbuilt source can't load it, since there is
   nothing on PyPI to fetch, and says to use `dist/`.
+
+## Phase 3.6 (more file tools), decided while building it
+
+The pick (search, syntax check, delete/move, ask options) was the owner's; these are
+the choices made building it (DESIGN §5.1, §2.3).
+
+- ⭐ **The syntax check reports, it doesn't refuse.** A `.py` that doesn't compile is
+  saved as written and the step gets a note. SWE-agent rejects such an edit instead;
+  here a module written in two steps would be refused halfway. Only file actions are
+  checked: a file written from Python reports its error when it runs. It boots the
+  interpreter if a session has had no python step yet (about a second, once).
+- ⭐ **`move_file` never overwrites.** Moving onto an existing file fails with advice to
+  `delete_file` it first in the same reply (unlike `os.replace`), so replacing a file is
+  always an explicit, separately gated delete. Alternative: an `overwrite` flag.
+- ⭐ **A moved user file stays a user file.** Its origin goes with it, so a later
+  overwrite still asks. A rename from Python still loses it (it shows as a delete plus a
+  new file), so the two paths differ. Alternative: track renames by content hash for
+  Python steps too.
+- **`search_files` uses JavaScript regular expressions**, not Python's `re`. They agree
+  on everyday patterns. Where they don't, `(?P<name>…)` is invalid in JavaScript, and an
+  invalid pattern is searched as plain text, which the result says, rather than failing.
+  A leading `(?i)` is understood. Alternative: run the search in the worker with `re`
+  (exact semantics, but a worker round trip and a boot).
+- ⭐ **Runaway patterns are refused, not run in a killable worker.** The search runs on
+  the main thread, where catastrophic backtracking would hang the tab for good.
+  `hasNestedQuantifier` refuses the classic shape (a repeated group that repeats inside),
+  and a 3 s budget stops slow searches. It is a heuristic: overlapping alternations
+  such as `(a|a)*` aren't caught. Alternative: a throwaway Blob worker per search,
+  terminated on a timeout (exact, but the search then needs a copy of the workspace's
+  text files).
+- **`search_files` is never held in risk-based mode, but waits in approve-each**, like
+  `read_file`: what it returns goes to the model.
+- **`delete_file` takes folders**, recursively, like `rm -r`; risk-based gating still
+  asks for each of your files in it.
+- **The worker's `remove` also drops the folders a delete leaves empty**, so the
+  interpreter and the workspace agree (the workspace has no empty folders). A folder an
+  agent created with `os.makedirs` and emptied with `delete_file` is gone too.
+- **Code-as-action options are the `- ` / `* ` / `1. ` lines that end an `ask:`**, 2 to 6
+  of them. A question that happens to end in such a list gets buttons it didn't mean to;
+  harmless, since the user can still type an answer. More than 6 stay plain text.
+- **Options of an imported session are shown, but disabled**: the run is paused, and an
+  answer goes through the composer.
+- **The quick selection is unchanged** (5 tasks). The two new tasks are in the full
+  suite only.
 
 ## Not covered by automated tests
 

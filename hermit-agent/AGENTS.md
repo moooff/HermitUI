@@ -9,11 +9,12 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 
 ## Status
 Phase 1 (MVP), Phase 2a (reliability), Phase 2b (rich output), Phase 3 (native tool
-calls) and Phase 3.5 (bundled pure-Python libraries) are built: `src/` →
+calls), Phase 3.5 (bundled pure-Python libraries) and Phase 3.6 (more file tools) are
+built: `src/` →
 `build.py` → `dist/hermit-agent-standalone.html`. The source of truth is
 [DESIGN.md](DESIGN.md), and the current phase is in [ROADMAP.md](ROADMAP.md). If an
 implementation needs to deviate from the design, update DESIGN.md in the same commit.
-Open decisions waiting for review (the MVP build, Phases 2a, 2b, 3 and 3.5) are listed in
+Open decisions waiting for review (the MVP build, Phases 2a, 2b, 3, 3.5 and 3.6) are listed in
 [REVIEW_NOTES.md](REVIEW_NOTES.md).
 
 ## Build & test
@@ -64,10 +65,12 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **Worker messages are untrusted.** Agent code can reach the worker's JS globals.
   The main thread validates every worker message and never evaluates anything it
   receives (DESIGN.md §4.1).
-- **A minor version per phase.** When a phase meets its exit criterion, raise the
-  minor version (`APP_VERSION` in `src/script.js`, the header badge in `src/index.html`,
-  the status line in `README.md`) in the commit that completes it. v0.1.0 was Phase 1,
-  v0.2.0 Phase 3 (2a and 2b had no bump of their own), v0.3.0 Phase 3.5.
+- **A minor version per phase, a patch version per sub-phase.** When a phase meets its
+  exit criterion, raise the version (`APP_VERSION` in `src/script.js`, the header badge
+  in `src/index.html`, the status line in `README.md`) in the commit that completes it:
+  the minor version for a phase (3.5 counts as one), the patch version for a sub-phase
+  numbered below it (3.6 → v0.3.1). v0.1.0 was Phase 1, v0.2.0 Phase 3 (2a and 2b had no
+  bump of their own), v0.3.0 Phase 3.5, v0.3.1 Phase 3.6.
 - **Never send the API key to the worker or into an export.**
 - **Never auto-execute imported sessions.** Import restores in a paused state (DESIGN
   §3.3).

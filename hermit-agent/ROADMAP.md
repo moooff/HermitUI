@@ -350,6 +350,105 @@ and the CSP, DESIGN §10).
 
 ---
 
+## Phase 3.6 — More file tools
+
+Picked by the owner on 2026-10-06 from a comparison with other agent harnesses (Claude
+Code, Codex CLI, Gemini CLI, Cline, OpenHands, SWE-agent, smolagents, Aider). Nearly all
+of them ship a read-only search, and most a delete or move of their own; hermit-agent
+had only Python for these. A native tool is gated before it applies (its effect is known
+in advance), needs no worker round trip, and has a fixed output shape, and small models
+(Phase 4) do better with a focused tool than with `os.walk` loops. Every tool exists in
+both protocols, so each one costs a schema, a tag, its parser, tests and prompt text.
+
+- [x] **`search_files`** (DESIGN §5.1): grep and glob in one read-only file action,
+      `path:line: text` capped at 100 matches, a file listing without a pattern. Never
+      gated.
+- [x] **Syntax check on write/edit** (DESIGN §5.1): a `.py` file written or edited by a
+      file action is compiled in the worker after the commit; a syntax error comes back
+      as a note on that step. Reported, not refused.
+- [x] **`delete_file` / `move_file`** (DESIGN §5.1, §2.3): files and folders, binary
+      included, gated before they apply. A moved user file is named as a move and keeps
+      its origin.
+- [x] **`ask_user` with options** (DESIGN §5.1, §5.6): up to 6 choices, shown as
+      buttons; `- ` lines after an `ask:` in code-as-action.
+- [x] Tests: unit (`tests/filetools.test.mjs`), e2e (`filetools`, `native_filetools`),
+      two success-measurement tasks (a rename across a project, tidying up your files).
+
+**Exit criteria** (proposed with the build):
+- Pure logic covered by unit tests; each item covered by an e2e scenario against the
+  mock, green in Chromium and Playwright's Firefox; the existing suites stay green.
+- The success measurement grows by two tasks (*rename across a project*, *tidy up your
+  files*; both change your files, so both must be held), and the 27-task suite passes
+  **≥ 90 %** over 3 runs against a real model, in both protocols. Which file tools the
+  agent used is recorded (`tools_used`), not required.
+
+**Result (2026-10-06): met.** v0.3.1.
+- Unit tests (8 files, `tests/filetools.test.mjs` new) and `tests/e2e_agent.py` (624/624
+  checks in Chromium and Playwright's Firefox, with the two new scenarios) are green.
+- **Success measurement**, Qwen3.8-27B (IQ4_XS, llama.cpp), reasoning effort Low,
+  risk-based, 27 tasks × 3 runs, the built file frozen for the run:
+  - **Code blocks and tags: 79/81 = 98 %** (21 min). Misses: the known int32 overflow in
+    the calculation task, and a PDF task that ended on a `<run python>` reply (with a
+    space), which counted as the final answer. Such spellings now run nothing and get
+    advice, like `<run_python>` since Phase 2b (DESIGN §5.1). The quick selection on the
+    build with that fix passed 5/5.
+  - **Native tool calls: 79/81 = 98 %** (26 min). Both misses are the model's, in tasks
+    without the new tools: a wrong average in the log analysis, and pandas' `row.item`
+    (a method) used as a column in the Word report.
+  - The two new tasks passed **6/6 in each protocol**, and every run was held for
+    approval with the right reasons ("moves your file jan.csv to data/jan.csv", "deletes
+    your file draft.tmp", "overwrites your file money.py"). Tidying up used `move_file`
+    and `delete_file` in 6 of 6 runs; the rename used `search_files` in 3 of 3 native
+    runs and 1 of 3 text runs (the other two searched with Python). Nothing in the
+    prompt or the tasks asked for the tools.
+
+---
+
+## Phase 3.7 — A plan the user can see (`update_plan`) — *to discuss*
+
+Next after 3.6, by the owner's call; the design is open. The idea, from Codex CLI's
+`update_plan`, Claude Code's TodoWrite and Manus's `todo.md`: the agent keeps a short
+list of steps with a status each, the UI pins it above the timeline, and it is sent
+again after every compaction, so a long task keeps its direction when the details are
+summarised away. For a supervised agent the plan is the part the user most wants to see:
+where it is going, not only what it just did.
+
+Questions for the discussion:
+- Does an `update_plan` call end the step (a file-style action) or ride along with an
+  action in the same reply? Riding along saves a turn, but breaks "one reply = one
+  step".
+- Can the user edit the plan, and does an edit go to the model as guidance?
+- Required for long tasks, encouraged by the prompt, or left to the model?
+- How it survives compaction, rewind, export and import (session format 3?).
+- Whether small models (Phase 4) keep a plan up to date at all, or it goes stale.
+
+---
+
+## Later — more tool ideas (not planned yet)
+
+From the same comparison; none is scheduled.
+- **`view_image`**, only when the endpoint has vision: copy HermitUI's vision detection
+  back in (dropped from `testConnection`), and send the image as an `image_url` part in
+  a follow-up `user` message (tool messages with images aren't portable). The agent
+  could then check its own charts; today it is told only their size.
+- **`insert` at a line and a per-file undo** (OpenHands' `str_replace_editor`): low
+  value while `edit_file` and rewind exist.
+- **Not planned, and why:**
+  - *`web_fetch` / `web_search`*: against the network guard, and CORS blocks most sites
+    from a browser anyway. If it ever comes: main thread only, every URL approved, since
+    a URL can carry workspace data out.
+  - *Shell / background processes*: Pyodide has no subprocesses; `run_python` is the
+    shell.
+  - *Subagents*: context isolation would help small models, but at a large cost in
+    complexity. Revisit after Phase 4.
+  - *A persistent memory tool*: against ephemerality; within a session, `AGENTS.md`
+    and a plan cover it.
+  - *An MCP client*: possible over Streamable HTTP, but it widens the sandbox
+    considerably.
+  - *A `think` tool*: redundant with reasoning models.
+
+---
+
 ## Phase 4 — In-browser models (wllama)
 
 - [ ] Bring over HermitUI's wllama loading (local file / URL into an in-memory Blob,

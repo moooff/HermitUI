@@ -16,7 +16,9 @@ section("1. Tool definitions");
     check("every definition is an OpenAI function with an object schema", defs.every(d => d.type === "function" && d.function.parameters.type === "object" && Array.isArray(d.function.parameters.required)));
     const p = (n) => Object.keys(defs.find(d => d.function.name === n).function.parameters.properties);
     check("file tools take DESIGN §5.6's arguments", p("read_file").join() === "path,start_line,end_line" && p("write_file").join() === "path,content" && p("edit_file").join() === "path,edits");
-    check("run_python(code), ask_user(question), finish(answer)", p("run_python").join() === "code" && p("ask_user").join() === "question" && p("finish").join() === "answer");
+    check("run_python(code), ask_user(question, options), finish(answer)", p("run_python").join() === "code" && p("ask_user").join() === "question,options" && p("finish").join() === "answer");
+    check("search_files(pattern, path, glob, ignore_case), all optional", p("search_files").join() === "pattern,path,glob,ignore_case" && defs.find(d => d.function.name === "search_files").function.parameters.required.length === 0);
+    check("delete_file(path), move_file(path, new_path)", p("delete_file").join() === "path" && p("move_file").join() === "path,new_path");
 }
 
 section("2. Which protocol, and support detection");

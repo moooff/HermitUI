@@ -38,7 +38,7 @@ function jsonBlock(marker, name) {
     return `const ${name} = ${JSON.stringify(JSON.parse(m[1]))};`;
 }
 
-const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES"];
+const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "READONLY_FILE_TOOLS", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES"];
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
     "detectCloudProvider", "isLocalEndpoint", "describeRemoteEndpoint", "chatErrorHint",
@@ -46,7 +46,8 @@ const FUNCS = [
     "buildSystemPrompt", "formatBytes", "buildTaskMessage", "splitReply", "parseReply", "truncateOutput",
     "diffListings", "formatChanges", "classifyEffect", "buildObservation", "appendToLastUserMessage",
     "isSafeRelPath", "normalizeUploadPath", "makeFence", "filenameCommentHint", "missingMentionedFiles",
-    "normalizeActionPath", "parseTagAttrs", "extractFileActions", "decodeTextFile", "countOccurrences", "applyFileActions", "formatFileResults",
+    "normalizeActionPath", "normalizeSearchPath", "globToRegExp", "hasNestedQuantifier", "searchRegExp", "parseTagAttrs", "extractFileActions", "decodeTextFile", "countOccurrences", "applyFileActions",
+    "fileActionLabel", "formatFileResults", "validateSyntaxResult", "syntaxErrorNote",
     "buildStepStats", "cleanStepStats", "formatStepStats",
     "formatFileList", "isContextOverflowError", "messageChars", "estimateTokens", "contextLimit", "compactionDue", "cutByContext", "contextSizeFromModelList", "ollamaNumCtx", "checkpointsToDrop",
     "planCompaction", "taskMessageBase", "buildCompactionRequest", "buildCompactedMessages",
@@ -56,7 +57,7 @@ const FUNCS = [
     "packageImportNames", "importPackageIndex", "normalizePackageName", "bundledImportIndex", "bundledAliases", "planBundledLoad", "packageLoadNote", "packageFailureMessage", "moduleNotFoundHint", "referencedPythonFiles", "rewritePyodideInstallAdvice", "readEntry",
     "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
     "awaitsModel", "copyMessage", "agentToolDefs", "resolveProtocol", "toolSupportFromProps", "toolSupportFromOllamaShow", "findListedModel",
-    "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "parseToolCalls", "toolCallAsText",
+    "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "cleanAskOptions", "splitAskOptions", "parseToolCalls", "toolCallAsText",
     "messageAsText", "toolHistoryAsText", "fileCallResults", "noActionAdvice",
 ];
 

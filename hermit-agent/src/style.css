@@ -499,6 +499,8 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .file-action-verb { font-weight: 600; }
 .file-action-path { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.82rem; word-break: break-all; }
 .file-action-msg { color: var(--text-muted); }
+.file-action-query { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.82rem; word-break: break-all; color: var(--primary); }
+.file-action-arrow { color: var(--text-muted); }
 .file-action.is-error .file-action-msg { color: var(--danger); }
 .file-edits { flex-basis: 100%; }
 .file-edits summary, .file-result summary { cursor: pointer; color: var(--text-muted); font-size: 0.82rem; user-select: none; }
@@ -528,6 +530,10 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 }
 .card-btn.primary:hover, .action-btn.primary:hover, .modal-actions .primary:hover { color: #fff; filter: brightness(1.08); }
 .card-btn.danger { color: var(--danger); }
+.ask-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-option { max-width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; color: var(--text-main); }
+.ask-option:disabled { cursor: default; opacity: 0.6; box-shadow: none; }
+.ask-option:disabled:hover { color: var(--text-main); border-color: var(--border-strong); }
 .card-btn.danger:hover { border-color: var(--danger); color: var(--danger); box-shadow: 0 2px 8px var(--danger-bg); }
 .card-btn.ghost { background: transparent; font-size: 0.78rem; padding: 3px 10px; }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }

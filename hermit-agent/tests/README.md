@@ -106,6 +106,17 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   - `formatFileResults`, `buildObservation` with `truncate: false`, `fileActions` in
     `validateSession` and the transcript.
 
+- **`filetools.test.mjs`** covers Phase 3.6 (DESIGN §5.1): the `search_files`,
+  `delete_file` and `move_file` tags (quoted `>` in a pattern, a trailing `/`, the whole
+  workspace as `.`), `globToRegExp` and `searchRegExp` (the `(?i)` prefix, plain text for
+  an invalid regex), `applyFileActions` for search (listing, matches, the match, file,
+  line, size and read-budget caps, binary files, the reply's earlier writes), delete
+  (files, folders, delete then write) and move (binary bytes and a BOM kept, folders,
+  every refusal, move then edit, delete then move), the native calls and their text form
+  round-tripping, `classifyEffect` for moves, `validateSyntaxResult` and
+  `syntaxErrorNote`, the ask options of both protocols (`cleanAskOptions`,
+  `splitAskOptions`) through import and the transcript, and both system prompts.
+
 ## End-to-end — `e2e_agent.py`
 
 Opens the **built** `dist/hermit-agent-standalone.html` from `file://`, against
@@ -230,6 +241,17 @@ it stall, on cue; see its docstring):
     back to code-as-action without an error card, and switching Settings → Actions to
     text mid-session sends the history with calls written out as code and tags.
 
+18. **More file tools** (Phase 3.6; `filetools`, `native_filetools`): a search reaches the
+    model as `path:line: text`; a `.py` that doesn't compile gets a note in the
+    observation and on the card, and its fix none; deleting the agent's own folder runs
+    on its own and is gone in the interpreter too, folder included; moving your file is
+    held and named as a move, and after approval it stays yours (overwriting it is held
+    again); a rejected delete changes nothing; an `ask:` with options shows buttons, a
+    click is the answer, and they're disabled afterwards; the transcript and export →
+    import keep the new action rows and options (disabled once imported). Natively: a
+    search + move batch gets one result per call, the moved file keeps its origin, the
+    syntax note is in the tool result, and a clicked option is `ask_user`'s result.
+
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters
 because the network guard depends on browser behaviour (the CSP reaching Blob
@@ -259,10 +281,14 @@ categories, python-pptx), Markdown → HTML (headings, list, table, link and cod
 beautifulsoup4) and a QR code (decoded with OpenCV), plus an OpenDocument spreadsheet
 of region totals (read with pandas' ODF engine; odfpy was bundled later). For those,
 whether the agent's code
-used a bundled library is recorded (`library_used`) but doesn't decide the pass. `--runs N` repeats the suite; the result is one pass rate, plus a
+used a bundled library is recorded (`library_used`) but doesn't decide the pass. Phase
+3.6 added two (27 in all): renaming a function across a small project with folders
+(no file may still name it, and the project's tests must pass) and tidying up your files
+(CSVs into `data/`, a PNG into `assets/` byte for byte, the `.tmp` files deleted); which
+file tools the agent used is recorded (`tools_used`), not required. `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks
-the results inside the same interpreter, or against the final answer. The two tasks
+the results inside the same interpreter, or against the final answer. The four tasks
 that change an uploaded file must have been held for it: that is the real-model gating
 check. It takes minutes per task, so launch it detached and watch the log; `--app`
 tests a copy of the build, so rebuilding meanwhile doesn't change what is measured.

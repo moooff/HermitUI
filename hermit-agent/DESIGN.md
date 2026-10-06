@@ -1,6 +1,7 @@
 # HermitUI Agent — Design
 
-Status: **Phase 1 (MVP), Phase 2a (reliability) and Phase 2b (rich output) implemented**
+Status: **Phases 1 (MVP), 2a (reliability), 2b (rich output), 3 (native tool calls),
+3.5 (bundled libraries) and 3.6 (more file tools) implemented**
 in `src/` (see
 [ROADMAP.md](ROADMAP.md)). Where
 the build deviated from the original plan, the section says so; decisions that
@@ -180,13 +181,20 @@ Caveats, stated honestly:
   data from a rejected step. On reject, the interpreter is therefore **restarted**,
   and the model is told its variables are gone (see §4.3).
 
+*Phase 3.6:* deletes and moves made by file actions (§5.1) go through the same table. A
+moved user file is named as a move ("moves your file data.csv to in/data.csv"), not
+as a delete, and **keeps its origin** at the new path, so overwriting it later still
+asks. (A rename done from Python shows as a delete plus a new agent file, as before.) A
+moved file's bytes don't count towards the *M* MB limit: nothing new was written.
+
 **File-action steps (§5.1) are gated *before* they apply.** Their effect is computed on
 the main thread from the canonical workspace, without running anything, so the same
 classification sees the diff while nothing has changed yet. A reject has nothing to roll
 back and the interpreter keeps its variables. In approve-each mode a file step waits too,
 reads included, because a read sends file content to the model. A committed file step is
-pushed to the worker with its `write` op when the worker held exactly the previous
-workspace; otherwise the next python step re-seeds it.
+pushed to the worker with its `remove` and `write` ops when the worker held exactly the
+previous workspace (`remove` also drops the folders a delete leaves empty); otherwise the
+next python step re-seeds it.
 
 ### 2.4 Checkpoints & rewind
 
@@ -403,7 +411,10 @@ The model answers in one of three ways:
 - a final answer with no code block, which ends the task (the user can continue it
   with a follow-up);
 - a question to the user (an `ask:` line), which pauses the loop until the user
-  answers.
+  answers. *Phase 3.6:* choices follow the question as `- ` (or `* `, `1. `) lines, 2 to 6
+  of them; the card shows them as buttons, and one click answers with that text (the
+  user can still type their own). More than 6, or a lone list line, stays plain text.
+  Natively, `ask_user` takes `options`; both are shown as text, never HTML.
 
 Why this is the baseline: it works with *any* chat model and any OpenAI-compatible
 endpoint, needs no tool-calling support, and small models handle it far better than
@@ -423,7 +434,9 @@ Parsing rules:
   A `<tool_call>` runs nothing; the model is told there are no tool calls here.
   *Phase 2b:* so does a guessed tool tag (`<run_python>`, `<bash>`, `<shell>`, …): in the
   2b success measurement Qwen3.8 once answered `<run_python>python process.py</run_python>`,
-  which counted as a final answer and ended the task with nothing run.
+  which counted as a final answer and ended the task with nothing run. *Phase 3.6:* spellings such as
+  `<run python>`, `<run-code>` or `<executepython>` count too; in the 3.6 measurement a
+  `<run python>` reply ended a PDF task with no PDF.
 
 **File actions** *(added after the MVP)*. Writing a file from Python means escaping its
 source inside a string, changing one line means rewriting the file, and printing a file
@@ -464,6 +477,50 @@ replacement
   image, 640×480 px, RGBA, 18 KB"). File-step output skips the §5.2 truncation, because the reads
   are already capped.
 - Gating is in §2.3.
+
+*Added in Phase 3.6:* three more file actions, and a syntax check.
+
+```
+<search_files pattern="def load" path="src" glob="*.py" ignore_case="true"/>
+<delete_file path="tmp/old.csv"/>                  a file, or a folder with everything in it
+<move_file path="draft.md" new_path="docs/final.md"/>
+```
+
+- **`search_files`** is grep and glob in one read-only action. With a `pattern` (a
+  JavaScript regular expression; a leading `(?i)` ignores case, and an invalid one is
+  searched as plain text, which the result says) it returns `path:line: text`, at most
+  100 lines, long lines cut around the match, then how many more matches there were.
+  Without one it lists the files with their sizes, at most 200. `path` narrows it to a
+  folder or a file; `glob` to matching paths: without a `/` it matches the file name in
+  any folder (`*.py`), with one the whole path (`src/**/*.md`); `*`, `**`, `?`, `[…]` and
+  braces work as in a shell. Binary files and files over 10 MB are skipped and counted, so
+  the model knows to use Python for them. It shares the reply's 64,000-character read
+  budget with `read_file`, and sees the reply's earlier writes. It never fails a batch.
+  It runs on the main thread, where a runaway regex can't be stopped (a hung tab can't
+  even be exported), so a pattern that repeats a repeating group (`(a+)+`, `(\w+\s?)*`,
+  the classic catastrophic-backtracking shape) is refused with advice, and a search
+  stops after 3 s and says how far it got.
+  Why a tool when Python can do it: models reach for `grep -rn` out of habit (and there
+  is no shell); a read-only search needs no approval and no worker round trip; and the
+  output has a fixed, capped shape.
+- **`delete_file`** removes a file, or a folder and everything in it. **`move_file`**
+  moves or renames a file or a folder, binary files too, byte for byte. Nothing may exist
+  at `new_path`: a move onto a file is refused with advice to delete it first in the
+  same reply, which works because the batch runs on the overlay. A folder can't move
+  into itself, and a file can't go below a file. Both are writes for the all-or-nothing
+  rule.
+- **A `.py` file written or edited by a file action is compiled after the step is
+  committed** (the worker's `check` op: `compile()` with warnings off, never run). A
+  syntax error comes back as a note on the step: file, line, column, message and the
+  offending line, and that the file *was* saved. It is reported, not refused (as in
+  SWE-agent, but without the rejection): a half-written module the agent goes on to finish
+  is legitimate. The worker's answer is validated like every worker message
+  (`validateSyntaxResult`); no interpreter means no check, never a failed step. Files
+  written from Python aren't checked: running them reports the error anyway.
+- Paths: a trailing `/` is dropped (`tmp/` is the folder `tmp`); `search_files` takes
+  no path, `.` or `/workspace` for the whole workspace. Quoted attribute values may hold
+  `>`, so a pattern such as `->` works in a tag.
+- `read_file` on a folder says to list it with `search_files`.
 
 ### 5.2 Observations
 Observations go back as a `user`-role message (OpenAI-schema compliant) in a fixed
@@ -613,6 +670,10 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
 | `read_file` | `path` (string), `start_line`, `end_line` (integers ≥ 1, optional) |
 | `write_file` | `path`, `content` (strings) |
 | `edit_file` | `path` (string), `edits`: array of `{ old_text, new_text }` |
+| `search_files` *(3.6)* | `pattern`, `path`, `glob` (strings), `ignore_case` (boolean), all optional |
+| `delete_file` *(3.6)* | `path` |
+| `move_file` *(3.6)* | `path`, `new_path` |
+| `ask_user` | `question`; *(3.6)* `options`: up to 6 strings |
 
 *As built (Phase 3):*
 - **Setting:** Settings → *Actions*: **Auto** (default), *Native tool calls*, or *Code blocks
@@ -627,7 +688,7 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
   header badge beside 🏠 local says which one the next request uses: 🔧 native, 📝 text,
   or 🔧 auto until the endpoint has been probed (before the first request, or by Test
   Connection of the saved endpoint).
-- **Request:** the six tools, `parallel_tool_calls: true`, otherwise unchanged. The system
+- **Request:** the six tools (nine since Phase 3.6), `parallel_tool_calls: true`, otherwise unchanged. The system
   prompt keeps the environment section and swaps the response-format section for one that
   describes the tools; `S.protocol` records which one `messages[0]` holds, and it is
   switched (`syncSystemPrompt`) when the next request uses the other protocol.

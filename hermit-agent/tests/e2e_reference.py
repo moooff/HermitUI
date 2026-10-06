@@ -556,6 +556,65 @@ print("CHECK OK")
 ]
 
 
+# Phase 3.6: file tools. A rename across a small project (where search_files fits), and
+# tidying up your files (move_file and delete_file; held, since they are yours). `tools`
+# is informational like `library`: which of these file tools the agent used.
+PROJECT_FILES = {
+    "money.py": 'def parse_amount(text):\n    """"12,50 €" or "12.50" -> 12.5"""\n    return float(str(text).replace("€", "").replace(",", ".").strip())\n',
+    "invoice.py": "from money import parse_amount\n\n\ndef invoice_total(lines):\n    return round(sum(parse_amount(l) for l in lines), 2)\n",
+    "report/summary.py": "import money\n\n\ndef biggest(values):\n    return max(values, key=money.parse_amount)\n",
+    "report/__init__.py": "",
+    "util/strings.py": "def shout(s):\n    return s.upper() + '!'\n",
+    "util/__init__.py": "",
+    "README.md": "# Shop tools\n\nAmounts are parsed by `parse_amount` in money.py.\n",
+    "test_shop.py": "import unittest\nfrom invoice import invoice_total\nfrom report.summary import biggest\nimport money\n\n\nclass T(unittest.TestCase):\n    def test_total(self):\n        self.assertEqual(invoice_total([\"1,50\", \"2.25 €\"]), 3.75)\n\n    def test_biggest(self):\n        self.assertEqual(biggest([\"3\", \"12,5\", \"7\"]), \"12,5\")\n\n    def test_parse(self):\n        self.assertEqual(money.parse_money(\"4,20 €\"), 4.2)\n",
+}
+TIDY_FILES = {
+    "jan.csv": "day,total\n1,10\n", "feb.csv": "day,total\n1,20\n", "notes.md": "# Notes\n",
+    "draft.tmp": "scratch\n", "old.tmp": "older scratch\n", "logo.png": b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4,
+}
+
+TASKS += [
+    {
+        "name": "rename across a project",
+        "files": PROJECT_FILES,
+        "prompt": "Rename the function parse_amount to parse_money everywhere in this project: its definition and every place that uses it, in code and docs. Then run test_shop.py and tell me which files you changed.",
+        "needs_approval": True,
+        "tools": ["search_files"],
+        "check": """
+import os, sys, unittest
+hits = []
+for root, _, files in os.walk("/workspace"):
+    for f in files:
+        p = os.path.join(root, f)
+        if p.endswith((".py", ".md")) and "parse_amount" in open(p, encoding="utf-8").read():
+            hits.append(p)
+assert not hits, ("parse_amount still in", hits)
+for m in [m for m in sys.modules if m in ("money", "invoice", "test_shop") or m.startswith("report")]:
+    sys.modules.pop(m)
+r = unittest.TextTestRunner(verbosity=0).run(unittest.defaultTestLoader.loadTestsFromName("test_shop"))
+assert r.wasSuccessful() and r.testsRun == 3, (r.failures, r.errors)
+print("CHECK OK")
+""",
+    },
+    {
+        "name": "tidy up your files",
+        "files": TIDY_FILES,
+        "prompt": "Tidy up the workspace: move every .csv file into a folder data/ and the .png into assets/, and delete the .tmp files. Don't change the content of any file. Tell me what you did.",
+        "needs_approval": True,
+        "tools": ["move_file", "delete_file"],
+        "check": """
+import hashlib, os
+files = sorted(os.path.relpath(os.path.join(r, f), "/workspace") for r, _, fs in os.walk("/workspace") for f in fs)
+assert files == ["assets/logo.png", "data/feb.csv", "data/jan.csv", "notes.md"], files
+assert open("/workspace/data/jan.csv").read() == "day,total\\n1,10\\n" and open("/workspace/data/feb.csv").read() == "day,total\\n1,20\\n"
+assert hashlib.sha256(open("/workspace/assets/logo.png", "rb").read()).hexdigest() == LOGO_HASH, "logo.png changed"
+print("CHECK OK")
+""",
+    },
+]
+
+
 # After a small change, these five instead of the whole suite (AGENTS.md): fast (under
 # ~20 s each against Qwen3.8 on :8080, 2026-10-06), not flaky, and each on a different
 # path: messy data through code, file actions with a held edit of your file, a binary
@@ -602,7 +661,7 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
             approvals.append(reasons)
             page.locator(".step-card.phase-pending-approval [data-action=approve]").click()
         elif st == "awaiting-user":
-            q = ev(page, "() => S.timeline[S.timeline.length - 1].question")
+            q = ev(page, "() => { const t = S.timeline[S.timeline.length - 1]; return t.question + ((t.options || []).length ? '  [options: ' + t.options.join(' | ') + ']' : ''); }")
             print(f"    ❓ {q!r} → answering")
             page.fill("#taskInput", "Use your best judgement.")
             page.click("#sendBtn")
@@ -629,12 +688,15 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
         if want.replace(",", "").replace(" ", "") not in flat:
             problems.append(f"answer lacks {want!r}")
     if "check" in task:
-        code = task["check"].replace("TEST_HASH", repr(__import__("hashlib").sha256(TEST_STATS_PY.encode()).hexdigest()))
+        code = task["check"].replace("TEST_HASH", repr(__import__("hashlib").sha256(TEST_STATS_PY.encode()).hexdigest())).replace("LOGO_HASH", repr(__import__("hashlib").sha256(TIDY_FILES["logo.png"]).hexdigest()))
         out = ev(page, "async (c) => { const r = await runInWorker(c, { timeoutMs: 120000 }); return r.output; }", code)
         if "CHECK OK" not in out:
             problems.append("check: " + out[-500:])
     if task.get("library"):
         base["library_used"] = any(w in agent_code(page) for w in task["library"])
+    if task.get("tools"):
+        used = ev(page, "() => [...new Set(S.timeline.filter(t => t.type === 'step').flatMap(t => (t.fileActions || []).map(a => a.tool)))]")
+        base["tools_used"] = [t for t in task["tools"] if t in used]
     if task.get("code_never"):
         hits = [w for w in task["code_never"] if w in agent_code(page)]
         if hits:
@@ -694,6 +756,8 @@ def main():
                 r = run_task(page, task, args.deadline, args.tool_mode)
                 r["run"] = run
                 lib = "" if "library_used" not in r else (" · library used" if r["library_used"] else " · built WITHOUT the library")
+                if "tools_used" in r:
+                    lib += f" · file tools used: {', '.join(r['tools_used']) or 'none of ' + ', '.join(task['tools'])}"
                 print(f"  {'✅' if r['passed'] else '❌'} {task['name']}: {r['steps']} steps, {r['secs']} s{lib} {r.get('detail', '')}")
                 results.append(r)
                 out.write_text(json.dumps({"base_url": args.base_url, "model": args.model, "effort": args.effort, "tool_mode": args.tool_mode, "results": results}, indent=1))

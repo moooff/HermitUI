@@ -2,7 +2,7 @@
 
 *A supervised, sandboxed, ephemeral agent that runs entirely in your browser.*
 
-> **Status: v0.3.0** (Phase 3.5, bundled libraries). One self-contained HTML file,
+> **Status: v0.3.1** (Phase 3.6, more file tools). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (≈ 11 MB,
 > Python included). It is developed here, separately from the main app in
 > [`../src/`](../src/), so it can move fast without destabilising HermitUI.
@@ -58,9 +58,12 @@ the bundled libraries from jsDelivr and PyPI; `dist/` has all of these inlined.
 You give the agent a task, for example "clean up these CSVs and chart the monthly
 totals", "write and test a parser for this log format" or "check this calculation
 numerically". The agent works through it step by step: it writes Python, runs it
-against a virtual file system, reads the output and decides the next step. Text
-files it can also read, write and edit directly, with `read_file`, `write_file`
-and `edit_file` actions that need no Python and are gated before they apply.
+against a virtual file system, reads the output and decides the next step. Files
+it can also search, read, write, edit, delete and move directly, with file actions
+(`search_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`)
+that need no Python and are gated before they apply; a Python file it writes that
+doesn't compile is reported at once. When it needs to ask you something, it can offer
+answers to pick with one click.
 
 The agent acts through **native tool calls** (OpenAI `tools`) when the endpoint says it
 supports them (llama.cpp with `--jinja`, Ollama models with tool support), and through

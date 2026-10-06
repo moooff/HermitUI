@@ -43,6 +43,10 @@ section("1. parseReply — what runs and what doesn't (DESIGN §5.1)");
     const rp = X.parseReply("Now let me run it.\n\n<run_python>\npython process.py\n</run_python>", "stop");
     check("a guessed <run_python> tag runs nothing and isn't a final answer (seen with Qwen3.8)", rp.kind === "toolcall" && rp.tag === "run_python", JSON.stringify(rp));
     check("…nor <bash>", X.parseReply("<bash>ls</bash>", "stop").tag === "bash");
+    for (const tag of ["run python", "run-code", "executepython"]) {
+        const v = X.parseReply(`Running it.\n<${tag}>\nexec(open("reorder.py").read())\n</run>`, "stop");
+        check(`…and so does the variant <${tag}> (Qwen3.8 wrote <run python> in the Phase 3.6 measurement)`, v.kind === "toolcall" && v.tag === tag, JSON.stringify(v));
+    }
     check("…but prose that mentions run_python is still an answer", X.parseReply("Done. I didn't need <run_python> at all.", "stop").kind === "final");
 }
 

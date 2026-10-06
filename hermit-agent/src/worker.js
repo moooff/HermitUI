@@ -257,6 +257,20 @@ def hermit_install_wheel(path):
                 fh.write(src.read())
     importlib.invalidate_caches()
 
+# ---- Syntax check (DESIGN §5.1): a .py file written by a file action is compiled, never
+# run, so the agent hears about a syntax error in the same step.
+def hermit_check_syntax(src, path):
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            compile(src, path, "exec", dont_inherit=True)
+        return "null"
+    except SyntaxError as e:
+        return json.dumps({"line": e.lineno or 0, "col": e.offset or 0, "error": type(e).__name__ + ": " + str(e.msg), "text": (e.text or "").rstrip()[:200]})
+    except (ValueError, TypeError) as e:
+        return json.dumps({"line": 0, "col": 0, "error": type(e).__name__ + ": " + str(e), "text": ""})
+
 def hermit_clear_workspace():
     import shutil
     for entry in os.listdir("/workspace"):
@@ -364,9 +378,23 @@ def hermit_clear_workspace():
     function remove({ paths }) {
         for (const p of paths) {
             try { py.FS.unlink("/workspace/" + p); } catch (e) { /* already gone */ }
+            // Folders the file leaves empty go too, as in the main thread's workspace.
+            const segs = String(p).split("/");
+            for (let i = segs.length - 1; i > 0; i--) {
+                try { py.FS.rmdir("/workspace/" + segs.slice(0, i).join("/")); } catch (e) { break; }
+            }
         }
         baseline = listing();
         return { count: paths.length };
+    }
+
+    // Compile (never run) each source; see hermit_check_syntax.
+    function check({ sources }) {
+        const results = {};
+        for (const [path, src] of Object.entries(sources || {})) {
+            results[path] = JSON.parse(harness.get("hermit_check_syntax")(String(src), String(path)));
+        }
+        return { results };
     }
 
     // What the code imports (top-level names) and which packages are loaded already, so
@@ -477,7 +505,7 @@ def hermit_clear_workspace():
         };
     }
 
-    const OPS = { boot, seed, write, remove, imports, load, run };
+    const OPS = { boot, seed, write, remove, imports, load, run, check };
 
     self.onmessage = async (e) => {
         const { id, op } = e.data || {};
