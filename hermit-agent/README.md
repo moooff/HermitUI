@@ -35,6 +35,24 @@ blocked on a **best-effort** basis: 17 known paths are tested and closed (DESIGN
 §10), but it is a denylist, not a guarantee. Don't put secrets in the workspace that
 you couldn't afford to leak.
 
+## What leaves your machine
+
+There is no telemetry: no analytics, crash reporting or usage pings, and opening the
+standalone file makes no network request at all. Using it sends exactly this:
+
+- **To the API Base URL you configured:** the conversation, including what the agent
+  reads from your files and what its code prints, plus the API key. Before the first
+  request (and again when the URL or model changes) the app also asks that server what
+  it supports (`/models`, `/props`, `/api/show`), as does **Test Connection**.
+- **To jsDelivr (`cdn.jsdelivr.net/pyodide/…`):** only when agent code imports a
+  Pyodide package that isn't built into the file, such as numpy or pandas. This is
+  a plain download: jsDelivr sees your IP address and the package name, never the task
+  or your files.
+
+The unbuilt `src/index.html` additionally loads its libraries and the Inter font from
+jsDelivr, cdnjs and Google Fonts on every page load, and fetches the Python core and
+the bundled libraries from jsDelivr and PyPI; `dist/` has all of these inlined.
+
 ## The idea
 
 You give the agent a task, for example "clean up these CSVs and chart the monthly
