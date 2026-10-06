@@ -147,6 +147,56 @@ section("5. applyFileActions — edit");
     check("binary file → error", /binary/.test(run(`<edit_file path="bin.dat">\n<old>a</old><new>b</new>\n</edit_file>`, files).results[0].message));
 }
 
+section("5b. edit — relaxed matching, closest text on a miss");
+{
+    const edit = (path, pairs) => `<edit_file path="${path}">\n` + pairs.map(([o, n]) => `<old>\n${o}\n</old>\n<new>\n${n}\n</new>`).join("\n") + "\n</edit_file>";
+    const files = {
+        "curly.py": "print(“hi”)\nx = 1\n",
+        "plain.py": "s = \"it's\"\nx = 1\n",
+        "q.py": "print(\"hi\")\nx = 1\n",
+        "esc.js": "log(\"say \\\"hi\\\"\");\nx = 1;\n",
+        "trail.py": "a = 1   \nb = 2\n",
+        "two.py": "a(“q”)\nb(“q”)\n",
+        "mix.py": "a(\"q\")\nb(“q”)\n",
+        "m.py": "def f():\n    return 1\n\ndef g():\n    return 1\n",
+        "tag.py": "x = '<old>'\ny = 2\n",
+        "nbsp.md": "Price:\u00A010\u2009€ \u2013 ok  \nend\n",
+    };
+    let r = run(edit("curly.py", [["print(\"hi\")", "print(\"bye\")"]]), files);
+    check("ASCII <old> matches curly quotes in the file", r.results[0].ok && r.writes.get("curly.py") === "print(\"bye\")\nx = 1\n", r.results[0].message);
+    check("…and the result says how it matched", /matched only after reading curly quotes/.test(r.results[0].message) && /copy <old> exactly/.test(r.results[0].message), r.results[0].message);
+    r = run(edit("plain.py", [["s = \"it’s\"", "s = \"it’s ok\""]]), files);
+    check("curly quotes <old> made up aren't carried into <new>", r.writes.get("plain.py") === "s = \"it's ok\"\nx = 1\n", JSON.stringify(r.writes.get("plain.py")));
+    r = run(edit("q.py", [["print(\\\"hi\\\")", "print(\\\"bye\\\")"]]), files);
+    check("over-escaped <old> matches, <new> is unescaped too", r.results[0].ok && r.writes.get("q.py") === "print(\"bye\")\nx = 1\n" && /backslashes/.test(r.results[0].message), r.results[0].message);
+    r = run(edit("trail.py", [["a = 1\nb = 2", "a = 3\nb = 2"]]), files);
+    check("trailing spaces in the file are ignored", r.writes.get("trail.py") === "a = 3\nb = 2\n" && /trailing spaces/.test(r.results[0].message), JSON.stringify(r.writes.get("trail.py")));
+    r = run(edit("two.py", [["(\"q\")", "(\"z\")"]]), files);
+    check("two relaxed matches → error, nothing written", r.failed && r.writes.size === 0 && /matches 2 times when reading curly quotes/.test(r.results[0].message), r.results[0].message);
+    r = run(edit("nbsp.md", [["Price: 10 € - ok\nend", "Price: 12 € - ok\nend"]]), files);
+    check("Unicode spaces and dashes read as plain ones, offsets kept", r.writes.get("nbsp.md") === "Price: 12 € - ok\nend\n", JSON.stringify(r.writes.get("nbsp.md")));
+    r = run(edit("mix.py", [["a(\"q\")", "a(\"z\")"]]), files);
+    check("an exact match wins, with the plain message", r.writes.get("mix.py") === "a(\"z\")\nb(“q”)\n" && r.results[0].message === "edited (1 change)", r.results[0].message);
+
+    r = run(edit("m.py", [["def f():\n    return 7", "def f():\n    return 8"]]), files);
+    check("a miss names the closest lines", r.failed && /not found in m\.py\. The closest text is lines 1–2/.test(r.results[0].message), r.results[0].message);
+    check("…and shows them like read_file", r.results[0].excerpt === "1\tdef f():\n2\t    return 1", JSON.stringify(r.results[0].excerpt));
+    check("the excerpt is in the text-protocol observation", X.formatFileResults(r.results, r.failed).includes("ERROR: the <old> text was not found in m.py. The closest text is lines 1–2, below: copy <old> exactly from there.\n1\tdef f():\n2\t    return 1"));
+    r = run(edit("esc.js", [["log(\"say \"hi\"\");", "log(\"bye\");"]]), files);
+    check("file escapes quotes, <old> doesn't → escaping hint", r.failed && /only in how quotes are escaped/.test(r.results[0].message) && r.results[0].excerpt === "1\tlog(\"say \\\"hi\\\"\");", r.results[0].message);
+    r = run(edit("m.py", [["zzzz qqqq wwww", "x"]]), files);
+    check("nothing similar → no excerpt, the old advice", r.failed && r.results[0].excerpt === undefined && /Read the file and copy the text exactly/.test(r.results[0].message), r.results[0].message);
+    r = run(edit("m.py", [["def f():\n    return 1", "def f():\n    return 42"], ["def g():\n    return 9", "x"]]), files);
+    check("a later change's miss says it's after the earlier ones", /change 2 of 2: .*after the earlier changes of this edit/.test(r.results[0].message), r.results[0].message);
+    r = run(edit("tag.py", [["x = '<old>!'\ny = 2", "x = 1"]]), files);
+    const native = X.fileCallResults(r.results, r.failed)[0];
+    check("native results: tags renamed in the message, not in the file's text", /copy old_text exactly/.test(native) && native.includes("1\tx = '<old>'"), native);
+
+    check("closestExcerpt: blank lines at <old>'s ends don't count", JSON.stringify(X.closestExcerpt("a\nbcd\ne\n", "\nbce\n\n")) === JSON.stringify({ from: 2, to: 2, lines: ["bcd"] }));
+    check("closestExcerpt: <old> longer than the file → null", X.closestExcerpt("abc", "abc\nabc") === null);
+    check("matchEditText: no relaxed match → null", X.matchEditText("abc\n", "xyz", "q") === null);
+}
+
 section("6. atomic batches and the observation text");
 {
     const files = { "a.txt": "a\n", "b.txt": "b\n" };

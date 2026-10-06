@@ -252,6 +252,20 @@ plt.figure(); plt.plot([1, 1])
             calls(("ask_user", {"question": "Unit?", "options": ["euros", "dollars"]})),
             calls(("finish", {"answer": "Done in dollars."})),
         ],
+        # edit_file: a miss shows the closest lines, the retry copies them; relaxed matching.
+        "E2E-CLOSEST": [
+            final('<write_file path="app.py">\ndef greet(name):\n    return "Hello, " + name\n</write_file>'),
+            final('<edit_file path="app.py">\n<old>\ndef greet(name):\n    return "Hi, " + name\n</old>\n<new>\ndef greet(name):\n    return "Hey, " + name\n</new>\n</edit_file>'),
+            final('<edit_file path="app.py">\n<old>\n    return "Hello, " + name\n</old>\n<new>\n    return "Hey, " + name\n</new>\n</edit_file>'),
+            final('<edit_file path="app.py">\n<old>\n    return \\"Hey, \\" + name\n</old>\n<new>\n    return \\"Hey there, \\" + name\n</new>\n</edit_file>'),
+            final("Done."),
+        ],
+        "E2E-NCLOSEST": [
+            calls(("write_file", {"path": "q.py", "content": 'print("hi")\n'})),
+            calls(("edit_file", {"path": "q.py", "edits": [{"old_text": 'print(\\"hi\\")', "new_text": 'print(\\"bye\\")'}]})),
+            calls(("edit_file", {"path": "q.py", "edits": [{"old_text": 'prnt("bye")', "new_text": 'print("x")'}]})),
+            calls(("finish", {"answer": "Done."})),
+        ],
         "E2E-NOTOOLS": [
             py('print("fell back")'),
             final("Fallback done."),
@@ -1668,6 +1682,35 @@ def compaction_scenario(browser, port, state):
     page.context.close()
 
 
+def edit_fix_scenario(browser, port, state):
+    print("— edit_file: closest lines on a miss, relaxed matching (text + native)")
+    page = open_app(browser)
+    configure(page, port, 10)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-CLOSEST: greet")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "final")
+    m = [r["messages"][-1]["content"] for r in state.requests[n0:]]
+    check("a miss shows the closest lines of the file", "[1] edit_file app.py: ERROR: the <old> text was not found in app.py. The closest text is lines 1–2, below: copy <old> exactly from there.\n1\tdef greet(name):\n2\t    return \"Hello, \" + name" in m[2], m[2])
+    check("…and the retry copied from them applies", "[1] edit_file app.py: edited (1 change)" in m[3], m[3])
+    check("over-escaped quotes match, and say so", "matched only after removing backslashes before quotes in <old>" in m[4], m[4])
+    check("…and the file has plain quotes", file_text(page, "app.py") == 'def greet(name):\n    return "Hey there, " + name\n', file_text(page, "app.py"))
+    page.context.close()
+
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-NCLOSEST: go")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "finish")
+    reqs = state.requests[n0:]
+    t2, t3 = reqs[2]["messages"][-1]["content"], reqs[3]["messages"][-1]["content"]
+    check("native: an over-escaped old_text matches, and the result says so", "matched only after removing backslashes before quotes in old_text" in t2, t2)
+    check("native: a miss names old_text and shows the file's line as it is", "copy old_text exactly from there.\n1\tprint(\"bye\")" in t3, t3)
+    check("…the edit that missed changed nothing", file_text(page, "q.py") == 'print("bye")\n', file_text(page, "q.py"))
+    page.context.close()
+
+
 def main():
     browsers = sys.argv[1:] or ["chromium", "firefox"]   # also: firefox=/path/to/stock/firefox
     with sync_playwright() as pw:
@@ -1696,7 +1739,7 @@ def main():
                     files_scenario(browser, port, state, downloads=not exe)
                 for n, fn in [("workspace", workspace_scenario), ("compaction", compaction_scenario), ("vllm_compact", vllm_compact_scenario),
                               ("checkpoint_budget", checkpoint_budget_scenario), ("outage", outage_scenario), ("send_now", send_now_scenario),
-                              ("diff_edit", diff_edit_scenario)]:
+                              ("diff_edit", diff_edit_scenario), ("edit_fix", edit_fix_scenario)]:
                     if want(n):
                         fn(browser, port, state)
                 if want("module"):

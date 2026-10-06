@@ -468,9 +468,19 @@ replacement
   It works on an overlay, so a read sees an earlier write in the same reply. Writes and
   edits are **all-or-nothing**: the first one that fails stops the batch and nothing is
   written, and the model is told which action failed.
-- **Edits** need each `<old>` to occur exactly once. No match, a match only when
-  whitespace is ignored, and several matches are each reported with advice. `<old>` and
-  `<new>` are adapted to a CRLF file.
+- **Edits** need each `<old>` to occur exactly once. `<old>` and `<new>` are adapted to a
+  CRLF file. Several pairs apply in order, each against the result of the ones before.
+  When `<old>` isn't found as written, relaxed matching (`matchEditText`) tries again in
+  passes that add up: trailing spaces ignored; typographic dashes, quotes and spaces read
+  as ASCII (Codex's table); backslashes before quotes in `<old>` dropped, for a model
+  that over-escapes. The file's own backslashes are never dropped. The first pass with
+  exactly one match applies, and the result says which pass it took. `<new>` gets the
+  same unescaping, and loses typographic characters `<old>` made up. Several relaxed
+  matches are an error, not a guess. Indentation is not relaxed, because re-indenting
+  Python is risky. A miss is reported with advice (whitespace-only, escaping-only) and
+  with the closest lines of the file (`closestExcerpt`). The closest lines are a window as
+  long as `<old>`, scored by character-bigram similarity per line, and shown numbered
+  like read_file output, so the model copies the real bytes instead of guessing again.
 - **Reads** are capped at 400 lines and 32 000 characters per read, 64 000 per reply,
   and 2 000 per line. They end with where to continue. Binary files are refused, so
   Python handles those; the refusal says what the file is (`binarySummary`: "PNG

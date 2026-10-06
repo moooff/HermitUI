@@ -912,7 +912,8 @@ function fileCallResults(results, failed) {
     const failedAt = failed ? results.findIndex(r => !r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) : -1;
     const native = (s) => String(s).replace(/<old>/g, "old_text").replace(/<new>/g, "new_text").replace(/<write_file>/g, "write_file");
     return results.map((r, i) => {
-        let head = `${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + native(r.message)}`;
+        let head = `${fileActionLabel(r)}: ${r.ok ? native(r.message) : "ERROR: " + native(r.message)}`;
+        if (!r.ok && r.excerpt) head += "\n" + r.excerpt;
         if (failed && r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) head = `${fileActionLabel(r)}: not applied, because the ${results[failedAt].tool} call for ${results[failedAt].path || "?"} failed: no file changes of this reply were written. Fix it and send all of the changes again.`;
         else if (failed && i === failedAt) head += "\nNo file changes of this reply were applied. Fix this and send all of the changes again.";
         return r.output !== undefined && r.ok ? head + "\n" + r.output : head;
@@ -1292,6 +1293,132 @@ function countOccurrences(hay, needle) {
     return n;
 }
 
+// Typographic punctuation and the ASCII a model tends to type for it (the table Codex's
+// apply_patch uses): dashes, quotes, and non-breaking and other Unicode spaces.
+const FANCY_PUNCT = /[\u2010-\u2015\u2212\u2018-\u201B\u201C-\u201F\u00A0\u2002-\u200A\u202F\u205F\u3000]/;
+function plainPunct(c) {
+    if (/[\u2010-\u2015\u2212]/.test(c)) return "-";
+    if (/[\u2018-\u201B]/.test(c)) return "'";
+    if (/[\u201C-\u201F]/.test(c)) return "\"";
+    return " ";
+}
+
+// A failed edit's <old> retried with relaxed matching, when an exact match found nothing.
+// The passes add up: trailing spaces ignored, then typographic punctuation read as ASCII,
+// then backslashes before quotes in <old> dropped (a model that over-escapes). The first
+// pass with exactly one match wins. Returns { start, end, newT, how } (a range of text
+// to replace with newT), { count, how } when a pass matched several times, or null.
+function matchEditText(text, oldT, newT) {
+    const passes = [
+        { how: "ignoring trailing spaces" },
+        { how: "reading curly quotes, dashes and special spaces as plain ones", punct: true },
+        { how: "removing backslashes before quotes in <old>", punct: true, esc: true },
+    ];
+    // s normalized, as { s, at(i) -> offset in s of normalized character i }. Trailing
+    // spaces and dropped backslashes are deletions, punctuation is one for one, so a run
+    // between two deletions maps linearly.
+    const norm = (s, p) => {
+        const re = new RegExp([/[ \t]+(?=\r?\n|$)/.source, p.esc && /\\(?=["'`])/.source, p.punct && FANCY_PUNCT.source].filter(Boolean).join("|"), "g");
+        const parts = [], runs = [[0, 0]];
+        let from = 0, len = 0;
+        for (let m; (m = re.exec(s));) {
+            parts.push(s.slice(from, m.index));
+            len += m.index - from;
+            if (!/^[ \t\\]/.test(m[0])) { parts.push(plainPunct(m[0])); len++; from = m.index + 1; continue; }
+            from = m.index + m[0].length;
+            runs.push([len, from]);
+        }
+        parts.push(s.slice(from));
+        const at = (i) => {
+            let lo = 0, hi = runs.length - 1;
+            while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (runs[mid][0] <= i) lo = mid; else hi = mid - 1; }
+            return runs[lo][1] + i - runs[lo][0];
+        };
+        return { s: parts.join(""), at };
+    };
+    let prev = null;
+    for (const p of passes) {
+        const hay = norm(text, { ...p, esc: false }), needle = norm(oldT, p).s;
+        // A pass that changed neither side can't find anything the last one didn't.
+        if (!needle.trim() || (prev && needle === prev.needle && hay.s === prev.hay)) continue;
+        prev = { needle, hay: hay.s };
+        const n = countOccurrences(hay.s, needle);
+        if (n > 1) return { count: n, how: p.how };
+        if (n === 0) continue;
+        const at = hay.s.indexOf(needle);
+        const start = hay.at(at), end = hay.at(at + needle.length - 1) + 1;
+        let out = newT;
+        if (p.esc) out = out.replace(/\\(["'`])/g, "$1");
+        // Typographic characters <old> made up, where the file has plain ones, don't
+        // belong in <new> either.
+        if (p.punct && FANCY_PUNCT.test(oldT) && !FANCY_PUNCT.test(text.slice(start, end))) out = out.replace(new RegExp(FANCY_PUNCT.source, "g"), plainPunct);
+        return { start, end, newT: out, how: p.how };
+    }
+    return null;
+}
+
+// The lines of text most like oldT, for an edit whose <old> wasn't found: a window of
+// as many lines as oldT has (blank lines at its ends left out), scored by the average
+// character-bigram similarity of its lines to oldT's. Returns { from, to, lines } (1-based
+// line numbers) for the best window scoring at least minScore, or null.
+function closestExcerpt(text, oldT, opts) {
+    const { minScore = 0.5, maxWork = 1e6 } = opts || {};
+    const want = String(oldT).split(/\r?\n/).map(l => l.trim());
+    while (want.length && !want[0]) want.shift();
+    while (want.length && !want[want.length - 1]) want.pop();
+    const lines = String(text).split(/\r?\n/);
+    const k = want.length;
+    if (!k || k > lines.length) return null;
+    const grams = new Map();
+    const gramsOf = (s) => {
+        let g = grams.get(s);
+        if (!g) {
+            g = new Set();
+            for (let i = 0; i < s.length - 1; i++) g.add(s.charCodeAt(i) * 65536 + s.charCodeAt(i + 1));
+            grams.set(s, g);
+        }
+        return g;
+    };
+    const sim = (a, b) => {
+        if (a === b) return 1;
+        if (a.length < 2 || b.length < 2) return 0;
+        const A = gramsOf(a), B = gramsOf(b);
+        const [small, big] = A.size < B.size ? [A, B] : [B, A];
+        let both = 0;
+        for (const g of small) if (big.has(g)) both++;
+        return (2 * both) / (A.size + B.size);
+    };
+    const trimmed = lines.map(l => l.trim());
+    // Candidates first: windows that line up a distinctive <old> line (4+ characters, at
+    // most 50 times in the file) with the same line in the file. When no line of <old> is
+    // in the file as it is, its 3 longest lines are compared with every line of the file
+    // instead, and the 20 windows that score best on those are the candidates.
+    const where = new Map();
+    trimmed.forEach((l, f) => { if (l.length >= 4) { const w = where.get(l); if (w) w.push(f); else where.set(l, [f]); } });
+    const starts = new Set();
+    want.forEach((l, j) => {
+        const hits = where.get(l);
+        if (hits && hits.length <= 50) for (const f of hits) if (f - j >= 0 && f - j + k <= lines.length) starts.add(f - j);
+    });
+    if (!starts.size) {
+        const probes = want.map((l, j) => j).filter(j => want[j].length >= 2).sort((a, b) => want[b].length - want[a].length).slice(0, 3);
+        if (!probes.length || lines.length * probes.length > maxWork) return null;
+        const partial = new Map();
+        for (const j of probes) {
+            for (let f = j; f - j + k <= lines.length; f++) partial.set(f - j, (partial.get(f - j) || 0) + sim(want[j], trimmed[f]));
+        }
+        [...partial].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 20).forEach(([i]) => starts.add(i));
+    }
+    let best = -1, at = -1;
+    for (const i of starts) {
+        let sum = 0;
+        for (let j = 0; j < k; j++) sum += sim(want[j], trimmed[i + j]);
+        if (sum > best || (sum === best && i < at)) { best = sum; at = i; }
+    }
+    if (at < 0 || best / k < minScore) return null;
+    return { from: at + 1, to: at + k, lines: lines.slice(at, at + k) };
+}
+
 // Run file actions against the workspace without touching it. ws: { paths: [...],
 // read(path) -> Uint8Array | null }. Actions run in order on an overlay, so a read or a
 // search sees an earlier write, delete or move. Writes, edits, deletes and moves are
@@ -1518,7 +1645,9 @@ function applyFileActions(actions, ws, opts) {
         const crlf = text.includes("\r\n") && !/(^|[^\r])\n/.test(text);
         const fix = (s) => (crlf ? String(s).replace(/\r?\n/g, "\r\n") : String(s));
         const flat = (s) => s.split(/\r?\n/).map(l => l.trim()).join("\n");
+        const unescaped = (s) => flat(s).replace(/\\(["'`])/g, "$1").trim();
         const edits = a.args.edits || [];
+        const relaxed = [];
         let error = "";
         for (let k = 0; k < edits.length && !error; k++) {
             const which = edits.length > 1 ? `change ${k + 1} of ${edits.length}: ` : "";
@@ -1527,9 +1656,27 @@ function applyFileActions(actions, ws, opts) {
             if (oldT === newT) { error = which + "<old> and <new> are identical."; break; }
             const n = countOccurrences(text, oldT);
             if (n === 0) {
-                error = which + (flat(oldT).trim() && flat(text).includes(flat(oldT))
-                    ? `the <old> text differs from ${path} only in whitespace or indentation. Copy it exactly (read_file shows the file).`
-                    : `the <old> text was not found in ${path}. Read the file and copy the text exactly.`);
+                const m = matchEditText(text, oldT, newT);
+                if (m && m.count) {
+                    error = which + `the <old> text isn't in ${path} exactly as written, and matches ${m.count} times when ${m.how}. Copy it exactly from the file, with more surrounding lines so it matches once.`;
+                    break;
+                }
+                if (m) {
+                    text = text.slice(0, m.start) + m.newT + text.slice(m.end);
+                    relaxed.push((edits.length > 1 ? `change ${k + 1} ` : "") + "matched only after " + m.how);
+                    continue;
+                }
+                const near = closestExcerpt(text, oldT);
+                const after = k > 0 ? " (after the earlier changes of this edit)" : "";
+                if (flat(oldT).trim() && flat(text).includes(flat(oldT))) error = which + `the <old> text differs from ${path} only in whitespace or indentation. Copy it exactly (read_file shows the file).`;
+                else if (near && unescaped(near.lines.join("\n")) === unescaped(oldT)) error = which + `the <old> text differs from ${path} only in how quotes are escaped (backslashes). Copy it exactly from the file.`;
+                else error = which + `the <old> text was not found in ${path}.` + (near ? "" : " Read the file and copy the text exactly.");
+                if (near) {
+                    error += ` The closest text is ${near.from === near.to ? "line " + near.from : "lines " + near.from + "–" + near.to}${after}, below: copy <old> exactly from there.`;
+                    let shown = near.lines.map((l, j) => `${near.from + j}\t${l.length > lim.readMaxLineChars ? l.slice(0, lim.readMaxLineChars) + " […]" : l}`).join("\n");
+                    if (shown.length > 4000) shown = shown.slice(0, 4000) + "\n[…]";
+                    r.excerpt = shown;
+                }
             } else if (n > 1) {
                 error = which + `the <old> text matches ${n} times in ${path}. Include more surrounding lines so it matches once.`;
             } else {
@@ -1540,7 +1687,7 @@ function applyFileActions(actions, ws, opts) {
         if (error) { fail(error); continue; }
         overlay.set(path, { text });
         r.ok = true;
-        r.message = `edited (${edits.length} change${edits.length === 1 ? "" : "s"})`;
+        r.message = `edited (${edits.length} change${edits.length === 1 ? "" : "s"}${relaxed.length ? "; " + relaxed.join(", ") + ". Next time copy <old> exactly from read_file" : ""})`;
     }
     if (failed) return { results, writes: new Map(), deletes: [], moves: [], failed };
     const writes = new Map(), deletes = [];
@@ -1590,7 +1737,8 @@ function fileActionLabel(r) {
 function formatFileResults(results, failed) {
     const out = [];
     results.forEach((r, i) => {
-        const head = `[${i + 1}] ${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + r.message}`;
+        let head = `[${i + 1}] ${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + r.message}`;
+        if (!r.ok && r.excerpt) head += "\n" + r.excerpt;
         out.push(r.output !== undefined ? head + "\n" + r.output : head);
     });
     if (failed) {
