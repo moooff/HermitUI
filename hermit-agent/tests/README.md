@@ -83,12 +83,14 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   (calls written out parse back to the same actions), elision and compaction with tool
   calls, the native system prompt and hints, and session format 2.
 - **`bundled.test.mjs`** covers the bundled libraries (Phase 3.5, DESIGN §8): the real
-  `BUNDLED_LIBRARIES` manifest (Tier 1 and Tier 2, pinned pure wheels from PyPI, known
-  `requires`), `bundledImportIndex`, `planBundledLoad` (python-pptx brings XlsxWriter and
+  `BUNDLED_LIBRARIES` manifest (Tier 1 and Tier 2 plus odfpy, pinned pure wheels from
+  PyPI or, for odfpy, a pinned source archive to build one from, known `requires`),
+  `bundledImportIndex`, `bundledAliases`, `planBundledLoad` (python-pptx brings XlsxWriter and
   Pillow, what is loaded is skipped with names compared normalized, pandas' `to_excel`,
   `engine="xlsxwriter"` and `to_markdown` pull in openpyxl, XlsxWriter and tabulate, a
-  word inside a longer name doesn't), `packageLoadNote`, `moduleNotFoundHint` for a
-  bundled import and pandas' "Missing optional dependency", and the system prompt naming
+  `.ods` or `engine="odf"` odfpy, a word inside a longer name doesn't), `packageLoadNote`,
+  `moduleNotFoundHint` for a bundled import and pandas' "Missing optional dependency"
+  (by library name: odfpy → `import odf`), and the system prompt naming
   a library per format in both protocols.
 - **`files.test.mjs`** covers the file actions (DESIGN §5.1):
   - `extractFileActions`: both quote styles, fences inside written content,
@@ -203,12 +205,14 @@ it stall, on cue; see its docstring):
     `import micropip` gets "nothing needs installing" instead of Pyodide's micropip advice.
 16c. **Bundled libraries** (Phase 3.5; `bundled`). One page refuses every request that
     leaves the machine: openpyxl (a formula round trip), XlsxWriter (a chart), Markdown
-    (a table), tabulate and xmltodict work, each step notes it was installed from the
+    (a table), tabulate, xmltodict and odfpy (an `.odt` read back; the wheel build.py
+    builds) work, each step notes it was installed from the
     bundle, nothing left the machine, and after an interpreter restart openpyxl installs
     again. A second page blocks only PyPI: python-docx, python-pptx (a native chart; it
     brings XlsxWriter), qrcode (a PNG), markdownify and seaborn work with their Pyodide
     packages from the CDN, pandas' `to_excel`/`read_excel`/`to_markdown` work without an
-    import of openpyxl or tabulate, and PyPI is never asked. The prompt's package list
+    import of openpyxl or tabulate, a `.ods` round trip without an import of odf, and PyPI
+    is never asked. The prompt's package list
     includes the bundled libraries.
 17. **Native tool calls** (Phase 3; `native`, `native_fallback`), against the mock's
     `/tools/v1`, whose `/props` reports tool support, and `/notools/v1`, which refuses
@@ -250,7 +254,9 @@ Phase 3.5's five, one per bundled format, each file checked with a library: an E
 workbook (a sheet per region and a Summary, read with openpyxl), a Word report (heading
 and table, python-docx), a PowerPoint deck with a native column chart (its values and
 categories, python-pptx), Markdown → HTML (headings, list, table, link and code block,
-beautifulsoup4) and a QR code (decoded with OpenCV). For those, whether the agent's code
+beautifulsoup4) and a QR code (decoded with OpenCV), plus an OpenDocument spreadsheet
+of region totals (read with pandas' ODF engine; odfpy was bundled later). For those,
+whether the agent's code
 used a bundled library is recorded (`library_used`) but doesn't decide the pass. `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks

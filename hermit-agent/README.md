@@ -23,10 +23,11 @@ The agent needs a model that can recover from its own errors. The reference task
 pass with Qwen3.8-27B at reasoning effort Low (see [ROADMAP.md](ROADMAP.md)).
 Packages such as numpy or pandas load on demand from the pinned Pyodide CDN, so they
 need a connection; the standard library works fully offline, and a package that can't
-load says why. Ten common pure-Python libraries that Pyodide leaves out ship inside the
+load says why. Eleven common pure-Python libraries that Pyodide leaves out ship inside the
 file: openpyxl and XlsxWriter (Excel), python-docx (Word), python-pptx (PowerPoint),
-Markdown, markdownify, tabulate, xmltodict, qrcode and seaborn. Those that need no
-Pyodide package (openpyxl, XlsxWriter, Markdown, tabulate, xmltodict) work offline too. If the server goes away mid-task, the agent retries for two minutes and
+odfpy (OpenDocument), Markdown, markdownify, tabulate, xmltodict, qrcode and seaborn.
+Those that need no Pyodide package (openpyxl, XlsxWriter, odfpy, Markdown, tabulate,
+xmltodict) work offline too. If the server goes away mid-task, the agent retries for two minutes and
 then pauses: nothing is lost, and Retry carries on where it stopped.
 
 Agent code runs in a WebAssembly Python inside the tab. Its network access is

@@ -303,9 +303,10 @@ made building it (DESIGN §8, "bundled pure-Python libraries").
   typing-extensions (2.7 MB of wheels, about 3.6 MB more on the file) so Word, PowerPoint
   and QR codes work offline: a step
   towards the offline pack DESIGN §8 deferred to Phase 4.
-- **Wheels are inlined unmodified, base64 without gzip.** gzip gains 3 % on wheels; a
-  solid `.tar.gz` of their contents would save ~0.3 MB but replace the pinned artefacts
-  with a repacked one. Unmodified wheels also carry each library's license text in their
+- **Downloaded wheels are inlined unmodified, gzipped and base64-encoded.** (Without gzip until
+  odfpy was added: gzip gains only 3 % on downloaded wheels, but the wheel built for odfpy
+  is stored and shrinks 596 → 105 KB.) A solid `.tar.gz` of their contents would save
+  ~0.3 MB but replace the pinned artefacts with a repacked one. Unmodified wheels also carry each library's license text in their
   `.dist-info`, which the build checks; there is no separate licenses page in the UI.
   Alternative: list the bundled libraries and their licenses in an About box.
 - **`uses` words trigger a library without an import:** pandas imports openpyxl,
@@ -321,6 +322,15 @@ made building it (DESIGN §8, "bundled pure-Python libraries").
   agent used one is recorded (`library_used`); the pass is the file checked with a
   library. Alternative: fail a task built without its library (as the PDF task fails on
   raw PDF syntax).
+
+- **odfpy, added after the pick (2026-10-06), with a wheel built from its source
+  archive.** PyPI publishes none. `build.py` takes the `odf` package and the license
+  files out of the pinned archive without running `setup.py`. It declares `defusedxml`
+  from the manifest, checked against setup.py's literal, and writes a stored,
+  timestamp-free wheel whose sha256 is pinned. Alternatives: inline the source archive
+  itself (unmodified, but about 1 MB inlined instead of 0.17 MB, mostly docs and tests), or a
+  piwheels wheel (a third-party host). The unbuilt source can't load it, since there is
+  nothing on PyPI to fetch, and says to use `dist/`.
 
 ## Not covered by automated tests
 

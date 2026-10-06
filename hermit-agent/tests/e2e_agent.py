@@ -264,6 +264,13 @@ print("OK tabulate\\n" + tabulate([["nuts", 40], ["bolts", 120]], headers=["item
             py('''
 import xmltodict
 d = xmltodict.parse("<a><b x='1'>t</b></a>"); print("OK xmltodict", d["a"]["b"]["@x"], d["a"]["b"]["#text"])'''),
+            # odfpy: the wheel build.py builds from its source archive, with defusedxml.
+            py('''
+from odf.opendocument import OpenDocumentText, load
+from odf.text import P
+from odf import teletype
+d = OpenDocumentText(); d.text.addElement(P(text="Umlauts äöü")); d.save("o.odt")
+print("OK odfpy", [teletype.extractText(p) for p in load("o.odt").getElementsByType(P)])'''),
             final("Offline libraries done."),
         ],
         "E2E-BUNDLED": [
@@ -299,6 +306,11 @@ pd.DataFrame({"a": [1, 2]}).to_excel("p.xlsx", index=False)
 df = pd.read_excel("p.xlsx")
 print("OK pandas", df["a"].tolist())
 print(df.to_markdown(index=False))'''),
+            # No odf import either: the .ods name is what loads odfpy.
+            py('''
+import pandas as pd
+pd.DataFrame({"a": [1, 2], "b": ["x", "ü"]}).to_excel("p.ods", index=False)
+print("OK pandas ods", pd.read_excel("p.ods").values.tolist())'''),
             final("Bundled libraries done."),
         ],
         "E2E-APPROVE": [
@@ -1241,11 +1253,11 @@ def bundled_scenario(browser, port, state):
     wait_until(page, "() => S.status === 'done'", 120, "offline bundled task")
     system = state.requests[n0]["messages"][0]["content"]
     listed = system.split("each is loaded automatically on its first import: ")[1].split(".")[0].split(", ")
-    check("the prompt's package list includes the bundled libraries", all(n in listed for n in ["openpyxl", "xlsxwriter", "docx", "pptx", "markdown", "qrcode", "tabulate", "xmltodict", "markdownify", "seaborn"]), listed)
+    check("the prompt's package list includes the bundled libraries", all(n in listed for n in ["openpyxl", "xlsxwriter", "docx", "pptx", "markdown", "qrcode", "tabulate", "xmltodict", "markdownify", "seaborn", "odf"]), listed)
     st = steps(page)
     for i, (lib, want) in enumerate([("openpyxl", "OK openpyxl month 200.5 =B2*2"), ("XlsxWriter", "OK xlsxwriter True"),
                                      ("Markdown", "OK markdown <h1>T</h1><table>"), ("tabulate", "OK tabulate\n| item"),
-                                     ("xmltodict", "OK xmltodict 1 t")]):
+                                     ("xmltodict", "OK xmltodict 1 t"), ("odfpy", "OK odfpy ['Umlauts äöü']")]):
         s1 = st[i] if i < len(st) else {}
         check(f"offline: {lib} works", s1.get("status") == "ok" and s1.get("output", "").startswith(want), s1)
         check(f"…and was installed from the bundle", any(f"Loaded {lib} from the libraries bundled with HermitUI Agent" in n for n in s1.get("notes", [])), s1.get("notes"))
@@ -1273,7 +1285,8 @@ def bundled_scenario(browser, port, state):
             ("qrcode", "OK qrcode (", []),
             ("markdownify", "OK markdownify # T |", ["beautifulsoup4", "six"]),
             ("seaborn", "OK seaborn 0.13.2", ["matplotlib", "pandas"]),
-            ("openpyxl", "OK pandas [1, 2]\n|", [])]):
+            ("openpyxl", "OK pandas [1, 2]\n|", []),
+            ("odfpy", "OK pandas ods [[1, 'x'], [2, 'ü']]", [])]):
         s1 = st[i] if i < len(st) else {}
         notes = " ".join(s1.get("notes", []))
         check(f"{lib} works", s1.get("status") == "ok" and s1.get("output", "").startswith(want), s1)

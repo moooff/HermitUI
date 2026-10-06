@@ -76,7 +76,9 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **Bundled libraries live in one manifest**, `BUNDLED_LIBRARIES` in `src/script.js`
   (strict JSON between the `@bundled` markers; `build.py` and the unit tests parse it).
   Adding one means a pinned wheel (URL + sha256) and its Pyodide packages there; the
-  build checks the rest against the wheel's metadata (DESIGN §8).
+  build checks the rest against the wheel's metadata (DESIGN §8). For a library PyPI has
+  no wheel for, pin its source archive under `sdist` instead and let `build.py` build the
+  wheel. Its sha256 is pinned too, so copy the one the first failed build prints.
 - **Tests:** pure logic (parsers, risk classifier, zip, session schema) goes in unit
   tests that slice real functions out of the source, following
   `../tests/extract.mjs`. DOM and worker behaviour goes in the e2e tests.

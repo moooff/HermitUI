@@ -24,7 +24,10 @@ const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // step's code that need it without an import: pandas imports openpyxl itself) make the
 // harness install it; `requires`: other bundled libraries; `pyodide`: Pyodide packages
 // it imports, by lock-file name, loaded with it (some are undeclared or optional extras,
-// PHASE3_5_LIBRARY_STUDY.md). Strict JSON between the markers.
+// PHASE3_5_LIBRARY_STUDY.md). A wheel with an `sdist` is one PyPI doesn't publish:
+// build.py builds it from that pinned source archive (taking `packages`, declaring
+// `requires`), reproducibly, so its own sha256 is pinned too; only built output has it.
+// Strict JSON between the markers.
 // @bundled:start
 const BUNDLED_LIBRARIES = {
     "openpyxl": { "imports": ["openpyxl", "et_xmlfile"], "uses": ["read_excel", "to_excel", "ExcelWriter", "ExcelFile"], "requires": [], "pyodide": [], "wheels": [
@@ -47,7 +50,10 @@ const BUNDLED_LIBRARIES = {
     "markdownify": { "imports": ["markdownify"], "uses": [], "requires": [], "pyodide": ["beautifulsoup4", "six"], "wheels": [
         { "file": "markdownify-1.2.3-py3-none-any.whl", "sha256": "a189a0bedfd14009030fde5f85bb6f77c56897cb839b5c25315dd7d4e3e290ba", "url": "https://files.pythonhosted.org/packages/04/10/fa543d484e8b1199243fe20eedd02cc5af050edebce98a7293a5773df592/markdownify-1.2.3-py3-none-any.whl" }] },
     "seaborn": { "imports": ["seaborn"], "uses": [], "requires": [], "pyodide": ["numpy", "pandas", "matplotlib"], "wheels": [
-        { "file": "seaborn-0.13.2-py3-none-any.whl", "sha256": "636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987", "url": "https://files.pythonhosted.org/packages/83/11/00d3c3dfc25ad54e731d91449895a79e4bf2384dc3ac01809010ba88f6d5/seaborn-0.13.2-py3-none-any.whl" }] }
+        { "file": "seaborn-0.13.2-py3-none-any.whl", "sha256": "636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987", "url": "https://files.pythonhosted.org/packages/83/11/00d3c3dfc25ad54e731d91449895a79e4bf2384dc3ac01809010ba88f6d5/seaborn-0.13.2-py3-none-any.whl" }] },
+    "odfpy": { "imports": ["odf", "defusedxml"], "uses": ["ods", "odf"], "requires": [], "pyodide": [], "wheels": [
+        { "file": "odfpy-1.4.1-py2.py3-none-any.whl", "sha256": "61ffd60d74f31ea9a64fd721a341d243343f4e0296fd5c4365b5bb43b56594df", "sdist": { "file": "odfpy-1.4.1.tar.gz", "sha256": "db766a6e59c5103212f3cc92ec8dd50a0f3a02790233ed0b52148b70d3c438ec", "url": "https://files.pythonhosted.org/packages/97/73/8ade73f6749177003f7ce3304f524774adda96e6aaab30ea79fd8fda7934/odfpy-1.4.1.tar.gz", "packages": ["odf"], "requires": ["defusedxml"] } },
+        { "file": "defusedxml-0.7.1-py2.py3-none-any.whl", "sha256": "a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", "url": "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl" }] }
 };
 // @bundled:end
 const SESSION_FORMAT = "hermit-agent-session";
@@ -402,7 +408,7 @@ Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the u
 - The standard library is available. ${pkgs} Don't install anything: there is no pip or micropip and no network access, so nothing else can be installed. input() does not work.
 - There are no subprocesses: subprocess, os.system and multiprocessing fail. Run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). Modules you write to /workspace are re-imported fresh at every step.
-- Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; openpyxl or xlsxwriter for Excel .xlsx files (pandas read_excel and to_excel work too); python-docx (import docx) for Word .docx; python-pptx (import pptx) for PowerPoint .pptx, charts included; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables; there is no reportlab or fpdf); matplotlib or seaborn for charts, also as PDF pages; markdown to turn Markdown into HTML, markdownify for HTML into Markdown; tabulate for plain-text tables; qrcode for QR codes; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML, xmltodict to turn XML into dicts; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Don't assemble these file formats by hand.
+- Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; openpyxl or xlsxwriter for Excel .xlsx files (pandas read_excel and to_excel work too); odfpy (import odf) for OpenDocument .odt, .ods and .odp (for a table in .ods, pandas is simplest: df.to_excel("x.ods") and pd.read_excel("x.ods"); there is no to_ods or read_ods); python-docx (import docx) for Word .docx; python-pptx (import pptx) for PowerPoint .pptx, charts included; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables; there is no reportlab or fpdf); matplotlib or seaborn for charts, also as PDF pages; markdown to turn Markdown into HTML, markdownify for HTML into Markdown; tabulate for plain-text tables; qrcode for QR codes; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML, xmltodict to turn XML into dicts; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Don't assemble these file formats by hand.
 - It is a 32-bit platform: numpy's default integer is int32 and overflows silently past 2**31. Use dtype=np.int64 (or plain Python ints) for large values.
 - matplotlib draws off-screen. plt.show() saves each open figure as figures/step-N-K.png and shows it to the user; figures still open when a step ends are saved the same way, unless you saved them with savefig. Then they are closed, so call plt.savefig("name.png") before plt.show() when the user wants a file. You can't see images: you are told their size.
 - Each step has a time limit. A step that runs too long is killed.
@@ -1453,6 +1459,17 @@ function bundledImportIndex(libs) {
     return map;
 }
 
+// Bundled library name, lowercased -> the name to import it by (odfpy -> odf). pandas' "Missing
+// optional dependency" names the library, and the step has to import the module.
+function bundledAliases(libs) {
+    const out = {};
+    for (const [name, lib] of Object.entries(libs && typeof libs === "object" ? libs : {})) {
+        const i = Array.isArray(lib && lib.imports) ? lib.imports[0] : null;
+        if (typeof i === "string") out[name.toLowerCase()] = i;
+    }
+    return out;
+}
+
 // What a step needs from the bundle. imports: top-level names its code (and the workspace
 // files it uses) import; texts: that code, searched for each library's `uses` words;
 // loaded: package and library names already in the interpreter. Returns { bundles, pyodide }:
@@ -1564,11 +1581,13 @@ function rewritePyodideInstallAdvice(output) {
 // as one built at run time), how to get it loaded instead.
 // bundled: the import names of the bundled libraries, which Pyodide knows nothing about,
 // so its own "not installed" note never appears for them. pandas' "Missing optional
-// dependency 'openpyxl'" (it imports the library itself) counts as an import of it.
-function moduleNotFoundHint(output, available, bundled) {
+// dependency 'openpyxl'" (it imports the library itself) counts as an import of it;
+// aliases (bundledAliases) turn the library it names into the module to import (odfpy → odf).
+function moduleNotFoundHint(output, available, bundled, aliases) {
     const m = String(output || "").match(/ModuleNotFoundError: No module named '([\w.]+)'|ImportError: Missing optional dependency '([\w.-]+)'/);
     if (!m) return "";
-    const top = (m[1] || m[2]).split(".")[0];
+    const named = (m[1] || m[2]).split(".")[0];
+    const top = (m[2] && aliases && Object.hasOwn(aliases, named.toLowerCase()) && aliases[named.toLowerCase()]) || named;
     const notLoaded = `${top} is available but wasn't loaded: packages are loaded before a step, from the imports in its code and in the workspace .py files it imports or runs by name. Add "import ${top}" at the top of the step's code and run it again. Don't use micropip or loadPackage.`;
     if (top === "micropip" || top === "pip") return `There is no ${top} here, and nothing needs installing: a package from the list in your instructions loads by itself when you import it. Just import it.`;
     if (/is included in the Pyodide distribution, but it is not installed|is unvendored from the Python standard library/.test(output) || (bundled || []).includes(top)) return notLoaded;
@@ -2293,9 +2312,10 @@ function loadPyodideCore() {
     return PY.corePromise;
 }
 
-// A bundled wheel's bytes: inlined by build.py (base64), or fetched from PyPI when running
-// the unbuilt source. Either way checked against its sha256 pin in BUNDLED_LIBRARIES, and
-// kept for the page's life: a restarted worker gets them again from here.
+// A bundled wheel's bytes: inlined by build.py (gzip + base64), or fetched from PyPI when
+// running the unbuilt source. Either way checked against its sha256 pin in
+// BUNDLED_LIBRARIES, and kept for the page's life: a restarted worker gets them again from
+// here. A wheel build.py builds from a source archive exists only in built output.
 const WHEELS = new Map();   // file name -> Promise<Uint8Array>
 function loadBundledWheel(w) {
     if (!WHEELS.has(w.file)) {
@@ -2304,7 +2324,9 @@ function loadBundledWheel(w) {
             let bytes;
             if (inl) {
                 if (typeof inl[w.file] !== "string") throw new Error(`${w.file} is missing from this build.`);
-                bytes = Uint8Array.from(atob(inl[w.file]), (c) => c.charCodeAt(0));
+                bytes = await gunzipToBytes(inl[w.file]);
+            } else if (w.sdist) {
+                throw new Error(`PyPI has no ${w.file}: build.py builds it from ${w.sdist.file}, so it is only in the built file (dist/).`);
             } else {
                 const res = await fetch(w.url);
                 if (!res.ok) throw new Error(`couldn't download ${w.file} from PyPI (${res.status}).`);
@@ -3749,7 +3771,7 @@ async function executeStep(step, idx, notes) {
         step.notes.push(...binaryFileNotes([...effect.pending].map(([p, h]) => ({ path: p, bytes: WS.blobs.get(h) })), step.figures));
         const fileHint = filenameCommentHint(code, Object.keys(r.listing), step.protocol === "tools");
         if (fileHint) step.notes.push(fileHint);
-        const modHint = moduleNotFoundHint(r.output, PKG.names, [...bundledImportIndex(BUNDLED_LIBRARIES).keys()]);
+        const modHint = moduleNotFoundHint(r.output, PKG.names, [...bundledImportIndex(BUNDLED_LIBRARIES).keys()], bundledAliases(BUNDLED_LIBRARIES));
         if (modHint) step.notes.push(modHint);
 
         let decision = { action: "approve" };

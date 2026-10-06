@@ -762,7 +762,9 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
 - **Libraries for common jobs** (in the system prompt, both protocols): pandas for
   tables, openpyxl or xlsxwriter for Excel (and pandas `read_excel`/`to_excel`),
   python-docx for Word, python-pptx for PowerPoint, pymupdf for creating and reading PDFs
-  (`insert_htmlbox` lays out HTML; there is no reportlab or fpdf), matplotlib or seaborn
+  (`insert_htmlbox` lays out HTML; there is no reportlab or fpdf), odfpy for
+  OpenDocument (for an `.ods` table, pandas `to_excel("x.ods")`/`read_excel`: the model
+  was seen guessing `to_ods` and odfpy's attribute names), matplotlib or seaborn
   for charts, markdown and markdownify between Markdown and HTML, tabulate for plain-text
   tables, qrcode, Pillow, jinja2, beautifulsoup4/lxml and xmltodict, python-dateutil,
   pyyaml, sqlite3; and "don't assemble these file formats by hand". Without such a line the
@@ -770,11 +772,13 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   writes `.xlsx`, `.docx` or `.pptx`.
 
 *As built (Phase 3.5): bundled pure-Python libraries.* Pyodide leaves pure-Python
-packages to micropip and PyPI, which agent code can't reach. Ten are bundled in the HTML,
-picked by [PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md) (Tier 1 and Tier 2):
+packages to micropip and PyPI, which agent code can't reach. Eleven are bundled in the
+HTML, picked by [PHASE3_5_LIBRARY_STUDY.md](PHASE3_5_LIBRARY_STUDY.md) (Tier 1 and Tier 2):
 openpyxl (with et-xmlfile), XlsxWriter, python-docx, python-pptx, Markdown, qrcode,
-tabulate, xmltodict, markdownify, seaborn: 11 wheels, 1.69 MB, +2.27 MB on the file once
-base64-encoded.
+tabulate, xmltodict, markdownify, seaborn, plus odfpy (with defusedxml), added on
+2026-10-06 once its real size was known (the study's 0.7 MB was its source archive):
+13 wheels, 2.36 MB inlined. That is +2.38 MB on the file over the build without any
+(9.04 → 11.42 MB).
 - **One manifest**, `BUNDLED_LIBRARIES` in `src/script.js` (strict JSON between
   `@bundled:start`/`@bundled:end`): per library its import names, `uses` (words that need
   it without an import), the bundled libraries it requires, the Pyodide packages it
@@ -784,15 +788,27 @@ base64-encoded.
   in its `.dist-info` (the wheels are inlined unmodified, so each carries its license
   text), every `Requires-Dist` that applies in Pyodide either bundled with it or in its
   Pyodide list, its import names present, and no clash with a Pyodide package. The wheels
-  are inlined base64-encoded as `window.__HERMIT_WHEELS__` (gzip saves 3 % on wheels,
-  which are zips already; a solid archive would save ~14 % but lose the pinned
-  per-wheel artefacts). The unbuilt source fetches the same wheels from PyPI instead,
-  checked against the same hashes.
+  are inlined gzipped and base64-encoded as `window.__HERMIT_WHEELS__` (gzip saves only
+  3 % on downloaded wheels, which are zips already, but the built one below is stored;
+  a solid archive would save ~14 % but lose the pinned per-wheel artefacts). The page
+  un-gzips a wheel and checks its sha256 before installing it. The unbuilt source fetches
+  the same wheels from PyPI instead, checked against the same hashes.
+- **A library PyPI has no wheel for** (odfpy publishes only a source archive) gets one
+  built by `build.py`: its manifest entry pins the source archive (URL, sha256) and names
+  the packages to take (`odf`) and the requirements to declare (`defusedxml`, which the
+  archive's metadata leaves out). Its `setup.py` never runs, but both lists are checked
+  against setup.py's own literals. The wheel holds the packages, the archive's license
+  files in `.dist-info/licenses/`, and METADATA from its PKG-INFO with the requirements
+  added. Its entries are stored, not deflated, with fixed timestamps and sorted names,
+  so the bytes are the same on any machine and any zlib (CPython 3.14 and Pyodide's
+  3.13 build the same sha256), and the wheel's sha256 is pinned like a downloaded one.
+  Such a wheel exists only in built output: the unbuilt source says to use `dist/`.
 - **Installed on first use, in the loading phase.** `planBundledLoad` adds to a step's
   plan the libraries its imports (and those of the workspace files it uses) name, the
   ones whose `uses` words appear in its code (pandas imports openpyxl, XlsxWriter and
   tabulate itself: `to_excel`, `read_excel`, `ExcelWriter`, `engine="xlsxwriter"`,
-  `to_markdown`), the bundled libraries those require (XlsxWriter for python-pptx's
+  `to_markdown`; `ods` and `odf` for odfpy, as in `read_excel("in.ods")` or
+  `engine="odf"`), the bundled libraries those require (XlsxWriter for python-pptx's
   charts), and the Pyodide packages they import, some undeclared or optional extras
   (lxml, typing-extensions, Pillow, beautifulsoup4, six, numpy/pandas/matplotlib). The
   `load` call first loads those Pyodide packages from the CDN, then unpacks the wheels,
@@ -800,7 +816,7 @@ base64-encoded.
   restarted worker installs them again from the page's copy. The step notes "Loaded lxml
   from the Pyodide CDN and python-docx from the libraries bundled with HermitUI Agent".
   If a Pyodide package fails, the libraries aren't installed, so a later step retries both.
-- **Offline:** openpyxl, XlsxWriter, Markdown, tabulate and xmltodict need nothing else and
+- **Offline:** openpyxl, XlsxWriter, Markdown, tabulate, xmltodict and odfpy need nothing else and
   work with no network at all. python-docx and python-pptx need lxml (and Pillow), qrcode
   Pillow for PNGs, markdownify beautifulsoup4, seaborn numpy, pandas and matplotlib: those
   come from the CDN like any Pyodide package, so offline they fail with the usual message.
@@ -809,7 +825,8 @@ base64-encoded.
 - **A bundled import the harness couldn't see** (built at run time) fails with a plain
   `ModuleNotFoundError`, since Pyodide knows nothing about these: the step gets "add
   `import docx` to the step's own code", as for an unloaded Pyodide package. pandas'
-  "Missing optional dependency 'openpyxl'" gets the same advice.
+  "Missing optional dependency 'openpyxl'" gets the same advice; it names the library,
+  so 'odfpy' becomes "import odf" (`bundledAliases`).
 - **Offline: decided, no offline pack for now.** Inlining even numpy + pandas would
   roughly double the 9 MB file, and a curated set would still miss what a given task
   needs. Packages load from the CDN on first import and stay in memory for the tab's

@@ -514,6 +514,28 @@ print("CHECK OK")
 """,
     },
     {
+        # odfpy, bundled after Phase 3.5: the study's model wrote .ods XML by hand.
+        "name": "opendocument spreadsheet",
+        "files": {"orders.csv": REGION_SALES_CSV},
+        "prompt": "Make totals.ods from orders.csv: an OpenDocument spreadsheet with a sheet named Totals that lists each region and its total amount, the amounts stored as numbers.",
+        "library": ["odf", ".ods"],
+        "check": """
+import odf, pandas as pd
+sheets = pd.read_excel("/workspace/totals.ods", sheet_name=None, header=None, engine="odf")
+names = {n.lower(): n for n in sheets}
+assert "totals" in names, list(sheets)
+totals = {"north": 137.5, "south": 80, "east": 70}
+for row in sheets[names["totals"]].itertuples(index=False):
+    key = next((str(c).strip().lower() for c in row if str(c).strip().lower() in totals), None)
+    if key:
+        nums = [c for c in row if isinstance(c, (int, float)) and not isinstance(c, bool) and c == c]
+        assert any(abs(x - totals[key]) < 0.01 for x in nums), (key, row)
+        totals.pop(key)
+assert not totals, ("regions missing from Totals", totals)
+print("CHECK OK")
+""",
+    },
+    {
         "name": "qr code",
         "files": {},
         "prompt": "Make qr.png: a QR code PNG for the URL https://example.org/hermit.",

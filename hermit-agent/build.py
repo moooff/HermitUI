@@ -10,7 +10,8 @@ against the SRI pins in src/index.html), the Inter font, and the Pyodide core
 (verified against PYODIDE_SHA256 below, gzipped + base64-encoded as
 window.__PYODIDE_INLINE__), and the bundled pure-Python libraries (BUNDLED_LIBRARIES in
 src/script.js: wheels verified against their sha256 pins and their own metadata, inlined
-base64-encoded as window.__HERMIT_WHEELS__). Downloads are cached in libs/ (gitignored).
+gzipped + base64-encoded as window.__HERMIT_WHEELS__; a library PyPI has no wheel for gets
+one built from its pinned source archive). Downloads are cached in libs/ (gitignored).
 Like the root build it fails loudly instead of writing an output that still points at a CDN.
 
 Adapted from ../build.py; it never reads from or writes to anything outside this folder.
@@ -23,6 +24,7 @@ import json
 import pathlib
 import re
 import sys
+import tarfile
 import urllib.request
 import zipfile
 
@@ -142,6 +144,62 @@ def check_wheel(lib, spec, data, wheel_dists):
     return {n.split("/")[0].removesuffix(".py") for n in names if not n.split("/")[0].endswith((".dist-info", ".data"))}
 
 
+
+def wheel_from_sdist(lib, spec, data):
+    """A pure wheel built from a pinned source archive, for a library PyPI publishes no
+    wheel for (odfpy). Its setup.py never runs: the manifest names the packages to take
+    and the requirements to declare, and both are checked against setup.py's own literals.
+    Stored entries, fixed timestamps and sorted names make the wheel the same bytes on any
+    machine, whatever its zlib, so its sha256 can be pinned like a downloaded one."""
+    sd = spec["sdist"]
+    m = re.fullmatch(r"([A-Za-z0-9_.]+)-([0-9][A-Za-z0-9_.]*)\.tar\.gz", sd["file"])
+    if not m:
+        fail(f"{lib}: {sd['file']} isn't named like a source archive (name-version.tar.gz).")
+    root = f"{m.group(1)}-{m.group(2)}"
+    tag = re.fullmatch(re.escape(root) + r"-((?:py\d\.)*py\d)-none-any\.whl", spec["file"])
+    if not tag:
+        fail(f"{lib}: {spec['file']} must be named {root}-<python tag>-none-any.whl, after its source archive.")
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+        src = {i.name: t.extractfile(i).read() for i in t.getmembers() if i.isfile() and i.name.startswith(root + "/")}
+    get = lambda name: src.get(f"{root}/{name}")   # noqa: E731
+    setup, pkg_info = get("setup.py"), get("PKG-INFO")
+    if setup is None or pkg_info is None:
+        fail(f"{lib}: {sd['file']} has no setup.py or PKG-INFO at its top.")
+    literal = lambda key: sorted(re.findall(r"['\"]([A-Za-z0-9_.-]+)['\"]", (re.search(key + r"\s*=\s*\[([^\]]*)\]", setup.decode()) or [None, ""])[1]))  # noqa: E731
+    if literal("packages") != sorted(sd["packages"]) or sorted(map(norm, literal("install_requires"))) != sorted(map(norm, sd["requires"])):
+        fail(f"{lib}: setup.py in {sd['file']} declares packages {literal('packages')} and requirements "
+             f"{literal('install_requires')}; the manifest says {sd['packages']} and {sd['requires']}.")
+    info = f"{root}.dist-info"
+    files = {}
+    for name, body in src.items():
+        rel = name[len(root) + 1:]
+        if rel.split("/")[0] in sd["packages"] and "/" in rel and "__pycache__" not in rel and not rel.endswith((".pyc", ".pyo")):
+            files[rel] = body
+        elif "/" not in rel and re.search(r"(LICEN[CS]E|COPYING)", rel.upper()):
+            files[f"{info}/licenses/{rel}"] = body
+    if not any(f.startswith(info + "/licenses/") for f in files):
+        fail(f"{lib}: {sd['file']} has no license file at its top.")
+    meta = pkg_info.decode("utf-8").replace("\r\n", "\n")
+    if re.search(r"^Requires-Dist:", meta, re.M):
+        fail(f"{lib}: {sd['file']}'s PKG-INFO lists requirements already; build.py adds them from the manifest.")
+    # Requires-Dist needs metadata 1.2; nothing in 1.1 changed meaning in 1.2.
+    meta = re.sub(r"^Metadata-Version: 1\.[01]$", "Metadata-Version: 1.2", meta, count=1, flags=re.M)
+    meta = re.sub(r"^(Version: .*)$", lambda mm: mm.group(1) + "".join(f"\nRequires-Dist: {r}" for r in sd["requires"]), meta, count=1, flags=re.M)
+    files[f"{info}/METADATA"] = meta.encode("utf-8")
+    files[f"{info}/WHEEL"] = ("Wheel-Version: 1.0\nGenerator: hermit-agent build.py\nRoot-Is-Purelib: true\n"
+                              + "".join(f"Tag: {py}-none-any\n" for py in tag.group(1).split("."))).encode()
+    files[f"{info}/top_level.txt"] = "".join(p + "\n" for p in sd["packages"]).encode()
+    record = "".join(f"{n},sha256={base64.urlsafe_b64encode(hashlib.sha256(b).digest()).decode().rstrip('=')},{len(b)}\n" for n, b in sorted(files.items()))
+    files[f"{info}/RECORD"] = (record + f"{info}/RECORD,,\n").encode()
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for n in sorted(files, key=lambda n: (n.startswith(info + "/"), n.endswith("/RECORD"), n)):
+            zi = zipfile.ZipInfo(n, date_time=(1980, 1, 1, 0, 0, 0))
+            zi.create_system, zi.external_attr = 3, 0o644 << 16
+            z.writestr(zi, files[n])
+    return out.getvalue()
+
+
 BUNDLED = {}
 
 
@@ -242,18 +300,29 @@ def main():
                 todo += BUNDLED[n]["requires"]
         tops = set()
         for w in spec["wheels"]:
-            if not re.fullmatch(r"https://files\.pythonhosted\.org/packages/[0-9a-f/]+/" + re.escape(w["file"]), w["url"]):
-                fail(f"{lib}: {w['file']} must come from files.pythonhosted.org under its own file name.")
-            data = cached(w["url"], "wheels/" + w["file"], check=w["sha256"])
+            sd = w.get("sdist")
+            origin = sd or w
+            if not re.fullmatch(r"https://files\.pythonhosted\.org/packages/[0-9a-f/]+/" + re.escape(origin["file"]), origin["url"]):
+                fail(f"{lib}: {origin['file']} must come from files.pythonhosted.org under its own file name.")
+            if sd:
+                data = wheel_from_sdist(lib, w, cached(sd["url"], "wheels/" + sd["file"], check=sd["sha256"]))
+                if hashlib.sha256(data).hexdigest() != w["sha256"]:
+                    fail(f"{lib}: the wheel built from {sd['file']} has sha256 {hashlib.sha256(data).hexdigest()}, "
+                         f"not its pin: wheel_from_sdist changed (update the pin) or isn't reproducible.")
+                print(f"  -> {w['file']} (built from {sd['file']})")
+            else:
+                data = cached(w["url"], "wheels/" + w["file"], check=w["sha256"])
             tops |= check_wheel(lib, w, data, dists)
             if w["file"] not in wheels:
-                wheels[w["file"]] = base64.b64encode(data).decode()
+                # gzip: a built wheel is stored, not deflated (that is what makes it reproducible).
+                wheels[w["file"]] = base64.b64encode(gzip.compress(data, 9, mtime=0)).decode()
                 wheel_total += len(data)
         missing = set(spec["imports"]) - tops
         if missing:
             fail(f"{lib}: its wheels provide no top-level {', '.join(sorted(missing))}.")
     wheels_script = "<script>window.__HERMIT_WHEELS__ = " + json.dumps(wheels) + ";</script>"
-    print(f"  -> {len(BUNDLED)} libraries, {len(wheels)} wheels, {wheel_total / 1e6:.2f} MB")
+    print(f"  -> {len(BUNDLED)} libraries, {len(wheels)} wheels, {wheel_total / 1e6:.2f} MB "
+          f"({sum(map(len, wheels.values())) / 1e6:.2f} MB inlined)")
 
     if re.search(r'</style', css, re.IGNORECASE):
         fail("src/style.css contains a literal '</style'.")

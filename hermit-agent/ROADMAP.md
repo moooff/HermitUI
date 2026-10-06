@@ -336,6 +336,17 @@ and the CSP, DESIGN §10).
     hand in the study.
 - The system prompt also gained a line about `AGENTS.md` in the workspace (DESIGN §5.3)
   after the native run; the text run includes it.
+- **Added afterwards (2026-10-06): odfpy**, for OpenDocument `.odt`/`.ods`/`.odp` and
+  pandas' `.ods` engine. The study had counted its 0.7 MB source archive; the library is
+  ~0.13 MB with defusedxml. PyPI has no wheel, so `build.py` builds a reproducible one
+  from the pinned archive (DESIGN §8). The file grows 11.31 → 11.42 MB (gzipping all
+  inlined wheels, needed for the built one, takes back ~60 KB). One more success task:
+  an `.ods` of region totals, checked with pandas' ODF reader, Qwen3.8 as above: native 3/3
+  (4 steps, 11–14 s), text 2/3. The text miss used odfpy directly, guessed its attribute
+  names, then wrote a call in another format (a `<function_calls>` block) that was taken
+  as the final answer, so no file. Before the prompt named `df.to_excel("x.ods")`, native
+  also passed 3/3 but took 5–12 steps: the model tried `to_ods`, `read_ods` and odfpy
+  attribute names. The quick selection passed 5/5 in both protocols.
 
 ---
 

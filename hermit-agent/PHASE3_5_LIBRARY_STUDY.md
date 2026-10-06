@@ -6,6 +6,14 @@ This study decides **which**; the owner makes the final pick.*
 
 > **Picked (2026-10-06): Tier 1 and Tier 2**, ten libraries, as recommended below. Built
 > in Phase 3.5 (ROADMAP; DESIGN §8, "bundled pure-Python libraries").
+>
+> **Added later the same day: odfpy.** Its 700 KB below is the source archive (docs,
+> tests, examples, a sample `.odt`). The `odf` package is 107 KB compressed, 25 KB more
+> with defusedxml, so the "0.7 MB for a rare format" reason against it was mostly a
+> measuring error. Re-checked in the app's interpreter: pandas `.ods` read and write
+> (`engine="odf"`, also picked from the extension), a styled `.odt` with a table, read
+> back, an `.ods` formula cell and an `.odp` slide all work. PyPI has no wheel for it, so
+> `build.py` builds one from the pinned archive (DESIGN §8).
 
 ## The question
 
@@ -47,7 +55,7 @@ license text.
 | Word | mammoth 1.13.0 | 58 KB | cobble | 15.8 | BSD-2 |
 | Word | docxtpl 0.20.2 | 265 KB | python-docx | 3.4 | LGPL-2.1 |
 | PowerPoint | **python-pptx** 1.0.2 | 633 KB | XlsxWriter (171 KB of it) | 58.7 | MIT |
-| OpenDocument | odfpy 1.4.1 | 700 KB | defusedxml *(undeclared)* | 5.1 | Apache-2.0 |
+| OpenDocument | odfpy 1.4.1 | 700 KB² | defusedxml *(undeclared)* | 5.1 | Apache-2.0 |
 | PDF create | fpdf2 2.8.9 | 358 KB | defusedxml | 16.3 | LGPL-3.0 |
 | PDF create | reportlab 5.0.1 | 1,911 KB | – | 65.4 | BSD |
 | PDF read/edit | pypdf 6.19.0 | 386 KB | – | 123.7 | BSD-3 |
@@ -76,6 +84,7 @@ license text.
 
 ¹ Inflated by being a dependency of very common packages (markdown-it-py of `rich`,
 chardet of `requests`). Downloads show reach, not what people pick for a task.
+² The source archive. A wheel built from it is 161 KB, its `odf` package 107 KB compressed.
 
 odfpy and docopt publish no wheel, only a source archive. Both are pure Python, so a
 wheel can be built from them at build time.
