@@ -82,4 +82,3 @@ Operational rules learned the hard way — keep future runs working:
 
 ## 📝 Safe Refactoring Workflow
 - **No Plan Required:** An Implementation Plan (`implementation_plan.md`) and plan approval are no longer required before implementing a change. Write one only when the user asks for it.
-- **Walkthroughs:** After completing major changes, generate a Walkthrough artifact (`walkthrough.md`) summarizing the exact modifications made.
