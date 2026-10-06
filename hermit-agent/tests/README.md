@@ -170,7 +170,8 @@ it stall, on cue; see its docstring):
    window pauses the run with the agent wording, and Retry resumes it with no step lost
    or repeated.
 9. **⚡ Send now**: a note during a slow reply is queued; Send now restarts the request
-   with the note, still as step 1.
+   with the note, still as step 1. A note queued while the reply turns out to be the
+   final answer is sent afterwards, and the agent answers it.
 10. **Diffs and edit-before-run**: a held overwrite's chip counts the changed lines and
     opens the diff, with Before / This version tabs; in the code editor Tab indents,
     Reset appears with the first change and restores the code, Ctrl+Enter runs, and the

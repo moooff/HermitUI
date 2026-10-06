@@ -129,7 +129,9 @@ This is the core of the product. Everything else serves it.
   ("use pandas, not csv", "skip the archive folder"). *As built:* the note's card says
   *queued* until it goes out. While the model's reply is still streaming, **⚡ Send now**
   aborts that request and asks again with the note included; the aborted reply is
-  discarded and doesn't count as a step.
+  discarded and doesn't count as a step. If that reply turns out to be the final answer,
+  there is no next request: the run carries on with the note as a follow-up instead of
+  leaving it queued (fixed 2026-10-06).
 - **Stop** finishes the current step, then ends the loop.
 - **Kill** terminates the Python worker immediately (infinite loop, runaway memory).
   The workspace survives (see §4.3); interpreter variables don't.

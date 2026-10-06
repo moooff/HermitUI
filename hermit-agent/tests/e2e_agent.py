@@ -173,6 +173,10 @@ print(len(rows), total)
              "alt": ["Guidance from the user: use the fast path", py("print('fast')")]},
             final("Done with the note."),
         ],
+        "E2E-LATE": [
+            {"content": "Here is my final answer. " * 60, "delay": 0.05},
+            final("Noted: I also checked the totals."),
+        ],
         "E2E-DIFF": [py('open("notes.txt", "w").write("line 1\\nline TWO\\nline 3\\n")\nprint("rewrote")'), final("Rewrote your notes.")],
         "E2E-EDIT": [py('print("a")'), final("Edited run done.")],
         "E2E-MODULE": [
@@ -1052,6 +1056,22 @@ def send_now_scenario(browser, port, state):
     check("the restarted request carries the note", "Guidance from the user: use the fast path" in m[1]["messages"][-1]["content"], m[1]["messages"][-1]["content"][-200:])
     check("…the note card is no longer queued", "queued" not in page.locator(".user-card").last.inner_text())
     check("…and no 'stopped' note was left", page.evaluate("() => !S.timeline.some(t => t.type === 'note' && t.text.includes('Stopped'))"))
+    page.context.close()
+
+    # A note queued while the reply turns out to be the final answer: there is no next
+    # request to carry it, so the run goes on with it instead of leaving it queued.
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.fill("#taskInput", "E2E-LATE: answer at once")
+    page.click("#sendBtn")
+    wait_until(page, "() => RUN.requesting && S.timeline.some(t => t.type === 'step')", 30, "the final answer streams")
+    page.fill("#taskInput", "also check the totals")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done' && S.timeline.filter(t => t.type === 'step').length === 2", 60, "the note is answered")
+    m = [r for r in state.requests if "E2E-LATE" in r["messages"][1]["content"]]
+    check("a note queued during the final answer is sent to the agent afterwards", len(m) == 2 and "Guidance from the user: also check the totals" in m[1]["messages"][-1]["content"], m[-1]["messages"][-1]["content"][-200:])
+    check("…the agent answers it, and the note card is no longer queued",
+          "Noted: I also checked the totals." in page.inner_text("#timeline") and "queued" not in page.locator(".user-card").last.inner_text())
     page.context.close()
 
 

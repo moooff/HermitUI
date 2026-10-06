@@ -3327,6 +3327,14 @@ async function runLoop() {
             flushModelNotes();
             const outcome = await agentTurn();
             enforceCheckpointBudget();
+            // A note the user queued while the final answer was being written would wait
+            // for a follow-up that may never come: it goes to the agent now, as one.
+            if (outcome === "done" && RUN.modelNotes.length && S.timeline.some(t => t._queued)) {
+                debugLog("model", "a note arrived during the final answer: sent to the agent now");
+                S.stepBudget = Math.max(S.stepBudget, S.stepCount + SETTINGS.stepLimit);
+                setStatus("running");
+                continue;
+            }
             if (outcome === "done" || outcome === "ask" || outcome === "stopped" || outcome === "error") break;
         }
     } catch (e) {
