@@ -153,7 +153,7 @@ section("11. Prompts");
 {
     const p = X.buildSystemPrompt("Prefer pandas.");
     check("system prompt ends with the user's instructions", p.endsWith("Additional instructions from the user:\nPrefer pandas."));
-    check("system prompt warns about subprocess and int32", /no subprocesses/.test(p) && /int32/.test(p));
+    check("system prompt warns about subprocess, threads and int32", /no subprocesses or threads/.test(p) && /threading/.test(p) && /int32/.test(p));
     check("only python fences run (said in the prompt)", p.includes("Only ```python blocks are executed"));
     check("no instructions → base prompt", !X.buildSystemPrompt("  ").includes("Additional instructions"));
     const m = X.buildTaskMessage("Sum it", [{ path: "a.csv", size: 2048 }]);

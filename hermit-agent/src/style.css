@@ -651,7 +651,6 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .origin { font-size: 0.66rem; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-muted); }
 .origin-user { color: var(--accent); border-color: var(--accent); }
 .ws-empty { padding: 12px 4px; }
-.ws-note { font-size: 0.74rem; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 8px; }
 
 /* ---------- Modals & toast ---------- */
 .modal-overlay {
