@@ -1691,7 +1691,7 @@ def edit_fix_scenario(browser, port, state):
     page.click("#sendBtn")
     wait_until(page, "() => S.status === 'done'", 60, "final")
     m = [r["messages"][-1]["content"] for r in state.requests[n0:]]
-    check("a miss shows the closest lines of the file", "[1] edit_file app.py: ERROR: the <old> text was not found in app.py. The closest text is lines 1–2, below: copy <old> exactly from there.\n1\tdef greet(name):\n2\t    return \"Hello, \" + name" in m[2], m[2])
+    check("a miss shows the closest lines of the file", "[1] edit_file app.py: ERROR: <old> was not found in app.py. The closest text is lines 1–2, below: copy <old> exactly from there.\n1\tdef greet(name):\n2\t    return \"Hello, \" + name" in m[2], m[2])
     check("…and the retry copied from them applies", "[1] edit_file app.py: edited (1 change)" in m[3], m[3])
     check("over-escaped quotes match, and say so", "matched only after removing backslashes before quotes in <old>" in m[4], m[4])
     check("…and the file has plain quotes", file_text(page, "app.py") == 'def greet(name):\n    return "Hey there, " + name\n', file_text(page, "app.py"))

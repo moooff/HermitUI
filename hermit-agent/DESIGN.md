@@ -481,6 +481,10 @@ replacement
   with the closest lines of the file (`closestExcerpt`). The closest lines are a window as
   long as `<old>`, scored by character-bigram similarity per line, and shown numbered
   like read_file output, so the model copies the real bytes instead of guessing again.
+  They are numbered as the file is, unless earlier changes of the same edit made them.
+  Every change of an edit is checked, so one reply names every miss: "4 of 9 changes
+  didn't match (the other 5 did)", each with its own closest lines. A change that missed
+  is skipped, and the later ones are checked without it. The edit stays all-or-nothing.
 - **Reads** are capped at 400 lines and 32 000 characters per read, 64 000 per reply,
   and 2 000 per line. They end with where to continue. Binary files are refused, so
   Python handles those; the refusal says what the file is (`binarySummary`: "PNG

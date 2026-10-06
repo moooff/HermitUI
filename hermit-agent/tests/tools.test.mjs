@@ -133,7 +133,7 @@ section("5. Native file batches through the executor");
     texts = X.fileCallResults(a.results, a.failed);
     check("failed batch: nothing written", a.failed && a.writes.size === 0);
     check("…the earlier write says it wasn't applied", /not applied, because the edit_file call for app\.py failed/.test(texts[0]), texts[0]);
-    check("…the failing edit uses the tool's field names", /ERROR: the old_text text was not found/.test(texts[1]) && !/<old>/.test(texts[1]), texts[1]);
+    check("…the failing edit uses the tool's field names", /ERROR: old_text was not found/.test(texts[1]) && !/<old>/.test(texts[1]), texts[1]);
 
     r = X.parseToolCalls([call("edit_file", { path: "../x", edits: [] }, "e"), call("write_file", { path: "c.txt" }, "w")], "", "tool_calls", 1);
     check("unsafe path and missing content become action errors", /Unsafe path/.test(r.actions[0].error) && /needs content/.test(r.actions[1].error));

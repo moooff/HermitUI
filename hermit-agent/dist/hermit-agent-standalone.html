@@ -2382,7 +2382,7 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
     </div>
     <header class="app-header">
         <div class="brand">
-            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.2</span></h1>
+            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.3</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
             <span class="local-badge" id="localBadge" hidden>🏠 local</span>
             <span class="protocol-badge" id="protocolBadge">🔧 auto</span>
@@ -3100,7 +3100,7 @@ def hermit_clear_workspace():
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.2";
+const APP_VERSION = "0.3.3";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -3999,8 +3999,8 @@ function fileCallResults(results, failed) {
     const failedAt = failed ? results.findIndex(r => !r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) : -1;
     const native = (s) => String(s).replace(/<old>/g, "old_text").replace(/<new>/g, "new_text").replace(/<write_file>/g, "write_file");
     return results.map((r, i) => {
-        let head = `${fileActionLabel(r)}: ${r.ok ? native(r.message) : "ERROR: " + native(r.message)}`;
-        if (!r.ok && r.excerpt) head += "\n" + r.excerpt;
+        const err = r.parts ? r.parts.map(p => native(p.text) + (p.excerpt ? "\n" + p.excerpt : "")).join("\n") : native(r.message);
+        let head = `${fileActionLabel(r)}: ${r.ok ? native(r.message) : "ERROR: " + err}`;
         if (failed && r.ok && !READONLY_FILE_TOOLS.includes(r.tool)) head = `${fileActionLabel(r)}: not applied, because the ${results[failedAt].tool} call for ${results[failedAt].path || "?"} failed: no file changes of this reply were written. Fix it and send all of the changes again.`;
         else if (failed && i === failedAt) head += "\nNo file changes of this reply were applied. Fix this and send all of the changes again.";
         return r.output !== undefined && r.ok ? head + "\n" + r.output : head;
@@ -4733,45 +4733,55 @@ function applyFileActions(actions, ws, opts) {
         const fix = (s) => (crlf ? String(s).replace(/\r?\n/g, "\r\n") : String(s));
         const flat = (s) => s.split(/\r?\n/).map(l => l.trim()).join("\n");
         const unescaped = (s) => flat(s).replace(/\\(["'`])/g, "$1").trim();
+        const original = text;
         const edits = a.args.edits || [];
-        const relaxed = [];
-        let error = "";
-        for (let k = 0; k < edits.length && !error; k++) {
-            const which = edits.length > 1 ? `change ${k + 1} of ${edits.length}: ` : "";
+        const relaxed = [], misses = [];
+        // Every change is checked, so one reply names every miss. A change that misses is
+        // skipped, and the ones after it are checked against the text without it.
+        for (let k = 0; k < edits.length; k++) {
             const oldT = fix(edits[k].old_text), newT = fix(edits[k].new_text);
-            if (!oldT) { error = which + "<old> is empty. Copy the text to replace from the file."; break; }
-            if (oldT === newT) { error = which + "<old> and <new> are identical."; break; }
+            const miss = (msg, excerpt) => misses.push({ text: (edits.length > 1 ? `change ${k + 1} of ${edits.length}: ` : "") + msg, excerpt });
+            if (!oldT) { miss("<old> is empty. Copy the text to replace from the file."); continue; }
+            if (oldT === newT) { miss("<old> and <new> are identical."); continue; }
             const n = countOccurrences(text, oldT);
-            if (n === 0) {
-                const m = matchEditText(text, oldT, newT);
-                if (m && m.count) {
-                    error = which + `the <old> text isn't in ${path} exactly as written, and matches ${m.count} times when ${m.how}. Copy it exactly from the file, with more surrounding lines so it matches once.`;
-                    break;
-                }
-                if (m) {
-                    text = text.slice(0, m.start) + m.newT + text.slice(m.end);
-                    relaxed.push((edits.length > 1 ? `change ${k + 1} ` : "") + "matched only after " + m.how);
-                    continue;
-                }
-                const near = closestExcerpt(text, oldT);
-                const after = k > 0 ? " (after the earlier changes of this edit)" : "";
-                if (flat(oldT).trim() && flat(text).includes(flat(oldT))) error = which + `the <old> text differs from ${path} only in whitespace or indentation. Copy it exactly (read_file shows the file).`;
-                else if (near && unescaped(near.lines.join("\n")) === unescaped(oldT)) error = which + `the <old> text differs from ${path} only in how quotes are escaped (backslashes). Copy it exactly from the file.`;
-                else error = which + `the <old> text was not found in ${path}.` + (near ? "" : " Read the file and copy the text exactly.");
-                if (near) {
-                    error += ` The closest text is ${near.from === near.to ? "line " + near.from : "lines " + near.from + "–" + near.to}${after}, below: copy <old> exactly from there.`;
-                    let shown = near.lines.map((l, j) => `${near.from + j}\t${l.length > lim.readMaxLineChars ? l.slice(0, lim.readMaxLineChars) + " […]" : l}`).join("\n");
-                    if (shown.length > 4000) shown = shown.slice(0, 4000) + "\n[…]";
-                    r.excerpt = shown;
-                }
-            } else if (n > 1) {
-                error = which + `the <old> text matches ${n} times in ${path}. Include more surrounding lines so it matches once.`;
-            } else {
+            if (n > 1) { miss(`<old> matches ${n} times in ${path}. Include more surrounding lines so it matches once.`); continue; }
+            if (n === 1) {
                 const i = text.indexOf(oldT);
                 text = text.slice(0, i) + newT + text.slice(i + oldT.length);
+                continue;
             }
+            const m = matchEditText(text, oldT, newT);
+            if (m && m.count) { miss(`<old> isn't in ${path} exactly as written, and matches ${m.count} times when ${m.how}. Copy it exactly from the file, with more surrounding lines so it matches once.`); continue; }
+            if (m) {
+                text = text.slice(0, m.start) + m.newT + text.slice(m.end);
+                relaxed.push((edits.length > 1 ? `change ${k + 1} ` : "") + "matched only after " + m.how);
+                continue;
+            }
+            // The closest lines, numbered as read_file numbers the file, unless earlier
+            // changes of this edit changed them.
+            let near = closestExcerpt(text, oldT), shifted = false;
+            if (near && text !== original) {
+                const there = closestExcerpt(original, oldT);
+                if (there && there.lines.join("\n") === near.lines.join("\n")) near = there;
+                else shifted = true;
+            }
+            let msg;
+            if (flat(oldT).trim() && flat(text).includes(flat(oldT))) msg = `<old> differs from ${path} only in whitespace or indentation. Copy it exactly (read_file shows the file).`;
+            else if (near && unescaped(near.lines.join("\n")) === unescaped(oldT)) msg = `<old> differs from ${path} only in how quotes are escaped (backslashes). Copy it exactly from the file.`;
+            else msg = `<old> was not found in ${path}.` + (near ? "" : " Read the file and copy the text exactly.");
+            if (!near) { miss(msg); continue; }
+            msg += ` The closest text is ${near.from === near.to ? "line " + near.from : "lines " + near.from + "–" + near.to}${shifted ? " (numbered as after the earlier changes of this edit)" : ""}, below: copy <old> exactly from there.`;
+            let shown = near.lines.map((l, j) => `${near.from + j}\t${l.length > lim.readMaxLineChars ? l.slice(0, lim.readMaxLineChars) + " […]" : l}`).join("\n");
+            if (shown.length > 4000) shown = shown.slice(0, 4000) + "\n[…]";
+            miss(msg, shown);
         }
-        if (error) { fail(error); continue; }
+        if (misses.length) {
+            // Each miss with its closest lines. The file's text is kept apart from the
+            // messages, so native results can rename <old> in the messages only.
+            r.parts = (edits.length > 1 ? [{ text: `${misses.length} of ${edits.length} changes didn't match (the other ${edits.length - misses.length} did):` }] : []).concat(misses);
+            fail(r.parts.map(p => p.text).join("\n"));
+            continue;
+        }
         overlay.set(path, { text });
         r.ok = true;
         r.message = `edited (${edits.length} change${edits.length === 1 ? "" : "s"}${relaxed.length ? "; " + relaxed.join(", ") + ". Next time copy <old> exactly from read_file" : ""})`;
@@ -4824,8 +4834,8 @@ function fileActionLabel(r) {
 function formatFileResults(results, failed) {
     const out = [];
     results.forEach((r, i) => {
-        let head = `[${i + 1}] ${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + r.message}`;
-        if (!r.ok && r.excerpt) head += "\n" + r.excerpt;
+        const err = r.parts ? r.parts.map(p => p.text + (p.excerpt ? "\n" + p.excerpt : "")).join("\n") : r.message;
+        const head = `[${i + 1}] ${fileActionLabel(r)}: ${r.ok ? r.message : "ERROR: " + err}`;
         out.push(r.output !== undefined ? head + "\n" + r.output : head);
     });
     if (failed) {
