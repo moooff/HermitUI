@@ -620,7 +620,9 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
   ignores `tools` would leave the model with no way to act: llama.cpp's `/props`
   (`chat_template_caps.supports_tool_calls`, else a template that references `tools`),
   Ollama's `/api/show` (`capabilities` contains `"tools"`, else a template with `.Tools`),
-  or a model list's `supported_parameters` (OpenRouter). It is the same probe that reads
+  a model list's `supported_parameters` (OpenRouter), or a model list entry `owned_by:
+  "vllm"` (vLLM reports nothing else, but refuses `tools` with a 400 when tool calling
+  isn't enabled rather than ignoring them, so the fallback below covers it). It is the same probe that reads
   the reasoning levels and the context size; Test Connection shows what it found. A
   header badge beside 🏠 local says which one the next request uses: 🔧 native, 📝 text,
   or 🔧 auto until the endpoint has been probed (before the first request, or by Test

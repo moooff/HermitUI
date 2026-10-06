@@ -1450,11 +1450,18 @@ def vllm_compact_scenario(browser, port, state):
     wait_until(page, "() => document.getElementById('reasoningStatus').textContent.includes('context')", 15, "connection test")
     status = page.inner_text("#reasoningStatus")
     check("Test Connection shows the size from /v1/models", "context 2,048 tokens (/v1/models)" in status, status)
+    check("…and takes owned_by vllm as tool-call support", "tool calls: supported (vLLM /v1/models)" in status, status)
     page.click("#settingSave")
     check("no Compact button before a session", page.locator("#compactBtn").is_hidden())
+    n0 = len(state.requests)
     page.fill("#taskInput", "E2E-MANUAL: print things")
     page.click("#sendBtn")
     wait_until(page, "() => S.status === 'done'", 60, "manual task done")
+    reqs = state.requests[n0:]
+    check("tool calling not enabled on the server: one request with tools, then text",
+          [bool(r.get("tools")) for r in reqs[:2]] == [True, False] and not any(r.get("tools") for r in reqs[1:]), [bool(r.get("tools")) for r in reqs])
+    check("…the probe took vLLM as tool-capable", page.evaluate("() => [REASONING.tools, REASONING.toolsSource]") == ["supported", "vLLM /v1/models"])
+    check("…and a note says it fell back", "refused native tool calls" in page.text_content("#timeline"))
     ctx = page.evaluate("() => [REASONING.nCtx, REASONING.ctxSource]")
     check("the run knows the context size without /props", ctx == [2048, "/v1/models"], ctx)
     check("…and the step stats show it", "/ 2,048" in page.text_content("#timeline"))

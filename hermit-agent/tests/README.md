@@ -151,9 +151,11 @@ it stall, on cue; see its docstring):
      an error card.
    - A "length" reply that filled the mock's `n_ctx` is told apart from `max_tokens`
      and compacts before the next request.
-   - Under the mock's vLLM-style path (`/vllm/v1`: no `/props`, `max_model_len` in the
-     model list) Test Connection and the run find the context size, and the 🗜️ Compact
-     button summarises on request and the follow-up carries the summary.
+   - Under the mock's vLLM-style path (`/vllm/v1`: no `/props`, `max_model_len` and
+     `owned_by: "vllm"` in the model list, tool calling not enabled) Test Connection and
+     the run find the context size, Auto goes native and falls back to text on vLLM's
+     400, and the 🗜️ Compact button summarises on request and the follow-up carries the
+     summary.
    The mock answers the summariser's request with a fixed summary, and counts the
    compacted steps toward its turn index.
    - **Checkpoint budget** (shrunk to 2.5 KB): the oldest checkpoints are dropped with a

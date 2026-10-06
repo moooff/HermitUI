@@ -3700,9 +3700,13 @@ function findListedModel(data, model) {
     return m && typeof m === "object" ? m : null;
 }
 
-// From a model list's supported_parameters (OpenRouter and others).
+// From a model list's supported_parameters (OpenRouter and others). vLLM reports nothing
+// (no /props, no such field) but marks its models owned_by "vllm", and it never ignores
+// `tools` silently: without --enable-auto-tool-choice it refuses any request carrying
+// them with a 400 (tool_choice defaults to "auto" then), which the fallback catches.
 function toolSupportFromModelList(data, model) {
     const m = findListedModel(data, model);
+    if (m && !Array.isArray(m.supported_parameters) && m.owned_by === "vllm") return "supported";
     if (!m || !Array.isArray(m.supported_parameters)) return "unknown";
     return m.supported_parameters.includes("tools") ? "supported" : "unsupported";
 }
@@ -5904,7 +5908,11 @@ async function probeModelListContext(url, key, model) {
             reached = true;
             if (!res.ok) return null;
             const data = await res.json();
-            if (tools === "unknown") { tools = toolSupportFromModelList(data, model); toolsSource = tools === "unknown" ? "" : source; }
+            if (tools === "unknown") {
+                tools = toolSupportFromModelList(data, model);
+                const m = findListedModel(data, model);
+                toolsSource = tools === "unknown" ? "" : m && m.owned_by === "vllm" ? "vLLM " + source : source;
+            }
             const nCtx = contextSizeFromModelList(data, model);
             return nCtx ? { nCtx, ctxSource: source } : null;
         } catch (e) { return null; }

@@ -11,7 +11,8 @@ turn count, since those K assistant messages are gone. A reply marked
 `overflow_unless_compacted` answers a 400 context-size error until the history has
 been compacted. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
 (the mock's /props reports n_ctx 4096). Under /vllm/v1 it acts like vLLM: no /props,
-and the context size (2048) only in the model list's `max_model_len`.
+the context size (2048) only in the model list's `max_model_len`, models `owned_by`
+"vllm", and tool calling not enabled (any request with `tools` gets vLLM's 400).
 
 Outages: `state.down = "refuse"` closes every connection without an answer (the page
 sees "Failed to fetch"), `"503"` answers chat requests with a 503; `state.fail_next` is a
@@ -133,7 +134,7 @@ def make_handler(state):
                 return self.send_json(200, {"got": "it"})
             if self.path.startswith("/vllm/"):   # vLLM: no /props, the size is in the model list
                 if self.path.endswith("/models"):
-                    return self.send_json(200, {"object": "list", "data": [{"id": "mock-model", "object": "model", "max_model_len": 2048}]})
+                    return self.send_json(200, {"object": "list", "data": [{"id": "mock-model", "object": "model", "owned_by": "vllm", "max_model_len": 2048}]})
                 return self.send_json(404, {"error": {"message": "not found"}})
             if self.path == "/props":   # llama.cpp's: context size only, no template
                 return self.send_json(200, {"default_generation_settings": {"n_ctx": 4096}})
@@ -162,6 +163,8 @@ def make_handler(state):
                 return self.send_json(503, {"error": {"message": "Loading model"}})
             if body.get("tools") and self.path.startswith("/notools/"):
                 return self.send_json(500, {"error": {"message": "tools param requires --jinja flag"}})
+            if body.get("tools") and self.path.startswith("/vllm/"):   # vLLM without --enable-auto-tool-choice
+                return self.send_json(400, {"error": {"message": '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set'}})
             bad = tool_sequence_error(body)
             if bad:
                 return self.send_json(400, {"error": {"message": "invalid history: " + bad}})

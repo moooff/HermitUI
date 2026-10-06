@@ -38,6 +38,8 @@ section("2. Which protocol, and support detection");
     check("older Ollama: template with .Tools → supported", X.toolSupportFromOllamaShow({ template: "{{ if .Tools }}…{{ end }}" }) === "supported");
     check("model list supported_parameters → supported", X.toolSupportFromModelList({ data: [{ id: "m", supported_parameters: ["tools", "max_tokens"] }] }, "m") === "supported");
     check("model list without the field → unknown", X.toolSupportFromModelList({ data: [{ id: "m" }] }, "m") === "unknown");
+    check("vLLM's model list (owned_by vllm) → supported", X.toolSupportFromModelList({ object: "list", data: [{ id: "Qwen/Qwen3-32B", object: "model", owned_by: "vllm", max_model_len: 32768 }] }, "Qwen/Qwen3-32B") === "supported");
+    check("…another owner without the field stays unknown", X.toolSupportFromModelList({ data: [{ id: "m", owned_by: "organization_owner" }] }, "m") === "unknown");
     check("context size still read from the model list", X.contextSizeFromModelList({ data: [{ id: "m", max_model_len: 2048 }] }, "m") === 2048);
 
     check("llama.cpp without --jinja is a tool rejection", X.looksLikeToolRejection(500, "tools param requires --jinja flag"));
