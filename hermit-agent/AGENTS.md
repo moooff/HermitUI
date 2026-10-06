@@ -65,12 +65,13 @@ See [tests/README.md](tests/README.md). The page's CSP blocks `eval`, so Playwri
 - **Worker messages are untrusted.** Agent code can reach the worker's JS globals.
   The main thread validates every worker message and never evaluates anything it
   receives (DESIGN.md §4.1).
-- **A minor version per phase, a patch version per sub-phase.** When a phase meets its
-  exit criterion, raise the version (`APP_VERSION` in `src/script.js`, the header badge
-  in `src/index.html`, the status line in `README.md`) in the commit that completes it:
-  the minor version for a phase (3.5 counts as one), the patch version for a sub-phase
-  numbered below it (3.6 → v0.3.1). v0.1.0 was Phase 1, v0.2.0 Phase 3 (2a and 2b had no
-  bump of their own), v0.3.0 Phase 3.5, v0.3.1 Phase 3.6.
+- **A version bump in every commit.** Every commit that changes `hermit-agent/` raises
+  the version (`APP_VERSION` in `src/script.js`, the header badge in `src/index.html`,
+  the status line in `README.md`) in that same commit: the minor version when the commit
+  completes a phase (3.5 counts as one), the patch version otherwise, including a
+  sub-phase numbered below it (3.6 → v0.3.1). v0.1.0 was Phase 1, v0.2.0 Phase 3 (2a and
+  2b had no bump of their own), v0.3.0 Phase 3.5, v0.3.1 Phase 3.6; from v0.3.2 (edit_file
+  relaxed matching) on, every commit bumps.
 - **Never send the API key to the worker or into an export.**
 - **Never auto-execute imported sessions.** Import restores in a paused state (DESIGN
   §3.3).
