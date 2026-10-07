@@ -46,7 +46,7 @@ const FUNCS = [
     "buildSystemPrompt", "formatBytes", "buildTaskMessage", "splitReply", "parseReply", "truncateOutput",
     "diffListings", "formatChanges", "classifyEffect", "buildObservation", "appendToLastUserMessage",
     "isSafeRelPath", "normalizeUploadPath", "makeFence", "filenameCommentHint", "missingMentionedFiles",
-    "normalizeActionPath", "normalizeSearchPath", "globToRegExp", "hasNestedQuantifier", "searchRegExp", "parseTagAttrs", "extractFileActions", "decodeTextFile", "countOccurrences", "plainPunct", "matchEditText", "closestExcerpt", "applyFileActions",
+    "normalizeActionPath", "normalizeSearchPath", "resolveMarkdownLink", "globToRegExp", "hasNestedQuantifier", "searchRegExp", "parseTagAttrs", "extractFileActions", "decodeTextFile", "countOccurrences", "plainPunct", "matchEditText", "closestExcerpt", "applyFileActions",
     "fileActionLabel", "formatFileResults", "validateSyntaxResult", "syntaxErrorNote",
     "buildStepStats", "cleanStepStats", "formatStepStats",
     "formatFileList", "isContextOverflowError", "messageChars", "estimateTokens", "contextLimit", "compactionDue", "cutByContext", "contextSizeFromModelList", "ollamaNumCtx", "checkpointsToDrop",
@@ -58,7 +58,7 @@ const FUNCS = [
     "describeBinary", "zipCentralDirectory", "binarySummary", "binaryFileNotes", "periodicFileListing", "fileListingKey",
     "awaitsModel", "copyMessage", "agentToolDefs", "resolveProtocol", "toolSupportFromProps", "toolSupportFromOllamaShow", "findListedModel",
     "toolSupportFromModelList", "looksLikeToolRejection", "fallbackToolCallId", "toolCallToFileAction", "cleanAskOptions", "splitAskOptions", "parseToolCalls", "toolCallAsText",
-    "messageAsText", "toolHistoryAsText", "fileCallResults", "noActionAdvice",
+    "messageAsText", "toolHistoryAsText", "fileCallResults", "noActionAdvice", "strayTagNote",
 ];
 
 const mod = `

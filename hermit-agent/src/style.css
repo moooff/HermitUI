@@ -493,7 +493,13 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
     cursor: pointer;
     color: var(--text-muted);
 }
-.viewer-tab[aria-selected="true"] { color: var(--primary); border-color: var(--primary); font-weight: 600; }
+.viewer-tab[aria-selected="true"], .viewer-tab[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); font-weight: 600; }
+/* A Markdown file in the viewer: rendered prose, wrapping, with its images fitted. */
+.md-file { line-height: 1.55; }
+.md-file img { max-width: 100%; height: auto; }
+.md-file blockquote { border-left: 3px solid var(--border-strong); padding-left: 10px; color: var(--text-muted); }
+.md-file hr { border: none; border-top: 1px solid var(--border-strong); }
+.md-missing { color: var(--text-muted); font-style: italic; }
 .file-actions { list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
 .file-action { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .file-action-verb { font-weight: 600; }

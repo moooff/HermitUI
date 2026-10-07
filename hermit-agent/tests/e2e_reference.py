@@ -714,6 +714,11 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
         base["figures"] = shown["figs"]
         if not shown["inWorkspace"] or not shown["shown"]:
             problems.append(f"no figure captured and shown inline: {shown}")
+    if problems:
+        # What the agent ran or wrote, and its replies, so a failed run can be diagnosed from
+        # the results file.
+        base["code"] = agent_code(page)[-4000:]
+        base["replies"] = ev(page, "() => S.timeline.filter(t => t.type === 'step').map(t => (t.content || '').slice(-1500))")
     return {**base, "passed": not problems, "detail": "; ".join(problems)}
 
 

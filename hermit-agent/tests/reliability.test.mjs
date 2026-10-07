@@ -182,8 +182,14 @@ section("8. Packages: the list, the index, failures");
         check("…without micropip", !r.includes("micropip"));
     }
     const p = X.buildSystemPrompt("", ["numpy", "pandas"]);
-    check("system prompt lists the packages", p.includes("Only these packages (the Pyodide distribution plus a few bundled libraries) can be imported besides the standard library") && p.includes("numpy, pandas."));
-    check("…and names examples without a list", X.buildSystemPrompt("").includes("(numpy, pandas, matplotlib"));
+    check("system prompt lists the packages", p.includes("Besides the standard library and your own modules, only these packages can be imported (the Pyodide distribution plus a few bundled libraries): numpy, pandas.\n"));
+    for (const pr of ["text", "tools"]) {
+        const s = X.buildSystemPrompt("", ["numpy", "pandas"], pr), at = s.indexOf("only these packages can be imported");
+        const next = pr === "tools" ? "You act only through tool calls" : "Every reply must be exactly ONE of";
+        check(`${pr}: the list is the environment's last line, after its rules`, at > s.indexOf("Don't install anything") && at > s.indexOf("is killed, and the interpreter restarts") && at < s.indexOf(next) && /listed at the end of this section/.test(s));
+    }
+    check("…and names examples without a list", X.buildSystemPrompt("").includes("(numpy, pandas, matplotlib") && !X.buildSystemPrompt("").includes("only these packages") && !X.buildSystemPrompt("").includes("listed at the end"));
+    check("HTTP clients are listed, but said not to connect", /no network access[^.]*\(requests and other HTTP clients import, but can't connect\)/.test(p));
 
     const CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
     const off = X.packageFailureMessage({ failed: ["numpy"], errors: ["Failed to load 'x': request failed."], netAttempts: [] }, false, CDN);

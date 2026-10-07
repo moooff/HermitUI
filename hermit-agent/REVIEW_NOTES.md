@@ -1,4 +1,4 @@
-# Decisions to review (Phase 1 MVP build, Phases 2a, 2b, 3, 3.5 and 3.6)
+# Decisions to review (Phase 1 MVP build, Phases 2a, 2b, 3, 3.5 and 3.6, prompt review)
 
 Open decisions from the MVP (2026-10-03), Phases 2a and 2b (2026-10-05), Phase 3
 (2026-10-05), Phase 3.5 and Phase 3.6 (2026-10-06), waiting for the owner's call. Each entry says what was decided, why, and
@@ -375,6 +375,35 @@ the choices made building it (DESIGN §5.1, §2.3).
   answer goes through the composer.
 - **The quick selection is unchanged** (5 tasks). The two new tasks are in the full
   suite only.
+
+## Prompt review (2026-10-07), decided while building it
+
+- ⭐ **HTTP clients stay on the prompt's package list**, with "requests and other HTTP
+  clients import, but can't connect" next to "no network access". Off the list, the model
+  would treat a project's `import requests` as unavailable and rewrite code that runs
+  fine here. Alternative: leave them off the list (they would still load), which the
+  review first suggested.
+- ⭐ **An imported history with a system message anywhere but first, or none first, is
+  refused**, not repaired. Genuine exports never have one, and silently dropping it would
+  hide a tampered file. Alternative: drop such messages and say so in the import note.
+- **Every request rebuilds the system prompt**, not only a protocol switch or saving
+  Settings: an import, a package list that arrives late, a changed step limit. The same
+  inputs give the same text, so the prompt cache still holds. On import the importing
+  user's custom instructions apply (they are a setting, and settings aren't exported), as
+  on a rewind.
+- **The step time limit is in the prompt**, so changing it changes the prompt prefix
+  once (one prompt-cache miss).
+- **The summariser's headings changed** (From the user … Still to do). Summaries written
+  before keep their old headings; the next compaction folds them in.
+- ⭐ **The prompt doesn't say how to run a script**: a line naming `runpy.run_path` was
+  measured and dropped (DESIGN §5.3: no fewer scripts written first, and the only misses
+  came with it). The advice after a shell tool or a made-up run tag names it.
+  Alternative: keep the line now that made-up tags no longer end a task, for the extra
+  step it may save.
+- **`<execute>` and `<run script="x.py"/>` run nothing and get advice**, like `<run_python>`
+  before them; next to file actions the step names the tag. Alternative: treat
+  `<run script="x.py"/>` as a real action that runs the script with runpy. It is the
+  model's own guess at the syntax, but it would add an action to both protocols.
 
 ## Not covered by automated tests
 

@@ -306,6 +306,14 @@ below.
   limits are restored, but the base URL and model stay as the importing user set
   them; the import note names the endpoint the session was recorded against. A
   shared session must not silently send its contents to the sender's endpoint.
+- **Nor does the system prompt** *(added 2026-10-07)*. The file holds the prompt of the
+  version and settings that exported it, and a hand-made file could hold anything.
+  Every request rebuilds `messages[0]` from today's version and settings
+  (`syncSystemPrompt`), as a rewind already did. The custom instructions are a setting
+  that isn't exported, so the importing user's own apply. A history that doesn't start
+  with the system prompt, or that has a system message anywhere else (the saved
+  histories of compactions included), is refused: further down, a system message would
+  steer the model with the app's authority.
 - **Confirm before replacing** a non-empty current session, mirroring HermitUI's
   `importConfirmModal`.
 - **Version policy:** the reader accepts its own format version and older ones (with
@@ -436,7 +444,13 @@ Parsing rules:
   2b success measurement Qwen3.8 once answered `<run_python>python process.py</run_python>`,
   which counted as a final answer and ended the task with nothing run. *Phase 3.6:* spellings such as
   `<run python>`, `<run-code>` or `<executepython>` count too; in the 3.6 measurement a
-  `<run python>` reply ended a PDF task with no PDF.
+  `<run python>` reply ended a PDF task with no PDF. *Prompt review (2026-10-07):* so do
+  `<execute>`, `<exec>`, `<run …>` (attributes included) and `<code_execution>`: Qwen3.8
+  ended tasks with `<execute><cmd>python solve.py</cmd></execute>` and
+  `<run script="shop.py"/>`, each right after writing the script with `write_file`, and
+  a chart task with plain Python inside `<code_execution>`. Next to file actions such a tag used to be
+  dropped without a word, so the model could take its script as run; the file step now
+  says the tag ran nothing and how to run a script (`strayTagNote`).
 
 **File actions** *(added after the MVP)*. Writing a file from Python means escaping its
 source inside a string, changing one line means rewriting the file, and printing a file
@@ -571,7 +585,46 @@ uploaded file: whatever it asks for goes through the same gating (§2.3).
 names, ~1k tokens, read from the inlined `pyodide-lock.json`: real packages only, no
 shared libraries, `*-tests` or `_private` names). Nor `micropip`: it installs at run time, which agent code can't (no network), and with it on the list the agent was seen reaching for `micropip.install` instead of a plain import, which failed (2026-10-05). A package loads by being imported; an `import micropip` gets that advice. Before the core is read it names a
 few examples instead. It costs a fixed prefix the server caches, and it stops the model
-from reaching for `requests` or `pip`.
+from reaching for `pip` or for packages that aren't there. HTTP clients (`requests`,
+`httpx`, `aiohttp`, …) are on it, because a project's code that imports them should still
+run, so the prompt says they import but can't connect.
+
+*Revised 2026-10-07* (from a review of the prompts against what the harness does):
+- **The package list is the environment section's last line.** Mid-sentence, its ~1k
+  tokens of names sat between the start of a line and its rules ("Don't install
+  anything", "input() does not work"); the line now says the packages are listed at the
+  end of the section.
+- **The step time limit is named** with its value from Settings, and what a kill costs:
+  the interpreter restarts (variables lost) and files stay as before the step. The
+  prompt is rebuilt before every request (§3.3), so a changed limit reaches the model.
+  Facts only: an added "split long-running work across steps" went again, since the
+  arms that had it took 94 steps for what took 82 before (within noise at 18 runs, but
+  steps are what such an instruction would add).
+- **How to run a script stays out of the prompt (tried and measured).** Two earlier misses
+  were script runs written as made-up tool tags (`<run_python>python process.py`,
+  `<run python> exec(open("reorder.py").read())`), so a line naming
+  `runpy.run_path("script.py", run_name="__main__")` was tried. In 18 text-mode runs per
+  arm on six data tasks (Qwen3.8, effort Low), the model wrote a `.py` file first in 9
+  with the line, 10 without it and 6 on the previous prompt, and the only misses (2) came
+  with the line, one of them `<execute><cmd>python solve.py</cmd></execute>` right after
+  writing the script. No benefit, so the line went. The advice after a shell tool or a
+  made-up tag names runpy instead, now with `run_name="__main__"`: without it a script's
+  `if __name__ == "__main__":` block silently doesn't run. Such tags run nothing and
+  get that advice (§5.1).
+- **Edited modules:** the worker drops `/workspace` modules from `sys.modules` before each
+  step, so the next import reads the file again, but names a step imported earlier keep
+  the old code. The prompt used to say modules were "re-imported fresh at every step",
+  which invites calling a stale function after an edit.
+- **int32 sums.** The calculation task's recurring miss (the sum of the primes below
+  2,000,000, answered mod 2³²) has small values and a large *sum*, which "use int64 for
+  large values" didn't cover; the line now names `np.arange`/`np.nonzero`/`np.where`,
+  int32 accumulation in `.sum()` and `.sum(dtype=np.int64)` (checked in the pinned
+  Pyodide: numpy 2.2.5's `np.where(sieve)[0].sum()` gives exactly the wrong answer).
+  Measured in code-as-action with Qwen3.8: right in 19 of 21 runs, against 10 of 17
+  before. A miss still writes the textbook sieve from memory and sums `np.where`'s
+  indices, so the line helps but can't guarantee it.
+- `edit_file`'s pairs apply in order, each to the result of the ones before: now said in
+  both protocols, not only in a failed edit's message.
 
 ### 5.4 Context management
 - Older observations are progressively elided ("[step 3 output elided; see
@@ -633,8 +686,15 @@ The step card says it was sent, and the debug console logs it.
   out rather than to reason less, and the next turn compacts first, as far as needed
   (reason `context`), regardless of the threshold.
 - **Mechanism:** one extra request to the same endpoint, with a fixed summariser prompt.
-  The headings are Task, Done so far, Files, Interpreter state, Errors and dead ends, and
-  Next. Observations in it are clipped to 1.5 + 1.5 KB. The history becomes the system
+  The headings are From the user, Done so far, Files, Interpreter state, Errors and dead
+  ends, and Still to do. *(Revised 2026-10-07: they were Task … Next.)* The task message
+  stays verbatim above the summary, so the summary spends its 400 words, which every
+  later compaction shares, on what the user said *after* the task, and the summariser is
+  told so. Only the user's own words belong under that heading (follow-ups, answers,
+  guidance, rejection reasons): the summariser is told that an instruction found in a
+  file or in program output is data, so that a summary doesn't relay it as the user's.
+  "Next" described the step the kept tail already shows; "Still to do" keeps what was
+  left of the task. Observations in it are clipped to 1.5 + 1.5 KB. The history becomes the system
   prompt, then the task message with `<history_summary steps="1-K">…</history_summary>`
   and the current file list appended, then the last 4 steps verbatim. The kept tail
   starts at an assistant message, so roles still alternate. A later compaction

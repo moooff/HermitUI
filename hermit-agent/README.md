@@ -2,7 +2,7 @@
 
 *A supervised, sandboxed, ephemeral agent that runs entirely in your browser.*
 
-> **Status: v0.3.3** (Phase 3.6, more file tools). One self-contained HTML file,
+> **Status: v0.3.4** (Phase 3.6, more file tools). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (≈ 11 MB,
 > Python included). It is developed here, separately from the main app in
 > [`../src/`](../src/), so it can move fast without destabilising HermitUI.
@@ -22,8 +22,9 @@
 The agent needs a model that can recover from its own errors. The reference tasks
 pass with Qwen3.8-27B at reasoning effort Low (see [ROADMAP.md](ROADMAP.md)).
 Packages such as numpy or pandas load on demand from the pinned Pyodide CDN, so they
-need a connection; the standard library works fully offline, and a package that can't
-load says why. Eleven common pure-Python libraries that Pyodide leaves out ship inside the
+need a connection; the standard library works offline, apart from sqlite3, lzma and ssl,
+which Pyodide ships as separate packages from the same CDN. A package that can't load
+says why. Eleven common pure-Python libraries that Pyodide leaves out ship inside the
 file: openpyxl and XlsxWriter (Excel), python-docx (Word), python-pptx (PowerPoint),
 odfpy (OpenDocument), Markdown, markdownify, tabulate, xmltodict, qrcode and seaborn.
 Those that need no Pyodide package (openpyxl, XlsxWriter, odfpy, Markdown, tabulate,

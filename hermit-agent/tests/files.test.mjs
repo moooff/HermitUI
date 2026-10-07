@@ -242,6 +242,17 @@ section("7. session schema");
     const md = X.transcriptMarkdown({ timeline: [{ type: "step", n: 1, kind: "files", fileActions: fa }] });
     check("transcript lists the actions", md.includes("- `edit_file` a.py: edited (1 change)") && md.includes("- `read_file` b.txt"));
     check("system prompt documents the tags", ["<read_file", "<write_file", "<edit_file", "<old>", "<new>"].every(t => X.buildSystemPrompt("").includes(t)));
+    check("…and that an edit's pairs apply in order", /they apply in order, each to the result of the ones before/.test(X.buildSystemPrompt("")));
+}
+
+section("8. Markdown links in the file viewer");
+{
+    const r = X.resolveMarkdownLink;
+    check("relative to the file's folder", r("docs/report.md", "figures/a.png") === "docs/figures/a.png" && r("report.md", "./a.png") === "a.png");
+    check("../ climbs, but not out of /workspace", r("docs/report.md", "../data.csv") === "data.csv" && r("report.md", "../x.png") === null && r("a/b.md", "../../x") === null);
+    check("rooted and /workspace paths", r("docs/r.md", "/workspace/fig.png") === "fig.png" && r("docs/r.md", "/fig.png") === "fig.png");
+    check("query, fragment and %-escapes", r("r.md", "my%20chart.png?v=2") === "my chart.png" && r("r.md", "notes.md#intro") === "notes.md" && r("r.md", "%E0%A4%A") === null);
+    check("URLs, anchors and data: aren't workspace paths", ["https://x.org/a.png", "//cdn/x.png", "mailto:a@b.c", "#intro", "data:image/png;base64,AA", "javascript:alert(1)", "", "  "].every(h => r("r.md", h) === null));
 }
 
 report();

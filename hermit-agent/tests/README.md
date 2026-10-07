@@ -23,7 +23,8 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   - `parseReply`: only `python`-tagged fences run, the first block wins, and
     unclosed blocks, cut-offs, `ask:`, empty replies and final answers are handled.
     Includes the spike's bare-fence bug, and `<python>…</python>` tags (Qwen3.8 wrote
-    those instead of a fence) and `<tool_call>` replies.
+    those instead of a fence), `<tool_call>` replies and guessed tool tags
+    (`<run_python>`, `<execute>`, `<run script="x.py"/>`), alone or next to file actions.
   - `splitReply`, `truncateOutput` (2 KB + 4 KB), `diffListings`, `formatChanges`.
   - `classifyEffect`: every row of the DESIGN §2.3 table.
   - `buildObservation`: the §5.2 envelope.
@@ -81,7 +82,8 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   generated ids, replies without calls), native file batches through `applyFileActions`
   and `fileCallResults`, answering a pending `ask_user`/`finish`, `toolHistoryAsText`
   (calls written out parse back to the same actions), elision and compaction with tool
-  calls, the native system prompt and hints, and session format 2.
+  calls, the native system prompt and hints, and session format 2 (a system message
+  only as the first message).
 - **`bundled.test.mjs`** covers the bundled libraries (Phase 3.5, DESIGN §8): the real
   `BUNDLED_LIBRARIES` manifest (Tier 1 and Tier 2 plus odfpy, pinned pure wheels from
   PyPI or, for odfpy, a pinned source archive to build one from, known `requires`),
@@ -135,7 +137,10 @@ it stall, on cue; see its docstring):
    - The file viewer, the workspace zip, and the session export (checked with
      Python's `zipfile`; the API key must not appear anywhere in it).
 2. **Import** into a fresh page:
-   - Timeline and workspace identical, a follow-up carrying the restart note.
+   - A session file with a second system message is refused, and nothing is restored.
+   - Timeline and workspace identical, a follow-up carrying the restart note. The file's
+     system prompt was replaced with an old one: the follow-up's request carries
+     today's, with the step time limit set on the page.
    - Rewind to a step and to the start, with the worker re-seeded and its
      variables gone.
    - Confirm-before-replace.
@@ -195,7 +200,7 @@ it stall, on cue; see its docstring):
     Python, is imported fresh (the `sys.modules` carry-over); no `__pycache__`; the
     context gauge; closing with unexported work asks (`beforeunload`), and doesn't once
     exported.
-12. **Packages**: the system prompt's list, a real load of `six` from the CDN (needs a
+12. **Packages**: the system prompt's list and step time limit, a real load of `six` from the CDN (needs a
     connection) with its note, a `ModuleNotFoundError` hint, and a load that fails
     offline (Chromium: `set_offline`, then the model request retries until online
     again; Firefox: the CDN blocked by a route, because Playwright's Firefox holds
@@ -251,6 +256,9 @@ it stall, on cue; see its docstring):
     import keep the new action rows and options (disabled once imported). Natively: a
     search + move batch gets one result per call, the moved file keeps its origin, the
     syntax note is in the tool result, and a clicked option is `ask_user`'s result.
+19. **Tool tags in the model's own spelling** (`stray_tag`): `<run script="job.py"/>`
+    after a `write_file` lets the write apply and tells the model the tag ran nothing;
+    `<execute>` alone runs nothing and doesn't end the task; runpy then runs the script.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters
