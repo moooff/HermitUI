@@ -47,7 +47,8 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
     runtime-only fields and the API key never reach the export.
   - Tampering: a wrong checkpoint blob, missing content, an index pointing past the
     session, a missing manifest, a newer format version, broken JSON.
-  - `validateSession` coercion and defaults.
+  - `validateSession` coercion and defaults, and the clamping of imported numeric
+    settings to the Settings bounds (a step timeout of 0 can't disable the watchdog).
   - Compactions and checkpoint epochs: round-trip, tampering, and older exports
     without them.
   - `workspaceEntriesFromZip`: a workspace zip, OS junk, a session export's
@@ -112,7 +113,8 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   `delete_file` and `move_file` tags (quoted `>` in a pattern, a trailing `/`, the whole
   workspace as `.`), `globToRegExp` and `searchRegExp` (the `(?i)` prefix, plain text for
   an invalid regex), `applyFileActions` for search (listing, matches, the match, file,
-  line, size and read-budget caps, binary files, the reply's earlier writes), delete
+  line, size and read-budget caps, the per-line 64 KB scan cap that bounds one `re.exec`
+  on a very long line, binary files, the reply's earlier writes), delete
   (files, folders, delete then write) and move (binary bytes and a BOM kept, folders,
   every refusal, move then edit, delete then move), the native calls and their text form
   round-tripping, `classifyEffect` for moves, `validateSyntaxResult` and
@@ -259,6 +261,11 @@ it stall, on cue; see its docstring):
 19. **Tool tags in the model's own spelling** (`stray_tag`): `<run script="job.py"/>`
     after a `write_file` lets the write apply and tells the model the tag ran nothing;
     `<execute>` alone runs nothing and doesn't end the task; runpy then runs the script.
+20. **UI redress** (`redress`): a reply whose prose hides a transparent overlay carrying
+    `data-action="rerun-net"` over a held step's card, on a step that attempted (blocked)
+    network. The rendered Markdown carries no `data-action`/`data-idx`/`data-role` and no
+    inline `style`, its link opens in a new tab, and clicking the real Reject button
+    rejects the step rather than approving it with network — nothing reaches `/exfil`.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters

@@ -305,7 +305,12 @@ below.
 - **Connection settings don't carry over either** *(MVP decision)*. Autonomy and
   limits are restored, but the base URL and model stay as the importing user set
   them; the import note names the endpoint the session was recorded against. A
-  shared session must not silently send its contents to the sender's endpoint.
+  shared session must not silently send its contents to the sender's endpoint. The
+  numeric limits that are restored (step limit, step timeout, max tokens, auto-compact
+  %, context size) are clamped to the same bounds *Settings → Save* enforces
+  (`validateSession`), so a crafted or old file can't, for example, carry a step
+  timeout of 0 — which would disable the per-step watchdog, since a falsy timeout means
+  "no timer" (`workerCall`).
 - **Nor does the system prompt** *(added 2026-10-07)*. The file holds the prompt of the
   version and settings that exported it, and a hand-made file could hold anything.
   Every request rebuilds `messages[0]` from today's version and settings
@@ -527,7 +532,12 @@ replacement
   It runs on the main thread, where a runaway regex can't be stopped (a hung tab can't
   even be exported), so a pattern that repeats a repeating group (`(a+)+`, `(\w+\s?)*`,
   the classic catastrophic-backtracking shape) is refused with advice, and a search
-  stops after 3 s and says how far it got.
+  stops after 3 s and says how far it got. The 3 s budget is only checked *between*
+  `re.exec` calls, never inside one, so a single very long line (minified code, a
+  one-line JSON file) could make one `exec` backtrack for far longer; each line is
+  therefore searched only up to `LIMITS.searchMaxScanChars` (64 KB), which bounds a
+  single `exec` to the sub-second range, and a longer line is counted and noted so the
+  model knows to use Python for the rest.
   Why a tool when Python can do it: models reach for `grep -rn` out of habit (and there
   is no shell); a read-only search needs no approval and no worker round trip; and the
   output has a fixed, capped shape.
@@ -1083,7 +1093,16 @@ is the second.
   everything") is expected. Effect gating limits the damage: deleting user files
   needs approval, and network is blocked.
 - **Rendering:** all model output and imported session content goes through DOMPurify,
-  and code is shown as text, never as HTML.
+  and code is shown as text, never as HTML. DOMPurify stops script injection, but the
+  timeline's own controls share that DOM and the delegated click handler trusts
+  `data-action` / `data-idx` / `data-role` on whatever was clicked
+  (`handleTimelineClick`). Model-rendered Markdown (`renderMarkdown`) is therefore
+  sanitised with `ALLOW_DATA_ATTR:false` and `FORBID_ATTR:["style"]`, so a reply can't
+  carry those attributes, nor lay a transparent, positioned element over a real button
+  (an overlay reading `data-action="rerun-net"` would otherwise turn a *Reject* click
+  into "allow network & re-run" and let a blocked step exfiltrate). Links in that
+  Markdown open in a new tab, so a click can't navigate away from and destroy the
+  ephemeral session.
 - **Secrets:** the API key is held in memory only, never exported, and never visible
   to the worker.
 

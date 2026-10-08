@@ -104,6 +104,18 @@ section("3. search_files — listing, matching, limits");
     r = run(`<search_files pattern="NEEDLE"/>`, long);
     const line = r.results[0].output.split("\n")[0];
     check("a long line is cut around the match", line.includes("NEEDLE") && line.length < 400 && line.startsWith("min.js:1: …"), line.slice(0, 80));
+    // A line longer than searchMaxScanChars is searched only up to the cap: one re.exec
+    // over a very long line can't be interrupted by the deadline, so it must be bounded.
+    const capped = { "one-line.json": "x".repeat(50) + "EARLY" + "y".repeat(500) + "LATE" + "z".repeat(50) + "\n" };
+    r = run(`<search_files pattern="EARLY"/>`, capped, { searchMaxScanChars: 100 });
+    check("a match within the scan cap is found, the cap noted", r.results[0].ok && r.results[0].output.includes("one-line.json:1:") && /1 line longer than 100 characters searched only up to there/.test(r.results[0].output), r.results[0].output);
+    r = run(`<search_files pattern="LATE"/>`, capped, { searchMaxScanChars: 100 });
+    check("a match past the scan cap is not found", r.results[0].message.startsWith("no matches") && /longer than 100 characters/.test(r.results[0].output), r.results[0].output);
+    // The cap also bounds a backtracking pattern on one long line: this must return fast.
+    const nasty = { "data.json": "[" + '{"k":"v"},'.repeat(4000) + "]\n" };   // ~40 KB, one line
+    const t0 = Date.now();
+    r = run(`<search_files pattern="\\"k\\":.*ADMIN"/>`, nasty, { searchMaxScanChars: 2000 });
+    check("a backtracking pattern on a long line returns promptly", r.results[0].ok && Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
     r = run(`<search_files pattern="(\\w+\\s?)+$"/>\n<read_file path="app.py"/>`, PROJECT);
     check("a runaway pattern is an error that doesn't fail the batch", !r.results[0].ok && /repeats a group/.test(r.results[0].message) && r.results[1].ok && !r.failed);
     r = run(`<search_files pattern="x"/>`, { "a.txt": "x\n", "b.txt": "x\n" }, { searchMaxMs: -1 });

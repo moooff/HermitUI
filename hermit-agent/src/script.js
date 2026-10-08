@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.4";
+const APP_VERSION = "0.3.5";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -59,7 +59,7 @@ const BUNDLED_LIBRARIES = {
 const SESSION_FORMAT = "hermit-agent-session";
 // 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
 const SESSION_FORMAT_VERSION = 2;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxScanChars: 65536, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -1560,7 +1560,7 @@ function applyFileActions(actions, ws, opts) {
             if (error) { fail(error); continue; }
             // A time budget too: a slow pattern over a large workspace must not hang the tab.
             const deadline = Date.now() + lim.searchMaxMs;
-            let matches = 0, files = 0, shown = 0, binary = 0, big = 0, full = false, searched = 0, timedOut = false;
+            let matches = 0, files = 0, shown = 0, binary = 0, big = 0, full = false, searched = 0, timedOut = false, longLines = 0;
             for (const p of scope) {
                 if (Date.now() > deadline) { timedOut = true; break; }
                 searched++;
@@ -1572,8 +1572,15 @@ function applyFileActions(actions, ws, opts) {
                 const lines = cur.text.split(/\r?\n/);
                 let hit = false;
                 for (let i = 0; i < lines.length; i++) {
-                    if (i % 1000 === 999 && Date.now() > deadline) { timedOut = true; break; }
-                    const m = re.exec(lines[i]);
+                    if (Date.now() > deadline) { timedOut = true; break; }
+                    // One very long line (minified code, single-line JSON) can make a single
+                    // re.exec backtrack for seconds — longer than searchMaxMs, which can only
+                    // be checked between exec calls, never inside one, so the deadline above
+                    // can't stop it. Bound what each exec sees; a longer line is searched only
+                    // up to the cap and counted, so a pathological pattern can't hang the tab.
+                    const scan = lines[i].length > lim.searchMaxScanChars ? lines[i].slice(0, lim.searchMaxScanChars) : lines[i];
+                    if (scan.length < lines[i].length) longLines++;
+                    const m = re.exec(scan);
                     if (!m) continue;
                     matches++;
                     if (!hit) { hit = true; files++; }
@@ -1595,6 +1602,7 @@ function applyFileActions(actions, ws, opts) {
             if (shown < matches) notes.push(`[… ${matches - shown} more matches; narrow it down with the pattern, path or glob …]`);
             if (binary) notes.push(`(${plural(binary, "binary file")} not searched: inspect ${binary === 1 ? "it" : "them"} with python)`);
             if (big) notes.push(`(${plural(big, "file")} over ${formatBytes(lim.searchMaxFileBytes)} not searched: use python)`);
+            if (longLines) notes.push(`(${plural(longLines, "line")} longer than ${lim.searchMaxScanChars.toLocaleString("en-US")} characters searched only up to there: use python for the rest)`);
             if (timedOut) notes.push(`(stopped after ${lim.searchMaxMs / 1000} s, ${searched} of ${plural(scope.length, "file")} searched: narrow it down with the pattern, path or glob)`);
             r.ok = true;
             r.message = matches ? `${matches} match${matches === 1 ? "" : "es"} in ${plural(files, "file")}` : `no matches in ${plural(scope.length - binary - big, "file")}`;
@@ -2647,6 +2655,11 @@ function validateSession(raw) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("session.json is not an object.");
     const str = (v) => (typeof v === "string" ? v : v === undefined || v === null ? "" : String(v));
     const num = (v, d) => (Number.isFinite(v) ? v : d);
+    // Numeric settings are clamped to the same bounds Settings → Save enforces: an
+    // out-of-range value from a crafted or old session must not take effect unchecked —
+    // e.g. a step timeout of 0 or a negative one disables the per-step watchdog, since
+    // workerCall treats a falsy timeout as "no timer".
+    const clampInt = (v, min, max, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : d; };
     const strArr = (v) => (Array.isArray(v) ? v.filter(x => typeof x === "string") : []);
     if (typeof raw.task !== "string") throw new Error("session.json: 'task' is missing.");
     if (!Array.isArray(raw.messages)) throw new Error("session.json: 'messages' is missing.");
@@ -2755,9 +2768,9 @@ function validateSession(raw) {
         settings: {
             apiUrl: str(st.apiUrl), model: str(st.model),
             autonomy: ["approve", "risk", "autopilot"].includes(st.autonomy) ? st.autonomy : "risk",
-            stepLimit: num(st.stepLimit, 20), stepTimeoutSec: num(st.stepTimeoutSec, 60),
-            maxTokens: num(st.maxTokens, 8192), effort: ["off", "low", "medium", "high", "default"].includes(st.effort) ? st.effort : "low",
-            autoCompactPct: Math.min(95, Math.max(0, num(st.autoCompactPct, 85))), contextSize: Math.max(0, num(st.contextSize, 0)),
+            stepLimit: clampInt(st.stepLimit, 1, 500, 20), stepTimeoutSec: clampInt(st.stepTimeoutSec, 1, 3600, 60),
+            maxTokens: clampInt(st.maxTokens, 0, 1000000, 8192), effort: ["off", "low", "medium", "high", "default"].includes(st.effort) ? st.effort : "low",
+            autoCompactPct: clampInt(st.autoCompactPct, 0, 95, 85), contextSize: clampInt(st.contextSize, 0, 10000000, 0),
             toolMode: ["auto", "native", "text"].includes(st.toolMode) ? st.toolMode : "auto",
         },
     };
@@ -4677,12 +4690,23 @@ function showToast(message, opts) {
     toastTimeout = setTimeout(() => toast.classList.remove("show"), error ? 8000 : 2500);
 }
 
+// Renders untrusted Markdown (a model reply, a compaction summary, a workspace file).
+// DOMPurify already strips scripts, but the timeline's controls live in this same DOM
+// and the delegated click handler trusts data-action/data-idx/data-role on whatever was
+// clicked (handleTimelineClick). So model output must not carry those, nor inline styles
+// that could lay a transparent element over a real button: an overlay reading
+// data-action="rerun-net" would otherwise turn a Reject click into "allow network &
+// re-run" and let a blocked step exfiltrate. ALLOW_DATA_ATTR:false drops every data-*
+// the handlers key on; FORBID_ATTR style stops the overlay. Links open in a new tab, so a
+// click can't navigate away from (and destroy) the ephemeral session; the Markdown file
+// viewer re-points links at workspace files itself afterwards (renderMarkdownFileBody).
 function renderMarkdown(text) {
-    const html = DOMPurify.sanitize(marked.parse(String(text || "")));
+    const html = DOMPurify.sanitize(marked.parse(String(text || "")), { ALLOW_DATA_ATTR: false, FORBID_ATTR: ["style"] });
     const div = document.createElement("div");
     div.className = "markdown";
     div.innerHTML = html;
     div.querySelectorAll("pre code").forEach((el) => { try { hljs.highlightElement(el); } catch (e) { /* unknown language */ } });
+    div.querySelectorAll("a[href]").forEach((a) => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
     return div;
 }
 
@@ -5383,7 +5407,11 @@ function renderMarkdownFileBody(path, text) {
     for (const a of div.querySelectorAll("a[href]")) {
         const href = a.getAttribute("href");
         const target = resolveMarkdownLink(path, href);
+        // renderMarkdown already made every link open in a new tab; this path re-points
+        // them at workspace files or makes them inert, so clear that where it doesn't apply.
         if (target !== null && WS.files.has(target)) {
+            a.removeAttribute("target");
+            a.removeAttribute("rel");
             a.title = "Open " + target;
             a.onclick = (e) => {
                 e.preventDefault();
@@ -5396,6 +5424,8 @@ function renderMarkdownFileBody(path, text) {
             a.rel = "noopener noreferrer";
         } else {
             a.removeAttribute("href");
+            a.removeAttribute("target");
+            a.removeAttribute("rel");
             if (target !== null) a.title = target + " is not in /workspace";
         }
     }

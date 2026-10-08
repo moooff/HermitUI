@@ -405,6 +405,36 @@ the choices made building it (DESIGN §5.1, §2.3).
   `<run script="x.py"/>` as a real action that runs the script with runpy. It is the
   model's own guess at the syntax, but it would add an action to both protocols.
 
+## Security & robustness review (2026-10-08, v0.3.5)
+
+Three fixes from a review of the agent against a misbehaving/prompt-injected model
+(DESIGN §10's threat model). Each is covered by a new test and the build is green.
+
+- ⭐ **Model-rendered Markdown is sanitised against UI redress, not just scripts.**
+  `renderMarkdown` now passes `ALLOW_DATA_ATTR:false` and `FORBID_ATTR:["style"]`, and
+  opens links in a new tab. Before, DOMPurify's defaults kept `data-*` and inline
+  `style`, so a reply could lay a transparent overlay carrying
+  `data-action="rerun-net"` over a held step's card; a user's *Reject* click then read
+  as "allow network & re-run" and a blocked step's data left the machine (confirmed
+  against the built file, then fixed). The timeline's click handler keys on
+  `data-action`/`data-idx`/`data-role`, which model output now can't carry. Alternative
+  considered: hardening `handleTimelineClick` to only accept app-created controls (more
+  invasive; the sanitiser change is surgical and also closes the file-viewer path). The
+  parent HermitUI app's `AI_SANITIZE` may have the same gap — not touched here per the
+  folder rules; worth a look there.
+- **`search_files` bounds each `re.exec` to `LIMITS.searchMaxScanChars` (64 KB).** The
+  3 s budget was only checked between lines, so one very long line (minified JS,
+  one-line JSON) could make a single `exec` backtrack for far longer — measured ~23 s on
+  a 1 MB line with `.*`-style patterns, and files may be up to 10 MB. A longer line is
+  now searched only up to the cap, counted and noted; the deadline is also checked every
+  line. Alternative: run the search in a terminable worker (exact, but a copy of the
+  workspace text and a round trip). The cap keeps it on the main thread and bounded.
+- **Imported numeric settings are clamped like *Settings → Save*.** `validateSession`
+  only type-coerced step limit / timeout / max tokens; a shared or old session could
+  carry a step timeout of 0, which disables the per-step watchdog (a falsy timeout means
+  "no timer" in `workerCall`). They are now clamped to the same bounds the Settings form
+  uses.
+
 ## Not covered by automated tests
 
 - Drag-drop of a *folder* (entry-based): the folder input and a synthetic file drop are

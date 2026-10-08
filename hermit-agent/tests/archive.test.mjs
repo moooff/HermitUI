@@ -166,6 +166,11 @@ section("5. validateSession");
     check("fields coerced to their types", v.timeline[0].output === "42" && JSON.stringify(v.timeline[0].notes) === '["a"]');
     check("unsafe or invalid origins dropped", JSON.stringify(v.origins) === '{"ok.txt":"agent"}');
     check("defaults filled in", v.status === "paused" && v.settings.autonomy === "risk" && v.settings.stepLimit === 20);
+    // Numeric settings are clamped to the Settings → Save bounds, so a crafted or old
+    // session can't carry e.g. a step timeout of 0 (which would disable the watchdog).
+    const clamp = (s) => X.validateSession({ ...base, settings: s }).settings;
+    check("step timeout clamped to >= 1 (0 or negative would disable the watchdog)", clamp({ stepTimeoutSec: 0 }).stepTimeoutSec === 1 && clamp({ stepTimeoutSec: -5 }).stepTimeoutSec === 1);
+    check("step timeout capped, step limit and max tokens clamped, non-integers rounded", clamp({ stepTimeoutSec: 1e12 }).stepTimeoutSec === 3600 && clamp({ stepLimit: 1e9 }).stepLimit === 500 && clamp({ maxTokens: -1 }).maxTokens === 0 && clamp({ stepLimit: 2.5 }).stepLimit === 3);
     const w = X.validateSession({ ...base, timeline: [{ type: "step", n: 1, stats: { tps: 40, ctxUsed: 900, html: "<b>" } }, { type: "step", n: 2 }] });
     check("step stats survive import, cleaned", w.timeline[0].stats.tps === 40 && w.timeline[0].stats.ctxUsed === 900 && !("html" in w.timeline[0].stats));
     check("a step without stats imports with none", w.timeline[1].stats === null);
