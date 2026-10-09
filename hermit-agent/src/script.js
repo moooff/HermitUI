@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.5";
+const APP_VERSION = "0.3.6";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -1160,6 +1160,15 @@ function resolveMarkdownLink(fromPath, href) {
     }
     const path = segs.join("/");
     return isSafeRelPath(path) ? path : null;
+}
+
+// YAML front matter at the very start of a Markdown file (a "---" line, the YAML, then a
+// "---" or "..." line), split off so the viewer doesn't render it as a rule and a heading.
+// frontMatter is null when there is none.
+function splitFrontMatter(text) {
+    const t = String(text || "");
+    const m = /^\uFEFF?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(t);
+    return m ? { frontMatter: m[1] || "", body: t.slice(m[0].length) } : { frontMatter: null, body: t };
 }
 
 // search_files' path: "" for all of /workspace ("", ".", "/", "/workspace"), else as
@@ -5392,8 +5401,10 @@ function renderMarkdownFile(body, path, text) {
 // Links to workspace files open them in the viewer, web links open in a new tab, and
 // anything else is left as plain text, so no click navigates away from the session.
 function renderMarkdownFileBody(path, text) {
-    const div = renderMarkdown(text);
+    const { frontMatter, body } = splitFrontMatter(text);
+    const div = renderMarkdown(body);
     div.classList.add("md-file");
+    if (frontMatter) div.prepend(highlightedCode(frontMatter, "yaml"));
     for (const img of div.querySelectorAll("img")) {
         const src = img.getAttribute("src") || "";
         if (/^data:image\//i.test(src)) continue;

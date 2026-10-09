@@ -255,4 +255,16 @@ section("8. Markdown links in the file viewer");
     check("URLs, anchors and data: aren't workspace paths", ["https://x.org/a.png", "//cdn/x.png", "mailto:a@b.c", "#intro", "data:image/png;base64,AA", "javascript:alert(1)", "", "  "].every(h => r("r.md", h) === null));
 }
 
+section("9. Front matter in the file viewer");
+{
+    const f = X.splitFrontMatter;
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check("split off the top", same(f("---\ntitle: R\ndate: 1\n---\n# R\n"), { frontMatter: "title: R\ndate: 1", body: "# R\n" }));
+    check("CRLF, a BOM and a ... close", same(f("\uFEFF---\r\na: 1\r\n...\r\nbody"), { frontMatter: "a: 1", body: "body" }));
+    check("a file that is only front matter", same(f("---\na: 1\n---"), { frontMatter: "a: 1", body: "" }));
+    check("an empty block", same(f("---\n---\n# T"), { frontMatter: "", body: "# T" }));
+    check("a rule further down isn't front matter", f("# T\n\n---\n\nx\n---\n").frontMatter === null);
+    check("an unclosed --- isn't either", same(f("---\nno close\n"), { frontMatter: null, body: "---\nno close\n" }));
+}
+
 report();

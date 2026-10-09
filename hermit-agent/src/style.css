@@ -381,10 +381,14 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .badge.verdict-rejected, .badge.verdict-rolled-back, .badge.status-rejected { color: var(--danger); background: var(--danger-bg); }
 
 .markdown { word-break: break-word; }
-.markdown > * + * { margin-top: 8px; }
+/* Inside list items, only after a block: a tight item's inline text keeps its sub-list close. */
+.markdown > * + *, .markdown li > :is(p, pre, ul, ol, blockquote, table) + *, .markdown blockquote > * + * { margin-top: 8px; }
+.markdown li:has(> p) + li { margin-top: 6px; }
+.markdown a[href] { color: var(--primary); }
 .markdown ul, .markdown ol { padding-left: 1.4em; }
 .markdown code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
-.markdown table { border-collapse: collapse; }
+/* Wide tables scroll instead of squeezing their cells until words break apart. */
+.markdown table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; word-break: normal; overflow-wrap: normal; }
 .markdown th, .markdown td { border: 1px solid var(--border-strong); padding: 4px 8px; }
 
 pre {
@@ -496,6 +500,7 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .viewer-tab[aria-selected="true"], .viewer-tab[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); font-weight: 600; }
 /* A Markdown file in the viewer: rendered prose, wrapping, with its images fitted. */
 .md-file { line-height: 1.55; }
+.md-file > :is(h1, h2, h3, h4, h5, h6):not(:first-child) { margin-top: 18px; }
 .md-file img { max-width: 100%; height: auto; }
 .md-file blockquote { border-left: 3px solid var(--border-strong); padding-left: 10px; color: var(--text-muted); }
 .md-file hr { border: none; border-top: 1px solid var(--border-strong); }
@@ -684,7 +689,7 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 }
 .modal > * + * { margin-top: 10px; }
 .modal-wide { max-width: 960px; }
-.modal h3 { font-size: 1.15rem; word-break: break-all; }
+.modal > h3 { font-size: 1.15rem; word-break: break-all; }
 .modal label:not(.check-row) {
     display: block;
     font-size: 0.75rem;
