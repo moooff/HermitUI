@@ -6,7 +6,7 @@
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.2.1";
+const APP_VERSION = "0.2.2";
 
 // ========== Stage 1: character cleanup ==========
 

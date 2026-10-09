@@ -3,7 +3,7 @@
 *Clean up text another model wrote: hidden characters out, typography plain, some
 sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.2.1.** One self-contained HTML file in two flavours:
+> **Status: v0.2.2.** One self-contained HTML file in two flavours:
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 290 KB)
 > rewords through a model server, and
 > [`dist/hermit-cleaner-wllama.html`](dist/hermit-cleaner-wllama.html) (≈ 3.6 MB) can also
@@ -113,9 +113,25 @@ Open ⚙️ Settings, choose **In this tab**, and pick a `.gguf` file or paste a
 the tab. The engine ([wllama](https://github.com/ngxson/wllama) 3.6.1) is inside the
 file, so nothing else is downloaded.
 
-A link can name the model: `hermit-cleaner-wllama.html#gguf=hf:unsloth/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf`
+A link can name the model: `hermit-cleaner-wllama.html#gguf=hf:user/repo/file.gguf`
 (or a direct `.gguf` / Hugging Face URL). Opening it shows a banner with the model and
 the host it would come from; the download starts only when you press **Load model**.
+
+**Try a model directly** (the hosted copy on GitHub Pages; the model downloads from
+Hugging Face into the tab's memory when you press Load model):
+
+| Open with | Download | What the benchmark found |
+|---|---|---|
+| [**Gemma-4 E2B**](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf) | 3.1 GB | the best overall, English and German: start here |
+| [Qwen3 1.7B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf) | 1.1 GB | fast; good English, German only at Light |
+| [Qwen3 4B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf) | 2.5 GB | solid; once flipped a meaning at Medium |
+| [Qwen3.5 4B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf) | 2.7 GB | the best Light edits; weaker German above Light |
+| [Gemma-4 E4B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf) | 5.0 GB | no better than E2B, slower |
+| [Qwen3 8B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf) | 5.0 GB | no better than the 4B models; very slow in the browser, and on a CPU it may not load at all |
+| [Qwen3 0.6B](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) | 0.4 GB | tiny and quick to try; English only |
+
+Use Chrome or Edge with WebGPU for usable speed. In Firefox, WebGPU is currently
+slower than the CPU (bug 1870699), and the hosted page runs the CPU path on one thread.
 
 Speed and first impressions in the browser (CPU, 16 threads, a 3-sentence request,
 warm; 2026-10-09, before the prompt fixes that the judged table below includes):

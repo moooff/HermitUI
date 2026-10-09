@@ -8,7 +8,7 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-v0.2.1: cleanup; rewording by sentence or paragraph at three change levels (Light, the
+v0.2.2: cleanup; rewording by sentence or paragraph at three change levels (Light, the
 default, Medium, Strong), with a tone and an extra instruction, through an
 OpenAI-compatible server or, in the `-wllama` build, a GGUF model in the tab; typos.
 
