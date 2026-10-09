@@ -200,6 +200,10 @@ section("stripThinking");
     check("only a closing tag", stripThinking("pondering...</think>Answer") === "Answer");
     check("unclosed: all trace, nothing left", stripThinking("<think>still going") === "");
     check("plain text untouched", stripThinking("  Answer  ") === "Answer");
+    check("Gemma 4 empty thought channel removed", stripThinking("<|channel>thought\n<channel|>Answer") === "Answer");
+    check("Gemma 4 thought channel with a trace", stripThinking("<|channel>thought\nhmm, maybe\n<channel|>\nAnswer") === "Answer");
+    check("Gemma 4: only the closing marker", stripThinking("pondering<channel|>Answer") === "Answer");
+    check("Gemma 4: unclosed channel, nothing left", stripThinking("<|channel>thought\nstill going") === "");
 }
 
 section("acceptRewrite");

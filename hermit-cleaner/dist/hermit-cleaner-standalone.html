@@ -726,7 +726,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1638,15 +1638,18 @@ function wordDiff(a, b) {
 }
 
 // The answer without any reasoning trace. A reply that is all trace (cut off before
-// the answer) comes back empty.
+// the answer) comes back empty. Besides the XML-style tags, Gemma 4 wraps its trace in
+// "<|channel>thought ... <channel|>", and its larger models emit that block, empty,
+// even with thinking switched off.
 function stripThinking(text) {
     let t = String(text || "");
     t = t.replace(/<(think|thought|reasoning)>[\s\S]*?<\/\1>/gi, "");
+    t = t.replace(/<\|channel>[\s\S]*?<channel\|>/g, "");
     // A template that opens the trace in the prompt leaves only the closing tag.
-    const close = t.search(/<\/(?:think|thought|reasoning)>/i);
-    if (close >= 0) t = t.slice(t.indexOf(">", close) + 1);
+    const close = t.match(/<\/(?:think|thought|reasoning)>|<channel\|>/i);
+    if (close) t = t.slice(close.index + close[0].length);
     // An opening tag never closed: the model ran out of tokens while thinking.
-    const open = t.search(/<(?:think|thought|reasoning)>/i);
+    const open = t.search(/<(?:think|thought|reasoning)>|<\|channel>/i);
     if (open >= 0) t = t.slice(0, open);
     return t.trim();
 }

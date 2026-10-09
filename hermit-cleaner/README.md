@@ -3,7 +3,7 @@
 *Clean up text another model wrote: hidden characters out, typography plain, some
 sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.3.0.** One self-contained HTML file in two flavours:
+> **Status: v0.3.1.** One self-contained HTML file in two flavours:
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 290 KB)
 > rewords through a model server, and
 > [`dist/hermit-cleaner-wllama.html`](dist/hermit-cleaner-wllama.html) (≈ 3.6 MB) can also
