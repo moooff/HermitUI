@@ -821,7 +821,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.2.2";
+const APP_VERSION = "0.3.0";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1283,14 +1283,16 @@ function groupUnits(text, units, picked, maxRun = 3) {
 // Put the rewritten ranges `reps` ({start, end, text}, in order) into `text`. Marks
 // inside a replaced range go with the text they pointed at, the rest move with the
 // edits, and each replacement gets a "reword" mark labelled with the original. A rep's
-// optional `changed` ranges (into its text, from wordDiff) become "changed" marks.
+// optional `changed` ranges (into its text, from wordDiff) become "changed" marks. A rep
+// with a `removed` label deletes its range and leaves a "removed" mark instead.
 function applyRewrites(text, marks, reps) {
     let out = "", pos = 0;
     const edits = [], added = [];
     for (const r of reps) {
         out += text.slice(pos, r.start);
         edits.push({ at: r.start, removed: r.end - r.start, inserted: r.text.length });
-        added.push({ start: out.length, end: out.length + r.text.length, kind: "reword", labels: [text.slice(r.start, r.end)] });
+        if (r.removed) added.push({ start: out.length, end: out.length, kind: "removed", count: 1, labels: [r.removed] });
+        else added.push({ start: out.length, end: out.length + r.text.length, kind: "reword", labels: [text.slice(r.start, r.end)] });
         for (const [s, e] of r.changed || []) added.push({ start: out.length + s, end: out.length + e, kind: "changed", labels: [] });
         out += r.text;
         pos = r.end;
@@ -1313,8 +1315,9 @@ function mulberry32(seed) {
 }
 
 // Which of `n` eligible units (paragraphs or sentences) to reword: a random `share` of
-// them (0-1), at least one when share > 0. Returns sorted indices into the list.
-function pickUnits(n, share, rng) {
+// them (0-1), at least one when share > 0. Units in the optional Set `first` (those with
+// stock phrases) are taken before the others. Returns sorted indices into the list.
+function pickUnits(n, share, rng, first) {
     if (n <= 0 || share <= 0) return [];
     const k = Math.min(n, Math.max(1, Math.round(n * share)));
     const idx = Array.from({ length: n }, (_, i) => i);
@@ -1322,6 +1325,8 @@ function pickUnits(n, share, rng) {
         const j = Math.floor(rng() * (i + 1));
         [idx[i], idx[j]] = [idx[j], idx[i]];
     }
+    // A stable sort, so each group stays in its random order.
+    if (first && first.size) idx.sort((a, b) => first.has(b) - first.has(a));
     return idx.slice(0, k).sort((a, b) => a - b);
 }
 
@@ -1334,10 +1339,10 @@ const REWORD_LEVELS = {
     light: {
         temperature: 0.7, maxChange: 0.5, minLength: 0.6, maxLength: 1.6,
         rules: [
-            "- Make light edits: in every sentence, replace one or two words with a plainer word, or shorten a stock phrase. Leave all other words exactly as they are, and keep every sentence.",
+            "- Make light edits: in every sentence, cut a stock phrase or replace one or two words with plainer ones. Leave all other words exactly as they are, and keep every sentence.",
         ],
         example: {
-            en: "The new tool clearly reduces the time needed for reports. Note that the team tested it for 6 weeks.",
+            en: "The new tool clearly reduces the time needed for reports. The team tested it for 6 weeks.",
             de: "Au\u00dferdem verk\u00fcrzt das neue Tool die Zeit f\u00fcr Berichte deutlich. Das Team hat es \u00fcbrigens 6 Wochen lang getestet.",
         },
     },
@@ -1345,7 +1350,7 @@ const REWORD_LEVELS = {
         temperature: 0.8, maxChange: 1, minLength: 0.5, maxLength: 2,
         rules: [
             "- Rephrase every sentence in your own words, with different wording and structure. Keep the order of the ideas.",
-            "- Prefer plain everyday words over formal ones.",
+            "- Prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no \"not just X, but Y\".",
         ],
         example: {
             en: "With the new tool, reports take a lot less time. The team spent 6 weeks testing it.",
@@ -1356,7 +1361,7 @@ const REWORD_LEVELS = {
         temperature: 0.9, maxChange: 1, minLength: 0.5, maxLength: 2,
         rules: [
             "- Rewrite the passage freely in your own words: you may split, merge or reorder sentences.",
-            "- Vary the sentence length, and prefer plain everyday words over formal ones.",
+            "- Vary the sentence length, prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no \"not just X, but Y\".",
         ],
         example: {
             en: "Reports are done much faster now. That's thanks to the new tool, which the team tried out for 6 weeks first.",
@@ -1379,10 +1384,11 @@ const REWORD_TONES = {
 
 // Stock phrases to replace, named in the passage's own language only: a prompt for an
 // English passage that mentions German pulls small models into German (Qwen3-1.7B
-// answered 18 % of one English sentence in German; bench/README.md).
+// answered 18 % of one English sentence in German; bench/README.md). These are the
+// examples for a passage in which STOCK_PATTERNS finds none.
 const STOCK_PHRASES = {
-    en: "\"delve\", \"moreover\", \"furthermore\", \"in conclusion\", \"it is important to note\"",
-    de: "\"dar\u00fcber hinaus\", \"zusammenfassend l\u00e4sst sich sagen\", \"es ist wichtig zu beachten\"",
+    en: "\"moreover\", \"it is important to note\", \"delve into\", \"seamless\", \"game-changer\"",
+    de: "\"dar\u00fcber hinaus\", \"es ist wichtig zu beachten\", \"zusammenfassend l\u00e4sst sich sagen\", \"nahtlos\"",
     fr: "\"par ailleurs\", \"en conclusion\", \"il est important de souligner\"",
     es: "\"adem\u00e1s\", \"en conclusi\u00f3n\", \"es importante destacar\"",
     it: "\"inoltre\", \"in conclusione\", \"\u00e8 importante sottolineare\"",
@@ -1390,23 +1396,247 @@ const STOCK_PHRASES = {
     pt: "\"al\u00e9m disso\", \"em conclus\u00e3o\", \"\u00e9 importante notar\"",
 };
 
+// The words and phrases AI-written text overuses, per language, as regular expressions
+// (case is ignored, a space matches any whitespace, and a match must be whole words; an
+// optional part starts with its space, never ends with one). A passage that has some
+// gets them named in the prompt, and its sentences are picked for rewording first.
+// Collected from Wikipedia's "Signs of AI writing", Kobak et al. (Science Advances
+// 2025), GPTZero, Graphite's 2026 study of current models, and German, French, Spanish
+// and Italian style guides (README.md lists them). Only phrases that carry no
+// information, or are plain hype, belong here: a list that flags ordinary words makes
+// the model "fix" good text.
+const STOCK_PATTERNS = {
+    en: [
+        // Filler transitions and wrap-ups. Weak signs one at a time, but nothing is lost.
+        "moreover", "furthermore", "additionally", "in addition(?=\\s*,)", "in conclusion", "in summary", "to sum up", "to summari[sz]e",
+        "overall(?=\\s*,)", "ultimately(?=\\s*,)", "notably", "(?:more )?importantly(?=\\s*,)", "crucially(?=\\s*,)", "in essence", "essentially(?=\\s*,)",
+        "(?:that|this) being said", "with that(?: being)? said", "having said that", "all in all", "at the end of the day",
+        "first and foremost", "last but not least", "nevertheless", "nonetheless", "consequently", "needless to say",
+        "looking ahead(?=\\s*,)", "together,? these",
+        // Signposting (most common up to 2024).
+        "it(?: is|['\u2019]s) (?:important|crucial|essential|vital|critical|key) to (?:note|remember|understand|recogni[sz]e|consider|mention|highlight|keep in mind)(?: that)?",
+        "it(?: is|['\u2019]s) worth (?:noting|mentioning|highlighting|pointing out|remembering)(?: that)?", "it should be noted(?: that)?",
+        "it goes without saying(?: that)?",
+        // Hooks and announcements.
+        "let['\u2019]s (?:dive|delve|explore|unpack|take a (?:closer|deeper) look|break (?:it|this|that) down)", "deep[- ]dive", "div(?:e|es|ing) (?:deep(?:er)? )?into",
+        "here['\u2019]s (?:the thing|the kicker|the catch|the truth|why (?:this|it) matters)", "here['\u2019]s what (?:nobody|no one) (?:tells|talks)", "(?:the|my) result\\?",
+        "let that sink in", "(?:i['\u2019]m|i am|we['\u2019]re|we are) (?:thrilled|excited|delighted|humbled|honou?red) to (?:announce|share)",
+        // Framing that current models overuse (Graphite 2026: up to several hundred times the human rate).
+        "(?:is|are|was|were) not (?:simply|merely)", "(?:isn['\u2019]t|aren['\u2019]t|wasn['\u2019]t) (?:simply|merely)",
+        "(?:it|this|that)(?: is|['\u2019]s) not (?:just|only|merely|simply)(?: about)?", "(?:it|this|that) isn['\u2019]t (?:just|only|merely|simply)(?: about)?",
+        "rather than (?:merely|simply|relying on|focusing on)", "less like (?:a|an|the) [\\p{L}-]+(?: [\\p{L}-]+)? and more like",
+        "this matters", "why (?:this|that|it) matters", "matters (?:because|more than)", "(?:the )?distinction matters", "another dimension",
+        "without (?:sacrificing|compromising)", "every single", "(?:the )?single most", "arguably the most",
+        // Inflated significance.
+        "stand(?:s|ing)? as (?:a|an)", "serv(?:e|es|ed|ing) as (?:a|an) (?:testament|reminder|beacon|catalyst|cornerstone|springboard|blueprint)",
+        "(?:a |is a |as a )?testament to", "a (?:stark |powerful |poignant |vivid )?reminder (?:of|that)",
+        "pla(?:y|ys|yed|ying) (?:a|an) (?:crucial|vital|pivotal|key|significant|critical|essential|instrumental|central) role",
+        "(?:set|sets|setting) the stage for", "(?:mark|marks|marked|marking|represent|represents|representing) a (?:pivotal|significant|major|key|crucial) (?:moment|shift|step|milestone|turning point)",
+        "key turning point", "indelible mark", "deeply rooted", "enduring legacy", "(?:highlight|underscor|emphasi[sz]|stress)\\p{L}* the (?:importance|significance|need) of",
+        "(?<=,\\s{0,3})(?:highlighting|underscoring|emphasi[sz]ing|showcasing|ensuring|reflecting|fostering|cementing|solidifying)",
+        "valuable insights?", "(?:diverse|wide|rich) array of", "in the heart of", "rich (?:cultural )?(?:heritage|history|tapestry)", "commitment to excellence",
+        "boasts? (?:a|an)", "exemplif(?:y|ies|ied)", "fundamentally (?:transform|chang|reshap|alter)\\p{L}*", "(?:transform|revolutioni[sz]|reshap)(?:e|es|ed|ing) the way",
+        "(?:essential|key|crucial|vital) (?:for|to) (?:long[- ]term |lasting |sustainable )?success", "unique challenges",
+        "(?:should not|must not|cannot|can['\u2019]t|shouldn['\u2019]t) be overlooked", "warrant(?:s|ed|ing)? (?:careful|further|closer) (?:consideration|attention|scrutiny)",
+        // Vocabulary.
+        "delv(?:e|es|ed|ing)(?: (?:deep(?:er)? )?into)?", "tapestry", "(?:in|within) the realm of",
+        "(?:ever[- ]?(?:evolving|changing)|rapidly (?:evolving|changing)|evolving|changing|digital|dynamic|business|competitive|current) landscape",
+        "ever[- ]?(?:evolving|changing)", "fast[- ]paced world", "today['\u2019]s digital age",
+        "in today['\u2019]s (?:fast[- ]paced |digital |modern |interconnected |rapidly changing )?(?:world|age|era|society|landscape)",
+        "in an (?:era|age) (?:of|where|when)", "in (?:an|our) increasingly (?:digital|connected|interconnected|complex|globali[sz]ed) world",
+        "pivotal", "paramount", "multifaceted", "intricate", "intricacies", "nuanced", "holistic", "robust", "seamless(?:ly)?",
+        "leverag(?:e|es|ed|ing)", "utili[sz](?:e|es|ed|ing|ation)", "harness(?:es|ed|ing)? the (?:power|potential)",
+        "foster(?:s|ed|ing)?(?! (?:care|parents?|child|children|home|famil))", "bolster(?:s|ed|ing)?", "underscor(?:e|es|ed|ing)",
+        "showcas(?:e|es|ed|ing)", "navigat(?:e|es|ed|ing) (?:the )?(?:complexities|challenges|intricacies|landscape|world|nuances)",
+        "embark(?:s|ed|ing)? on", "(?:learning|personal|growth|career|transformative|wellness) journey",
+        "unlock(?:s|ed|ing)? (?:the |their |its |your |our )?(?:full |true )?(?:potential|power|value)", "unleash(?:es|ed|ing)?", "elevat(?:e|es|ing)",
+        "empower(?:s|ed|ing|ment)?", "revolutioni[sz](?:e|es|ed|ing)", "transformative", "game[- ]?chang(?:er|ers|ing)",
+        "cutting[- ]edge", "state[- ]of[- ]the[- ]art", "groundbreaking", "innovative", "synerg(?:y|ies|istic)", "paradigm shift",
+        "vibrant", "bustling", "nestled", "breathtaking", "captivating", "meticulous(?:ly)?", "commendable", "noteworthy",
+        "invaluable", "(?:a )?myriad(?: of)?", "(?:a )?plethora of", "treasure trove", "beacon of", "unparalleled",
+        "(?<!yours\\s)truly", "incredibly", "remarkably", "enormously", "immense(?:ly)?", "profound(?:ly)?",
+        "absolutely (?:essential|crucial|vital|critical|necessary)", "quietly (?:reshap|transform|redefin|revolutioni[sz]|chang|becom|emerg|power|build)\\p{L}*",
+        "at the forefront(?: of)?", "pav(?:e|es|ed|ing) the way", "shed(?:s|ding)? light on", "resonat(?:e|es|ed|ing) with",
+        "streamlin(?:e|es|ed|ing)", "enhanc(?:e|es|ed|ing|ement)", "comprehensive", "crucial", "endeavou?rs?", "commenc(?:e|es|ed|ing)",
+        "facilitat(?:e|es|ed|ing)", "interplay", "garner(?:s|ed|ing)?", "elucidat(?:e|es|ed|ing)", "encompass(?:es|ed|ing)?", "burgeoning",
+        "dependable", "meaningful", "tangible (?:results|benefits|value|impact|outcomes)",
+        // Letters, chat replies and posts.
+        "i hope (?:this|my) (?:e-?mail|message|note|letter) finds you well", "(?:wanted|want|am writing) to reach out", "i['\u2019]m reaching out",
+        "(?:please )?(?:do not|don['\u2019]t) hesitate to", "feel free to", "i hope this(?: information)? helps", "great question",
+        "(?:certainly|absolutely|of course)(?=\\s*!)",
+        "(?:require|need) (?:any )?further clarification", "(?:productive|fruitful) (?:discussion|collaboration|conversation)",
+        "whether you(?:['\u2019]re| are) an? [\\p{L}-]+(?: [\\p{L}-]+)? or an?",
+        "anything else (?:i can|you(?:['\u2019]d| would) like)", "would you like me to", "you['\u2019]re (?:absolutely|completely|totally) right",
+        "taken the liberty", "as an ai(?: language model)?", "i(?:['\u2019]d| would) be (?:happy|glad) to help",
+    ],
+    de: [
+        // Filler transitions and wrap-ups.
+        "dar\u00fcber hinaus", "des weiteren", "ferner", "\u00fcberdies", "nichtsdestotrotz", "letztendlich", "im gro\u00dfen und ganzen",
+        "vor diesem hintergrund", "in diesem zusammenhang",
+        "zusammenfassend(?: (?:l\u00e4sst sich|kann man|kann) (?:sagen|festhalten|feststellen|gesagt werden))?",
+        "(?:abschlie\u00dfend|insgesamt) (?:l\u00e4sst sich|kann man|sei) (?:sagen|festhalten|feststellen|angemerkt|gesagt)",
+        // Signposting.
+        "(?:es ist|ist es) (?:wichtig|entscheidend|essenziell|essentiell|unerl\u00e4sslich) zu (?:beachten|betonen|erw\u00e4hnen|verstehen|ber\u00fccksichtigen)",
+        "es gilt zu beachten", "es (?:ist|w\u00e4re) erw\u00e4hnenswert", "erw\u00e4hnenswert ist", "es sei (?:darauf hingewiesen|erw\u00e4hnt|angemerkt)", "es lohnt sich,? zu erw\u00e4hnen",
+        "es ist bemerkenswert", "es liegt auf der hand", "es versteht sich von selbst", "nicht zu vergessen", "es l\u00e4sst sich nicht (?:leugnen|bestreiten)",
+        "es ist kein geheimnis", "(?:ist |sind )?von (?:entscheidender|zentraler) bedeutung", "(?:kann|k\u00f6nnen|muss|soll|wird) gew\u00e4hrleistet werden",
+        "werfen wir (?:nun |gemeinsam |zun\u00e4chst )?einen (?:genaueren |n\u00e4heren |tieferen |kurzen )?blick", "tauchen (?:wir|sie) (?:gemeinsam |tiefer )?ein",
+        "eintauchen", "in die welt (?:der|des|von)", "lassen sie uns", "lass(?:t)? uns (?:gemeinsam )?(?:eintauchen|einen (?:genaueren |n\u00e4heren )?blick)", "in diesem (?:artikel|beitrag|blogbeitrag|leitfaden) (?:beleuchten|erfahren|werfen|zeigen) (?:wir|sie)",
+        // Framing newer models favour.
+        "es geht nicht (?:nur |blo\u00df |einfach )?(?:um|darum)", "mehr als nur (?:ein|eine)", "eine (?:weitere|neue) dimension", "die wahrheit ist",
+        "das ergebnis\\?", "eines ist sicher",
+        // Inflated significance.
+        "(?:eine )?(?:entscheidende|zentrale|wesentliche|ma\u00dfgebliche|tragende) rolle", "schl\u00fcsselrolle", "tr(?:\u00e4gt|agen|ug|ugen) ma\u00dfgeblich",
+        "unterstreich\\p{L}* (?:die|seine|ihre|deren) (?:bedeutung|wichtigkeit|relevanz)", "markier\\p{L}* einen (?:entscheidenden |wichtigen )?(?:wendepunkt|meilenstein)",
+        "schl\u00fcssel zum erfolg", "entscheidenden? knackpunkt", "vor (?:erhebliche|enorme|gro\u00dfe|neue|vielf\u00e4ltige) herausforderungen", "absolut (?:unverzichtbar|entscheidend|essenziell|unerl\u00e4sslich)",
+        "(?:ein )?(?:eindrucksvolles |lebendiges )?zeugnis (?:f\u00fcr|von|daf\u00fcr)",
+        // Openers.
+        "in der heutigen (?:schnelllebigen |digitalen |modernen |vernetzten )?(?:welt|zeit|gesellschaft)", "im digitalen zeitalter", "im zeitalter der digitalisierung",
+        "in einer (?:zunehmend|immer)(?: mehr)? (?:digital|vernetzt|komplex|schnelllebig|global)\\p{L}*(?: werdenden)? welt", "(?:mehr|entscheidender|wichtiger) denn je",
+        // Vocabulary.
+        "nahtlos\\p{L}*", "ma\u00dfgeschneidert\\p{L}*", "ganzheitlich\\p{L}*", "facettenreich\\p{L}*", "vielschichtig\\p{L}*", "transformativ\\p{L}*",
+        "bahnbrechend\\p{L}*", "revolution\u00e4r\\p{L}*", "revolutionier\\p{L}*", "wegweisend\\p{L}*", "zukunftsweisend\\p{L}*", "zukunftssicher\\p{L}*",
+        "vision\u00e4r\\p{L}*", "disruptiv\\p{L}*", "beispiellos\\p{L}*", "hochmodern\\p{L}*", "innovativ\\p{L}*", "essenziell\\p{L}*", "umfassend\\p{L}*",
+        "mehrwert", "synergie\\p{L}*", "potenzial\\p{L}* (?:voll(?:st\u00e4ndig)? )?(?:aussch\u00f6pf|auszusch\u00f6pf|entfalt)\\p{L}*", "entfessel\\p{L}*",
+        "auf (?:ein|das) (?:neues|n\u00e4chste) (?:level|niveau)", "game[- ]?changer",
+        "(?:digitalen?|dynamischen?|sich (?:st\u00e4ndig |stetig )?wandelnden?) landschaft", "sich (?:st\u00e4ndig|stetig) (?:wandelnd|ver\u00e4ndernd)\\p{L}*",
+        "unerl\u00e4sslich\\p{L}*", "reibungslos\\p{L}*", "unglaublich (?:inspirierend|spannend|wertvoll)\\p{L}*", "inspirierend\\p{L}*", "herzst\u00fcck",
+        "die zukunft (?:gemeinsam )?(?:zu )?gestalten", "den wandel (?:aktiv )?(?:voran(?:zu)?treiben|gestalten)",
+        "spannende zeiten", "es bleibt (?:abzuwarten|spannend)", "gekommen, um zu bleiben", "ein wichtiger schritt in die richtige richtung",
+        "steht (?:deinem|ihrem|eurem) erfolg nichts",
+        // Letters, chat replies and posts.
+        "selbstverst\u00e4ndlich", "z\u00f6ger(?:n sie|e|t) nicht", "(?:gerne )?m\u00f6chte ich ihnen mitteilen", "ich hoffe, (?:diese|meine) (?:e-?mail|nachricht)",
+        "ich hoffe, (?:das|dies|diese informationen?) (?:hilft|helfen)", "gute frage", "m\u00f6chtest du, dass ich", "hier ist (?:eine|die) \u00fcberarbeitete",
+        "als ki-sprachmodell", "(?:du hast|sie haben) (?:v\u00f6llig|absolut|vollkommen) recht", "gespannt auf (?:eure|ihre|deine) (?:gedanken|meinung)",
+    ],
+    fr: [
+        "par ailleurs", "de plus(?=\\s*,)", "en outre", "en conclusion", "en somme", "en r\u00e9sum\u00e9", "en d\u00e9finitive", "d\u00e8s lors", "n\u00e9anmoins",
+        "\u00e0 cet \u00e9gard", "dans cette optique", "force est de constater",
+        "il (?:est|convient|y a lieu) (?:important |essentiel |crucial |primordial )?de (?:noter|souligner|rappeler|comprendre|mentionner)",
+        "jou(?:e|ent|er) un r\u00f4le (?:crucial|cl\u00e9|essentiel|central|majeur|d\u00e9terminant|primordial)", "plong(?:er|eons|ez|eant) (?:au c\u0153ur |dans)",
+        "dans le monde (?:d['\u2019]aujourd['\u2019]hui|actuel)", "\u00e0 l['\u2019]\u00e8re (?:du )?num\u00e9rique", "en (?:constante|perp\u00e9tuelle) \u00e9volution",
+        "ce n['\u2019]est pas (?:seulement|simplement|juste|qu['\u2019]une?)", "trouver le juste \u00e9quilibre", "la cl\u00e9 (?:du|d['\u2019]un) succ\u00e8s",
+        "profond\u00e9ment (?:transform\u00e9|chang\u00e9|boulevers\u00e9)\\p{L}*", "qu['\u2019]il ne faut pas n\u00e9gliger",
+        "n['\u2019]h\u00e9sitez pas \u00e0", "j['\u2019]esp\u00e8re que ce (?:message|courriel|mail) vous trouve", "r\u00e9volutionn\\p{L}*", "incontournable\\p{L}*", "primordia\\p{L}*",
+        "crucia(?:l|le|ux|les)", "holistique\\p{L}*", "paradigme\\p{L}*", "synergie\\p{L}*", "\u00e9cosyst\u00e8me\\p{L}* num\u00e9rique\\p{L}*", "sans faille",
+        "de pointe", "tirer parti", "pierre angulaire",
+    ],
+    es: [
+        "adem\u00e1s(?=\\s*,)", "asimismo", "en conclusi\u00f3n", "en resumen", "en este sentido", "por ende", "cabe (?:destacar|se\u00f1alar|mencionar|resaltar)",
+        "es (?:importante|crucial|fundamental|esencial) (?:destacar|se\u00f1alar|tener en cuenta|mencionar|recordar|resaltar)",
+        "(?:juega|juegan|desempe\u00f1a|desempe\u00f1an) un papel (?:crucial|fundamental|clave|esencial|importante|vital)", "sumerg(?:irse|\u00e1monos|irnos|irte)",
+        "en el mundo (?:actual|de hoy)", "en la era digital", "en el panorama actual", "en un mundo cada vez m\u00e1s", "en constante evoluci\u00f3n",
+        "no (?:solo|s\u00f3lo) (?:es|se trata)", "enfrentar (?:los |estos |nuevos )?desaf\u00edos",
+        "no (?:dudes|dude) en", "espero que este (?:correo|mensaje) (?:te|le) encuentre bien", "de vanguardia", "revolucion\\p{L}*", "fomentar",
+        "tapiz", "crucial(?:es)?", "invaluables?", "sin lugar a dudas", "un sinf\u00edn de", "una amplia gama de",
+    ],
+    it: [
+        "inoltre(?=\\s*,)", "in conclusione", "in sintesi", "per riassumere", "in definitiva",
+        "\u00e8 (?:importante|fondamentale|cruciale|essenziale) (?:sottolineare|notare|ricordare|considerare)", "vale la pena (?:sottolineare|notare|ricordare)",
+        "si potrebbe sostenere", "(?:gioca|giocano|svolge|svolgono) un ruolo (?:cruciale|fondamentale|chiave|essenziale)", "immerg(?:ersi|iamoci)",
+        "addentr\\p{L}*", "arazzo", "navigare (?:tra )?(?:le )?(?:complessit\u00e0|sfide|sfumature)",
+        "nel mondo (?:di oggi|odierno|attuale)", "nell['\u2019]era (?:digitale|moderna)", "(?:mondo|societ\u00e0) sempre pi\u00f9 (?:conness|digital|interconness)\\p{L}*",
+        "in continua evoluzione", "non esit(?:are|ate) a", "senza soluzione di continuit\u00e0", "all['\u2019]avanguardia", "rivoluzion\\p{L}*", "cruciale",
+        "un vero e proprio", "una vasta gamma di", "(?:certo|certamente|assolutamente)(?=\\s*!)",
+    ],
+    nl: [
+        "bovendien", "concluderend", "samenvattend", "(?:het is|is het) (?:belangrijk|essentieel|cruciaal) (?:om )?(?:op te merken|te benadrukken|te onthouden)",
+        "het is vermeldenswaard", "speelt een (?:cruciale|essenti\u00eble|centrale|sleutel)\\p{L}* rol", "duik(?:en)? (?:dieper )?in",
+        "verdiep(?:en|t)(?: (?:ons|zich|je|jezelf))? in", "navigeren door (?:de )?(?:complexiteit|uitdagingen)", "wandtapijt",
+        "in de (?:huidige|snel veranderende|digitale) wereld", "in het digitale tijdperk", "aarzel niet", "naadloos\\p{L}*", "baanbrekend\\p{L}*",
+        "cruciaal\\p{L}*", "een breed scala aan", "zeker(?=\\s*!)",
+    ],
+    pt: [
+        "al\u00e9m disso", "em conclus\u00e3o", "em suma", "em resumo", "\u00e9 (?:importante|crucial|fundamental) (?:notar|destacar|ressaltar|salientar|lembrar)",
+        "vale (?:a pena )?(?:ressaltar|destacar|notar|lembrar)", "desempenha um papel (?:crucial|fundamental|essencial|importante)",
+        "mergulh(?:ar|emos|ando) (?:em|no|na|nos|nas)", "tape\u00e7aria", "naveg\\p{L}* (?:pelas|nas|entre as) complexidades",
+        "no mundo (?:atual|de hoje)", "na era digital", "em constante evolu\u00e7\u00e3o", "n\u00e3o hesite em", "de ponta",
+        "revolucion\\p{L}*", "alavanc\\p{L}*", "potencializ\\p{L}*", "uma ampla gama de",
+    ],
+};
+
+// One pattern for the stock phrases of `lang` (of every language when it is unknown).
+function stockPhraseRe(lang) {
+    const list = STOCK_PATTERNS[lang] || Object.values(STOCK_PATTERNS).flat();
+    return new RegExp("(?<![\\p{L}\\p{N}])(?:" + list.join("|").replace(/ /g, "\\s+") + ")(?![\\p{L}\\p{N}])", "giu");
+}
+
+// The stock phrases in `text`, as [start, end) ranges, in order.
+function findStockPhrases(text, lang) {
+    return Array.from(String(text || "").matchAll(stockPhraseRe(lang)), m => [m.index, m.index + m[0].length]);
+}
+
+// How many stock phrases `text` has outside code blocks, each paragraph in its own
+// language (else `lang`).
+function countStockPhrases(text, lang) {
+    return splitParagraphs(text, 1).filter(b => b.kind === "para")
+        .reduce((n, b) => n + findStockPhrases(b.text, detectLanguage(b.text) || lang).length, 0);
+}
+
+// Is `text` (a sentence or paragraph) nothing but stock phrases, such as "I hope this
+// email finds you well." or "Let that sink in."? Such a unit is removed, not reworded.
+function isStockOnly(text, lang) {
+    const t = String(text || "");
+    const cut = cutStockPhrases(t, lang);
+    return cut !== t.replace(/\s+/g, " ").trim() && !/[\p{L}\p{N}]/u.test(cut);
+}
+
+// The range to delete when the sentence at [start, end) of `text` goes: with the spaces
+// after it, or before it at the end of a line. A line left empty, or holding only a list
+// or quote marker, goes whole, and so does a blank line that would be left doubled.
+function deletionRange(text, start, end) {
+    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+    let lineEnd = text.indexOf("\n", end);
+    if (lineEnd < 0) lineEnd = text.length;
+    const before = text.slice(lineStart, start), after = text.slice(end, lineEnd);
+    if (/^[ \t]+\S/.test(after)) return [start, end + after.match(/^[ \t]+/)[0].length];
+    if (after.trim()) return [start, end];
+    if (before.replace(/^\s*(?:(?:[-*+]|\d{1,3}[.)])\s+|>\s*)*/, "").trim()) return [start - before.match(/[ \t]*$/)[0].length, end];
+    // The whole line. At the end of the text, the line breaks before it go instead.
+    if (lineEnd >= text.length - 1 && lineStart > 0) {
+        let s = lineStart;
+        while (s > 0 && text[s - 1] === "\n") s--;
+        return [s, lineEnd];
+    }
+    let e = Math.min(text.length, lineEnd + 1);
+    if ((lineStart === 0 || text.slice(0, lineStart).endsWith("\n\n")) && text[e] === "\n") e++;
+    return [lineStart, e];
+}
+
+// `text` without its stock phrases: what is left to compare a rewrite with, since cutting
+// them is the job, not a change to hold against the model.
+function cutStockPhrases(text, lang) {
+    const t = String(text || "");
+    let out = "", pos = 0;
+    for (const [s, e] of findStockPhrases(t, lang)) { out += t.slice(pos, s); pos = e; }
+    return (out + t.slice(pos)).replace(/\s+/g, " ").trim();
+}
+
 // Assemble the system prompt for a reword level (REWORD_LEVELS key), a tone
 // (REWORD_TONES key), an optional instruction from the user, the passage's language
-// (a LANGUAGE_NAMES code, or null when unknown) and, on a second try, what was wrong
-// with the first answer (retryNote).
-function buildRewriteSystem(level, tone, extra, lang, retry) {
+// (a LANGUAGE_NAMES code, or null when unknown), on a second try what was wrong with
+// the first answer (retryNote), the stock phrases found in the passage (as written
+// there), and its sentences that are nothing but stock phrases (`drop`). Small models
+// act on the phrases named far more than on a general rule.
+function buildRewriteSystem(level, tone, extra, lang, retry, phrases, drop) {
     const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
     const name = LANGUAGE_NAMES[lang];
+    const found = [...new Map((phrases || []).map(p => {
+        const t = String(p).replace(/\s+/g, " ").trim();
+        return [t.toLowerCase(), t];
+    })).values()].filter(Boolean).slice(0, 8);
     const lines = [
         "You edit one passage of text so it reads as if a person wrote it themselves.",
         "Rules:",
         ...lv.rules,
-        "- Keep the meaning and every fact, name, number and quote.",
+        "- Keep the meaning and every fact, name, number and quote, and address the reader as the passage does (formal or informal).",
         name ? `- The passage is in ${name}. Write your rewrite in ${name}.` : "- Write your rewrite in the language of the passage.",
-        STOCK_PHRASES[lang] ? `- Replace stock phrases such as ${STOCK_PHRASES[lang]}.`
-            : `- Replace stock phrases such as ${STOCK_PHRASES.en}, and their equivalents in the passage's language.`,
+        drop && drop.length ? `- Leave these sentences out entirely, they say nothing: ${drop.map(t => `"${t}"`).join(", ")}` : null,
+        found.length ? `- The passage has stock phrases that make it sound machine-written: ${found.map(p => `"${p}"`).join(", ")}. Cut each one, or say it in plain words, and keep the sentence grammatical. Treat other filler and hype the same way, and add none of your own.`
+            : STOCK_PHRASES[lang] ? `- Cut or replace stock phrases, filler and hype, such as ${STOCK_PHRASES[lang]}, and add none of your own.`
+            : `- Cut or replace stock phrases, filler and hype, such as ${STOCK_PHRASES.en}, and their equivalents in the passage's language.`,
         "- Don't add or drop information. Keep Markdown that is there (lists, bold), but add none.",
-    ];
+    ].filter(Boolean);
     if (REWORD_TONES[tone]) lines.push(REWORD_TONES[tone]);
     const own = String(extra || "").replace(/\s+/g, " ").trim().slice(0, 300);
     if (own) lines.push("- " + own);
@@ -1421,9 +1651,18 @@ function buildRewriteSystem(level, tone, extra, lang, retry) {
 // message holds only what is to be rewritten. `opts` holds level, tone and extra. For
 // English and German an example exchange at that level goes before the passage (the
 // example is in the passage's language, or it would pull the reply into English).
+// The stock phrases named are those of the passage, not of its context; a sentence that
+// is nothing but stock phrases is named as one to leave out.
 function buildRewriteMessages(passage, lang, context, opts) {
     const o = opts || {};
-    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang, o.retry);
+    const text = String(passage).trim();
+    const phrases = [], drop = [];
+    for (const [s, e] of splitSentences(text)) {
+        const sentence = text.slice(s, e);
+        if (isStockOnly(sentence, lang)) drop.push(sentence);
+        else findStockPhrases(sentence, lang).forEach(([a, b]) => phrases.push(sentence.slice(a, b)));
+    }
+    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang, o.retry, phrases, drop);
     if (context) system += "\n- The passage is part of a longer text, shown below for context only. Rewrite just the passage, so that it still fits in its place: don't repeat or continue the text around it."
         + `\n\nThe longer text:\n${String(context).trim()}`;
     const lv = REWORD_LEVELS[o.level] || REWORD_LEVELS.strong;
@@ -1433,7 +1672,7 @@ function buildRewriteMessages(passage, lang, context, opts) {
     return [
         { role: "system", content: system },
         ...example,
-        { role: "user", content: String(passage).trim() },
+        { role: "user", content: text },
     ];
 }
 
@@ -1455,8 +1694,8 @@ function buildRewriteBody(model, passage, noKwargs, lang, context, opts) {
 
 // Compare a rewrite `b` with its original `a` word by word (letters and digits; case
 // ignored). Returns `ratio`, the share of words changed (0 = same words, 1 = nothing
-// in common), and `changed`, the [start, end) ranges in `b` of words that are new,
-// with neighbouring ones merged, for the change view.
+// in common), `changed`, the [start, end) ranges in `b` of words that are new, with
+// neighbouring ones merged, for the change view, and `common`, how many words they share.
 function wordDiff(a, b) {
     const words = s => Array.from(String(s || "").matchAll(/[\p{L}\p{N}]+/gu), m => ({ w: m[0].toLowerCase(), start: m.index, end: m.index + m[0].length }));
     const x = words(a), y = words(b);
@@ -1490,7 +1729,7 @@ function wordDiff(a, b) {
         if (last && j > 0 && !kept[j - 1]) last[1] = t.end;
         else changed.push([t.start, t.end]);
     });
-    return { ratio: n || m ? 1 - common / Math.max(n, m) : 0, changed };
+    return { ratio: n || m ? 1 - common / Math.max(n, m) : 0, changed, common };
 }
 
 // The answer without any reasoning trace. A reply that is all trace (cut off before
@@ -1511,7 +1750,11 @@ const PREAMBLE_RE = /^(?:here(?:'s| is| are)\b|sure[,!.]|certainly[,!.]|of cours
 
 // Is the model's reply a usable rewrite of `orig` (in language `lang`, if known, at
 // reword `level`)? Returns the text to use and the share of words changed, or why not.
-// `unchanged` marks a reply identical to the original: kept, but not an error.
+// `unchanged` marks a reply identical to the original: kept, but not an error. Stock
+// phrases cut or replaced don't count against the length and Light limits: "It is
+// important to note that prices rose." may well become "Prices rose." A reply may
+// start like an introduction ("Of course, we ...") when the original starts with the
+// same words. A reply with more stock phrases than the original is refused.
 function acceptRewrite(orig, reply, lang, level) {
     const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
     let t = stripThinking(reply);
@@ -1523,14 +1766,29 @@ function acceptRewrite(orig, reply, lang, level) {
     if (!t) return { ok: false, reason: "empty reply" };
     // Same words (spacing, punctuation or case aside): nothing was reworded.
     if (t === o || wordDiff(o, t).ratio === 0) return { ok: false, unchanged: true, reason: "the model changed nothing" };
-    if (PREAMBLE_RE.test(t)) return { ok: false, reason: "the model added an introduction" };
-    const ratio = t.length / Math.max(1, o.length);
-    if (ratio < lv.minLength) return { ok: false, reason: "reply much shorter than the original" };
-    if (ratio > lv.maxLength) return { ok: false, reason: "reply much longer than the original" };
+    const lead = x => (x.toLowerCase().match(/[\p{L}\p{N}']+/gu) || []).slice(0, 3).join(" ");
+    if (PREAMBLE_RE.test(t) && !(PREAMBLE_RE.test(o) && lead(t) === lead(o))) return { ok: false, reason: "the model added an introduction" };
+    const cut = cutStockPhrases(o, lang);
+    if (t.length / Math.max(1, cut.length) < lv.minLength) return { ok: false, reason: "reply much shorter than the original" };
+    if (t.length / Math.max(1, o.length) > lv.maxLength) return { ok: false, reason: "reply much longer than the original" };
     const got = lang ? detectLanguage(t) : null;
     if (got && got !== lang) return { ok: false, reason: `the model answered in ${LANGUAGE_NAMES[got]} instead of ${LANGUAGE_NAMES[lang]}` };
+    // Removing stock phrases is the job, so a reply with more of them than the original
+    // ("Moreover, ...") is refused, naming the ones it brought in.
+    const had = findStockPhrases(o, lang).map(([a, b]) => o.slice(a, b).toLowerCase());
+    const has = findStockPhrases(t, lang).map(([a, b]) => t.slice(a, b));
+    if (has.length > had.length) {
+        const added = has.filter(x => !had.includes(x.toLowerCase())).slice(0, 3);
+        return { ok: false, reason: `the model added stock phrases${added.length ? ` (${added.map(x => `"${x}"`).join(", ")})` : ""}` };
+    }
     const change = wordDiff(o, t).ratio;
-    if (change > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
+    // With stock phrases in it, what counts is how many of the other words changed.
+    let rest = change;
+    if (cut !== o) {
+        const words = (cut.match(/[\p{L}\p{N}]+/gu) || []).length;
+        rest = Math.min(change, words ? 1 - wordDiff(cut, t).common / words : 0);
+    }
+    if (rest > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
     return { ok: true, text: t, change };
 }
 
@@ -2527,7 +2785,7 @@ if (typeof document !== "undefined") {
         const empty = { counts: Object.fromEntries(CLEAN_CATEGORIES.map(c => [c, {}])), hiddenText: [] };
         let text = source, marks = [], clean1 = empty, clean2 = empty;
         const docLang = detectLanguage(source);
-        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, retried: 0, rescued: 0, changes: [], skipped: [], stopped: false, error: null };
+        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, retried: 0, rescued: 0, removed: 0, changes: [], skipped: [], stopped: false, error: null };
         const ropts = { level: opt.level(), tone: opt.tone(), extra: opt.extra() };
         try {
             if (opt.clean()) {
@@ -2536,23 +2794,37 @@ if (typeof document !== "undefined") {
             }
             if (opt.reword()) {
                 const units = rewordUnits(text, reword.unit, opt.minLetters());
-                const picked = pickUnits(units.length, opt.share(), mulberry32(Date.now() >>> 0));
-                const groups = groupUnits(text, units, picked);
+                const langOf = u => detectLanguage(u.context || u.text) || docLang;
+                // Those with stock phrases are reworded first.
+                const first = new Set(units.flatMap((u, i) => findStockPhrases(u.text, langOf(u)).length ? [i] : []));
+                const picked = pickUnits(units.length, opt.share(), mulberry32(Date.now() >>> 0), first);
+                // One that is nothing but stock phrases ("Let that sink in.") is removed
+                // here; the model gets the rest.
+                const gone = picked.filter(i => isStockOnly(units[i].text, langOf(units[i])));
+                const groups = groupUnits(text, units, picked.filter(i => !gone.includes(i)));
+                reword.stockBefore = countStockPhrases(text, docLang);
                 reword.eligible = units.length;
                 reword.attempted = picked.length;
-                const reps = [];
+                reword.removed = reword.done = gone.length;
+                const reps = gone.map(i => {
+                    const [start, end] = deletionRange(text, units[i].start, units[i].end);
+                    return { start, end, text: "", removed: `stock phrase "${units[i].text}"` };
+                });
                 for (const [k, g] of groups.entries()) {
                     if (reword.stopped || reword.error) break;
                     setStatus(`Rewording ${k + 1} of ${groups.length}…`, "busy");
                     try {
                         const lang = detectLanguage(g.context || g.text) || docLang;
-                        let reply = await rewordOne(g.text, signal, lang, g.context, ropts);
+                        // The context leaves out what was removed, or the model puts it back.
+                        let context = gone.reduce((c, i) => c && units[i].context === g.context ? c.replace(units[i].text, "").replace(/[ \t]{2,}/g, " ").trim() : c, g.context);
+                        if (context === g.text) context = null;
+                        let reply = await rewordOne(g.text, signal, lang, context, ropts);
                         let verdict = acceptRewrite(g.text, reply, lang, ropts.level);
                         const note = retryNote(verdict, g.text);
                         if (note) {
                             reword.retried += g.count;
                             setStatus(`Rewording ${k + 1} of ${groups.length}, second try…`, "busy");
-                            reply = await rewordOne(g.text, signal, lang, g.context, { ...ropts, retry: note });
+                            reply = await rewordOne(g.text, signal, lang, context, { ...ropts, retry: note });
                             verdict = acceptRewrite(g.text, reply, lang, ropts.level);
                             if (verdict.ok) reword.rescued += g.count;
                         }
@@ -2575,7 +2847,9 @@ if (typeof document !== "undefined") {
                         else reword.error = e;
                     }
                 }
+                reps.sort((a, b) => a.start - b.start);
                 ({ text, marks } = applyRewrites(text, marks, reps));
+                reword.stockAfter = countStockPhrases(text, docLang);
             }
             last = { text, marks, clean1, clean2, reword, lang: docLang, did: { clean: opt.clean(), reword: opt.reword() } };
             finish();
@@ -2725,6 +2999,8 @@ if (typeof document !== "undefined") {
                 const avg = reword.changes.reduce((s, r) => s + r, 0) / reword.changes.length;
                 add("p", `On average the model changed ${Math.round(avg * 100)} % of the words in what it reworded.`, "report-note");
             }
+            if (reword.stockBefore || reword.stockAfter) add("p", `Stock phrases: ${reword.stockBefore} before rewording, ${reword.stockAfter} after.`, "report-note");
+            if (reword.removed) add("p", `${reword.removed} ${reword.unit}${reword.removed === 1 ? " that was" : "s that were"} nothing but stock phrases ${reword.removed === 1 ? "was" : "were"} removed.`, "report-note");
             if (reword.retried) add("p", `${reword.retried} ${reword.unit}${reword.retried === 1 ? "" : "s"} got a second try, ${reword.rescued} of them reworded then.`, "report-note");
             if (reword.unchanged) add("p", `${reword.unchanged} ${reword.unit}${reword.unchanged === 1 ? "" : "s"} came back unchanged.`, "report-note");
             reword.skipped.forEach(s => add("p", s, "report-note"));

@@ -38,6 +38,11 @@ SENTENCES = ["Der Ausschuss hat den Vorschlag lange gepr\u00fcft.",
              "Das sagte z. B. Dr. M\u00fcller am 3. Mai im Rathaus.",
              "Die Mitglieder wollen im n\u00e4chsten Jahr weiter dar\u00fcber reden."]
 SENT_PARA = " ".join(SENTENCES)
+# Only the third has a stock phrase ("Dar\u00fcber hinaus").
+STOCK_SENTENCES = ["Der Ausschuss hat den Vorschlag lange gepr\u00fcft.",
+                   "Er kommt in diesem Jahr nicht zur Abstimmung, weil die Kosten zu hoch sind.",
+                   "Dar\u00fcber hinaus wollen die Mitglieder im n\u00e4chsten Jahr weiter reden.",
+                   "Das sagte Dr. M\u00fcller am Montag im Rathaus."]
 DIRTY = (f"# \u00dcberschrift\n\n{DE_PARA_1}{HIDDEN}\n\n```python\nprint(\u201cx\u201d)\n```\n\n{DE_PARA_2} \u2705\n")
 
 
@@ -224,6 +229,34 @@ def scenarios(page, port, state, browser_name):
     check("neighbours go together: 3 + 1 sentences", len(sent) == 2 and sent[0] == " ".join(SENTENCES[:3]) and sent[1] == SENTENCES[3], sent)
     check("both requests carry the paragraph", all(SENT_PARA in r["messages"][0]["content"] for r in state.requests))
     check("all four reworded", "4 of 4 sentences reworded" in page.text_content("#report"))
+
+    print("\n-- the sentence with a stock phrase goes first, and the prompt names it")
+    set_input(page, " ".join(STOCK_SENTENCES) + "\n")
+    page.select_option("#optShare", "0.3")
+    picked = []
+    for _ in range(3):
+        state.requests.clear()
+        ok, status = run(page)
+        picked += [r["messages"][-1]["content"] for r in state.requests]
+    check("picked first, every time", ok and picked == [STOCK_SENTENCES[2]] * 3, picked)
+    sys_prompt = state.requests[0]["messages"][0]["content"] if state.requests else ""
+    check("the prompt names the phrase", 'machine-written: "Dar\u00fcber hinaus".' in sys_prompt, sys_prompt)
+    check("the report counts stock phrases", "Stock phrases: 1 before rewording, 1 after." in page.text_content("#report"), page.text_content("#report"))
+
+    print("\n-- a sentence that is nothing but stock phrases is removed, without the model")
+    state.requests.clear()
+    set_input(page, STOCK_SENTENCES[0] + " Ich hoffe, das hilft! " + STOCK_SENTENCES[1] + "\n")
+    page.select_option("#optShare", "1")
+    ok, status = run(page)
+    out = output(page)
+    sent = [r["messages"][-1]["content"] for r in state.requests]
+    check("never sent to the model, not even as context", ok and sent and not any("hoffe" in s for s in sent)
+          and not any("hoffe" in r["messages"][0]["content"] for r in state.requests), sent)
+    check("gone from the output, spacing intact", "hoffe" not in out and "gepr\u00fcft. \"New\"" in out, out)
+    removed = page.locator("#outputText .m-removed")
+    check("shown as a removal", removed.count() == 1 and "Ich hoffe, das hilft!" in (removed.first.get_attribute("title") or ""),
+          removed.first.get_attribute("title") if removed.count() else "no marker")
+    check("the report says so", "1 sentence that was nothing but stock phrases was removed." in page.text_content("#report"), page.text_content("#report"))
     page.select_option("#optUnit", "paragraph")
 
     print("\n-- typos and reroll")

@@ -3,7 +3,7 @@
 *Clean up text another model wrote: hidden characters out, typography plain, some
 sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.2.2.** One self-contained HTML file in two flavours:
+> **Status: v0.3.0.** One self-contained HTML file in two flavours:
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 290 KB)
 > rewords through a model server, and
 > [`dist/hermit-cleaner-wllama.html`](dist/hermit-cleaner-wllama.html) (≈ 3.6 MB) can also
@@ -42,11 +42,24 @@ Three steps, each one optional:
      (This also removes Markdown's two-space line breaks.)
 2. **Reword** (optional). Your local model rewrites 10 %, 30 %, 60 % or all of the
    **sentences** (the default) or **paragraphs** of the prose.
-   - **Change** sets how much: **Light** (the default) swaps one or two words per
-     sentence and trims stock phrases; **Medium** rephrases each sentence; **Strong**
-     rewrites freely. A Light reply that changes more than half the words is refused.
-     Each level shows the model one short example exchange (English or German),
-     which small models follow far better than rules alone.
+   - **Change** sets how much: **Light** (the default) cuts stock phrases and swaps one
+     or two words per sentence; **Medium** rephrases each sentence; **Strong** rewrites
+     freely. A Light reply that changes more than half of the other words is refused
+     (cut or replaced stock phrases don't count). Each level shows the model one short
+     example exchange (English or German), which small models follow far better than
+     rules alone.
+   - **AI stock phrases** are what gives machine-written text away most, so the app
+     looks for them in every language it detects: filler transitions ("Moreover",
+     "Darüber hinaus"), signposting ("It is important to note that"), hype
+     ("game-changer", "nahtlos"), the AI vocabulary ("delve", "tapestry", "leverage"),
+     chatbot and letter phrases ("I hope this email finds you well"), and the framing
+     current models overuse ("It's not just X, it's Y", "This matters because"). The
+     sentences that have some are reworded first, and the prompt names each phrase
+     found in the passage, so even a small model cuts it or says it plainly. A sentence
+     that is nothing but stock phrases ("I hope this email finds you well.", "Let that
+     sink in.") is removed outright, without the model, and the output marks where it
+     was. The report counts them before and after rewording. Where the list comes from
+     is below.
    - **Tone**: keep it, or make it a little more casual, more formal or simpler.
    - **Also**: one instruction of your own, such as "use du" or "British spelling".
    - The words the model changed are highlighted inside each reworded span, and the
@@ -65,9 +78,11 @@ Three steps, each one optional:
    "z. B.", "Dr." or "e.g." and dates like "3. Mai" don't end a sentence. Headings, code
    blocks, tables and lines under the Min. letters are never sent. The language is detected (English, German, French, Spanish,
    Italian, Dutch, Portuguese) and named in the prompt. A reply that comes back empty,
-   much shorter or longer than the original, with an introduction ("Here is…"), or in
-   the wrong language is discarded, and the original is kept. The model's
-   answers go through the cleanup again.
+   much shorter or longer than the original, with an introduction ("Here is…"), in
+   the wrong language, or with more stock phrases than it had ("Moreover, …") is
+   discarded, and the original is kept. The prompt also asks the
+   model to keep the form of address (formal or informal). The model's answers go
+   through the cleanup again.
 3. **Typos** (optional). A low rate of realistic mistakes:
    - **In every language:** a neighbouring key, two letters swapped, a letter dropped
      or doubled, a missing capital at a sentence start, Shift held too long ("DIese"),
@@ -102,9 +117,45 @@ The output shows every change: hover a highlight to see what was there before.
   sloppy.
 - Text in other scripts (Cyrillic, Greek, CJK, Arabic …) is removed, not translated:
   the kept set is Latin-1. Upside-down text and flag letters are dropped too.
+- **The stock-phrase list catches the common cases, not every AI habit.** Each model
+  generation has its own: "delve" and "it's important to note" faded in 2025, while
+  frames like "is not simply" and "matters because" rose. A list also can't tell an
+  AI habit from a person who likes the word "crucial", so it only names phrases that
+  carry no information or are plain hype. Headings are never sent, so a stock phrase
+  in a heading stays.
 - Markdown formatting (`**bold**`, `## headings`) is left in the text.
 - Small in-browser models write weaker German than English: past Light edits, a 1.7B
   model makes grammar mistakes. Check the highlighted changes before you use them.
+
+## Where the stock-phrase list comes from
+
+`STOCK_PATTERNS` in `src/script.js` was put together in October 2026 from these
+sources. A phrase made the list only if cutting it, or saying it plainly, loses
+nothing.
+
+- Wikipedia's [Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing):
+  the words to watch per model generation (2023–2026), undue emphasis ("plays a
+  pivotal role", "a testament to"), promotional language, negative parallelisms
+  ("not just X, but Y"), and chatbot phrases ("I hope this helps").
+- Kobak et al., *Delving into LLM-assisted writing in biomedical publications through
+  excess vocabulary* (Science Advances, 2025): the style words ("delves", "showcasing",
+  "underscores", "pivotal") that rose suddenly in PubMed abstracts after ChatGPT
+  ([data](https://github.com/berenslab/llm-excess-vocab)).
+- Graphite's [AI Tells](https://graphite.io/five-percent/research/ai-tells) (2026):
+  10,000 human and 90,000 AI articles from nine current models. Frames such as "the X
+  is not simply" (576 × the human rate), "matters because" (up to 357 ×) and "rather
+  than merely" (160 ×) are the new tells; em dashes and "delve" have faded.
+- GPTZero's [AI vocabulary](https://gptzero.me/news/most-common-ai-vocabulary/)
+  ("play a significant role in shaping" 182 ×, "today's fast-paced world" 107 ×).
+- German: Shaitarova et al. (SwissText 2024) on formal connectives such as "darüber
+  hinaus", and the guides at [ki-praxisbeispiele.de](https://ki-praxisbeispiele.de/typische-ki-formulierungen-2/),
+  [charismarcom.de](https://www.charismarcom.de/post/typische-ki-formulierungen-vermeiden/),
+  [korrektur.de](https://korrektur.de/ki-texte-erkennen-merkmale-checkliste) and
+  [urbanstudio.de](https://urbanstudio.de/blog/ki/die-sprache-der-ki/).
+- French, Spanish, Italian, Dutch and Portuguese: style guides and blog lists only (for
+  example [gpt-watermark-remover.com/fr](https://gpt-watermark-remover.com/fr/blog/mots-typiques-ia-eviter)
+  and [howmanywords.app](https://howmanywords.app/it/blog/chatgpt-stile-scrittura-indizi)).
+  No study measures these languages yet, so their lists are short.
 
 ## Rewording in the browser (`hermit-cleaner-wllama.html`)
 
@@ -159,6 +210,25 @@ averaged over the levels):
 | Gemma-4 E4B | 4.72 / 4.80 | 4.70 / 4.83 | no better than E2B, and slower |
 
 Every model kept 88-100 % of the numbers and 95-100 % of the names.
+
+**Stock phrases, measured** ([`bench/`](bench/README.md), 2026-10-09): 11 English, German
+and French texts full of AI phrases, by sentence, every sentence picked, 2 runs. The
+share of the corpus's stock phrases gone after rewording, with v0.2.2's fixed list of
+examples and with v0.3.0 (Light / Medium / Strong):
+
+| Model (Q4_K_M) | v0.2.2 | v0.3.0 | Reworded at Light (v0.2.2 → v0.3.0) |
+|---|---|---|---|
+| Qwen3 1.7B | 41 / 84 / 75 % | 71 / 82 / 76 % | 75 → 86 % |
+| Qwen3 4B | 46 / 86 / 89 % | 78 / 87 / 89 % | 87 → 93 % |
+| Qwen3.5 4B | 35 / 90 / 79 % | 70 / 93 / 90 % | 77 → 90 % |
+| **Gemma-4 E2B** | 68 / 96 / 92 % | **89 / 99 / 95 %** | 92 → 94 % |
+
+The rewrites were judged by Claude, reading the old and new prompt's rewrite of each
+sentence side by side: on Gemma-4 E2B the new prompt makes no more meaning or grammar
+mistakes than the old one. The small Qwen models change more now and break a little
+more along with it, mostly in German and at Medium or Strong, where they were already
+weak. Models still swap one stock phrase for another now and then ("nahtlos" →
+"reibungslos"), so a few remain.
 
 Opened as a plain file the model runs on one CPU thread; served with cross-origin isolation (COOP/COEP headers,
 for example `../benchmark/serve.py`) it uses every core. WebGPU helps on a real

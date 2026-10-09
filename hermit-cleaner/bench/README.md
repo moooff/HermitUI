@@ -25,6 +25,8 @@ the log.
    on the GPU. The build is pinned (`LLAMA_TAG`, the Ubuntu CUDA 12.8 one) and is
    downloaded once into `~/.cache/hermit-cleaner-bench/` (about 770 MB). `--api URL`
    uses a server that is already running instead.
+   If something else holds part of the GPU, `--gpu-layers auto` lets llama.cpp fit the
+   layers around it (with `--allow-busy-gpu`; the speeds are then not comparable).
 2. **The app.** Headless Chromium opens the built
    `dist/hermit-cleaner-standalone.html`, configures it for that server, and presses
    Run for every text in `corpus.json` at every level (`--levels`), by sentence, with
@@ -39,6 +41,15 @@ the log.
    replacing hype and stock phrases doesn't cost meaning points. Before judging, it
    scores five known pairs (an inverted meaning, a changed number, a German grammar
    error, two harmless phrase drops). The report says how many it got right.
+   With `--judge none`, only the counted columns are filled; read `samples.md`
+   yourself, or have a stronger model read it. For the v0.3.0 stock-phrase work the
+   rewrites were judged by Claude, side by side across the builds, instead.
+
+`corpus.json` has 11 texts: English and German blog posts and e-mails, an English
+product text and report, a German manual and social-media post, two posts in the newer
+style ("It's not just X, it's Y", "Das Ergebnis?"), and one French article. Its `stock_phrases` are a fixed yardstick,
+kept apart from the app's `STOCK_PATTERNS`, so that every build is measured the same
+way: the phrases in the texts, plus common AI words a model might bring in.
 
 ## What the report says
 
@@ -57,9 +68,13 @@ Per model and level:
 | 2nd try (reworded) | sentences that got the app's one retry after an unchanged or refused reply, and how many it then reworded |
 | Words changed | median share of words changed per request (the app's `wordDiff`) |
 | Stock phrases removed | how many of the corpus's `stock_phrases` disappeared |
+| Stock added | how many of them the rewrites have that their originals didn't: AI phrases the model brought in itself |
 | Numbers / Names kept | rewrites with the same numbers, and with every listed name of the text |
 | Meaning, Grammar, Natural | the judge's averages; Bad counts rewrites at 3 or lower on meaning or grammar |
 | s/run, decode tok/s | one text through the app; the server's decode speed (from `/metrics`) |
+
+Sentences the app removes outright (nothing but stock phrases) have no rewrite; their
+stock phrases count as removed, and they count as accepted.
 
 Speeds are those of llama-server on the GPU, not of the browser. For in-browser
 speed, use `--backend wllama` or see the table in `../README.md`.

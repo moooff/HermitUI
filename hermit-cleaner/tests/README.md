@@ -52,6 +52,22 @@ The comment at the top of `extract.mjs` shows how to see the real error.
   - `acceptRewrite` (empty, preamble, length, wrong language, unchanged, too much change for a Light edit)
   - German typos on nouns
   - the helpers copied from HermitUI, including the GGUF URL ones of the `-wllama` build
+- **`stock.test.mjs`** covers the AI stock phrases:
+  - every pattern compiles, none matches an empty string, and none ends in an optional
+    part that ends with a space (it could never match)
+  - each language's phrases, case and curly apostrophes aside, whole words only
+  - ordinary uses stay unflagged ("foster care", "Yours truly", "is simply wrong",
+    "In addition to", "de plus en plus")
+  - the count skips code blocks and takes each paragraph's language
+  - the prompt names the phrases as written, each once and at most eight, never those
+    of the context, and German ones only for German text
+  - sentences that are nothing but stock phrases: recognised, named in the prompt as
+    ones to leave out, and deleted with the right spacing (mid-line, end of a line, a
+    paragraph or list item of their own), leaving a "removed" mark
+  - `pickUnits` takes the units with stock phrases first
+  - `acceptRewrite` doesn't hold a cut or replaced stock phrase against the length and
+    Light limits, refuses a reply that brings in stock phrases of its own, and lets a
+    reply keep an introduction only when it starts with the original's own words
 
 ## End-to-end (`e2e_cleaner.py`)
 
@@ -63,6 +79,10 @@ Opens the built file from `file://` in Chromium and Firefox against
 - typos and Reroll, which makes no model call
 - Test Connection and Copy
 - the level, tone and extra instruction reaching the prompt, the changed-word marks, and an unchanged reply
+- the sentence with a stock phrase picked first (three runs in a row), the phrase named
+  in the prompt, and the count in the report
+- a sentence that is nothing but stock phrases removed without a model call, shown as a
+  removal, and reported
 - that `localStorage`, `sessionStorage`, cookies and IndexedDB stay empty
 - the `-wllama` build: the backend switch, the error without a model, and, if
   `../benchmark/models/Qwen3-0.6B-Q4_K_M.gguf` exists, loading it from the file picker

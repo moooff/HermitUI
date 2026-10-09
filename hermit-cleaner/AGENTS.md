@@ -8,9 +8,10 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-v0.2.2: cleanup; rewording by sentence or paragraph at three change levels (Light, the
+v0.3.0: cleanup; rewording by sentence or paragraph at three change levels (Light, the
 default, Medium, Strong), with a tone and an extra instruction, through an
-OpenAI-compatible server or, in the `-wllama` build, a GGUF model in the tab; typos.
+OpenAI-compatible server or, in the `-wllama` build, a GGUF model in the tab; AI stock
+phrases found per language, named in the prompt and reworded first; typos.
 
 ## Build & test
 ```bash
@@ -66,7 +67,10 @@ poll with `page.evaluate` instead.
 - **Prompt changes are measured, not guessed.** Run `bench/bench.py` before and after
   (`--app` takes a patched copy of the build), and read the judge's problem list and
   `samples.md`, not only the table. Keep `JUDGE_CALIBRATION` passing; a judge that
-  misses the known cases makes the scores meaningless.
+  misses the known cases makes the scores meaningless. Better still, for an A/B: run
+  each build with `--judge none` and have a strong model read the rewrites of the same
+  sentence side by side. That is how v0.3.0 was judged, and it found failure modes no
+  1-5 score shows (below).
 - **Name no other language in the reword prompt.** Stock phrases are listed in the
   passage's language only (`STOCK_PHRASES`). Naming German in an English prompt made
   Qwen3-1.7B answer in German 18 % of the time on one sentence. Findings so far (2026-10-09): an example exchange per level moved small models
@@ -75,6 +79,42 @@ poll with `page.evaluate` instead.
   German turns ungrammatical past Light edits; Qwen3-4B separates the levels best
   (18 / 37 / 50 %) but once flipped a meaning ("unterschätzen" → "überschätzen");
   Gemma-4-E2B writes the best German but changes ~23 % even at Light.
+- **Stock phrases (`STOCK_PATTERNS`).** One list of regular expressions per detected
+  language; the prompt names only the phrases found in the passage itself (never in its
+  context), so no other language and no absent phrase is ever mentioned. A phrase
+  belongs on the list only if cutting it, or saying it plainly, loses nothing: flagging
+  ordinary words ("however", "important") makes the model "fix" good text, and
+  `tests/stock.test.mjs` keeps a sentence of ordinary uses ("foster care", "Yours
+  truly", "is simply wrong") that must stay unflagged. In a pattern a space matches any
+  whitespace and a match must be whole words, so an optional last part starts with its
+  space (`(?: about)?`), never ends with one; a phrase after a comma uses a lookbehind
+  (`(?<=,\s{0,3})ensuring`). Add a source to the README list when you add a batch.
+  The benchmark measures with its own fixed list in `bench/corpus.json`, not with
+  this one, so that every build is scored against the same yardstick.
+  Learned on 2026-10-09 (4 models x 11 texts x 3 levels x 2 runs, read side by side):
+  - Naming the phrases found beats a fixed example list: at Light the share removed
+    rose from 35-68 % to 70-89 % (README table), at no extra meaning or grammar cost on
+    Gemma-4 E2B. The best-guess list alone (before the research) got 56-82 %.
+  - A sentence that is *only* a stock phrase must not go to the model. Told to cut it
+    but "keep every sentence", Qwen3-4B answered "This email finds you well." and
+    Qwen3-1.7B "This email hopes you're doing well." Such units are removed in code
+    (`isStockOnly`, `deletionRange`) and left out of the context too: with the removed
+    "Let that sink in." still in the context, Qwen3-4B wrote it back three times.
+  - Name only the empty part: with "Nur so kann gewährleistet werden" on the list,
+    Gemma cut "Nur so" as well and lost the "only". The pattern is now just the passive.
+  - Cutting an adjective or a participle breaks the grammar around it ("a comprehensive
+    overview" -> "a overview"), hence "keep the sentence grammatical" in the prompt.
+  - `PREAMBLE_RE` must not wave a reply through because the original starts with
+    "Here's": "Here is the revised passage: ..." got accepted until the check compared
+    the first three words.
+  - Models bring in stock phrases of their own even when told not to: Qwen3.5-4B put
+    "Moreover," before an otherwise untouched sentence and called it a Light edit,
+    Qwen3-4B swapped "Par ailleurs" for "En outre". `acceptRewrite` refuses a reply with
+    more stock phrases than its original, naming them, which the second try then sees.
+  - Small models change more and break more when a passage is dense with phrases:
+    Qwen3-1.7B at Strong once dropped a "40 %" and turned "Frau Weber" into "Herr Müller".
+    Every build also switched a formal German e-mail to "du" now and then (mostly
+    Gemma at Medium/Strong), hence the form-of-address rule.
 - **Tests:** pure logic goes in unit tests that slice the real functions out of
   `src/script.js` (`tests/extract.mjs`, the same approach as `../tests/`). Renaming a
   function fails the suite; update the lists there. DOM behaviour goes in

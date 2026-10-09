@@ -97,6 +97,12 @@ def stock_count(s, phrases):
     return sum(low.count(p) for p in phrases)
 
 
+def stock_added(a, b, phrases):
+    """Stock phrases the rewrite `b` has more often than the original `a`: brought in by the model."""
+    la, lb = a.lower(), b.lower()
+    return sum(max(0, lb.count(p) - la.count(p)) for p in phrases)
+
+
 # ----- llama-server -----
 
 def ensure_llama_server():
@@ -245,6 +251,9 @@ async def run_once(page, text, level, unit="sentence", share="1", timeout=1800):
     secs = time.time() - started
     spans = await page.evaluate("""() => Array.from(document.querySelectorAll('#outputText .m-reword'),
         s => ({ original: s.title.replace(/^Reworded. Original:\\n/, ''), rewrite: s.textContent }))""")
+    # Sentences the app removed outright for being nothing but stock phrases.
+    gone = await page.evaluate("""() => Array.from(document.querySelectorAll('#outputText .m-removed'), s => s.title)
+        .map(t => (t.match(/stock phrase "([\\s\\S]*)"$/) || [])[1]).filter(Boolean)""")
     report = await page.inner_text("#report")
     m = re.search(r"Rewording: (\d+) of (\d+)", report)
     un = re.search(r"(\d+) \w+ came back unchanged", report)
@@ -253,6 +262,7 @@ async def run_once(page, text, level, unit="sentence", share="1", timeout=1800):
         "secs": secs,
         "status": await page.text_content("#status"),
         "spans": spans,
+        "gone": gone,
         "done": int(m.group(1)) if m else 0,
         "eligible": int(m.group(2)) if m else 0,
         "unchanged": int(un.group(1)) if un else 0,
@@ -290,9 +300,11 @@ async def bench_model(browser, app_url, setup, jobs, pages, corpus):
             pairs = [{**s, "change": change_ratio(s["original"], s["rewrite"]),
                       "numbers": numbers_kept(s["original"], s["rewrite"]),
                       "names": all(nm in s["rewrite"] for nm in t["names"] if nm in s["original"]),
-                      "stock_before": stock_count(s["original"], phrases), "stock_after": stock_count(s["rewrite"], phrases)}
+                      "stock_before": stock_count(s["original"], phrases), "stock_after": stock_count(s["rewrite"], phrases),
+                      "stock_added": stock_added(s["original"], s["rewrite"], phrases)}
                      for s in r["spans"]]
             results.append({"text": text_id, "lang": t["lang"], "level": level, "run": run, "secs": r["secs"],
+                            "removed": r["gone"], "removed_stock": sum(stock_count(g, phrases) for g in r["gone"]),
                             "done": r["done"], "eligible": r["eligible"], "unchanged": r["unchanged"],
                             "retried": r["retried"], "rescued": r["rescued"],
                             "refused": r["refused"], "pairs": pairs, "status": r["status"]})
@@ -400,7 +412,8 @@ def summarize(rows):
     pairs = [p for r in rows for p in r["pairs"]]
     req_units = sum(r["eligible"] for r in rows) or 1
     v = [p["verdict"] for p in pairs if "verdict" in p and "error" not in p["verdict"]]
-    stock_b = sum(p["stock_before"] for p in pairs)
+    # Stock phrases in sentences the app removed outright count as removed.
+    stock_b = sum(p["stock_before"] for p in pairs) + sum(r.get("removed_stock", 0) for r in rows)
     return {
         "accepted": sum(r["done"] for r in rows) / req_units,
         "unchanged": sum(r["unchanged"] for r in rows) / req_units,
@@ -408,6 +421,7 @@ def summarize(rows):
         "retried": sum(r.get("retried", 0) for r in rows), "rescued": sum(r.get("rescued", 0) for r in rows),
         "change": statistics.median([p["change"] for p in pairs]) if pairs else float("nan"),
         "stock_removed": 1 - sum(p["stock_after"] for p in pairs) / stock_b if stock_b else float("nan"),
+        "stock_added": sum(p.get("stock_added", 0) for p in pairs),
         "numbers": mean([p["numbers"] for p in pairs]),
         "names": mean([p["names"] for p in pairs]),
         "meaning": mean([x["meaning"] for x in v]), "grammar": mean([x["grammar"] for x in v]),
@@ -429,11 +443,12 @@ def write_reports(out_dir, args, meta, results):
                 + "".join(f"; **missed: {c['case']}**" for c in meta["calibration"] if not c["pass"]) + ".", ""]
                if meta.get("calibration") else []),
              "Accepted = sentences reworded and kept; Unchanged = sentences the model returned as they were. "
-             "Words changed is the median per request. Meaning/Grammar/Natural are the judge's 1-5 averages; "
+             "Words changed is the median per request. Stock phrases are corpus.json's list: the share of them removed, and how "
+             "many the model brought in itself. Meaning/Grammar/Natural are the judge's 1-5 averages; "
              "Bad counts rewrites it scored 3 or lower on meaning or grammar. s/run is one text through the app.", "",
-             "| Model | Level | Accepted | Unchanged | Refused | 2nd try (reworded) | Words changed | Stock phrases removed | Numbers kept | Names kept "
-             "| Meaning | Grammar | Natural | Bad | s/run | decode tok/s |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| Model | Level | Accepted | Unchanged | Refused | 2nd try (reworded) | Words changed | Stock phrases removed | Stock added | Numbers kept "
+             "| Names kept | Meaning | Grammar | Natural | Bad | s/run | decode tok/s |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     summary = {}
     for m in models:
         for lv in args.levels:
@@ -441,12 +456,12 @@ def write_reports(out_dir, args, meta, results):
             s = summarize(rows)
             summary[(m, lv)] = s
             lines.append(f"| {m.replace('.gguf', '')} | {lv} | {fmt(s['accepted'], 1)} | {fmt(s['unchanged'], 1)} | {s['refused']} | {s['retried']} ({s['rescued']}) | "
-                         f"{fmt(s['change'], 1)} | {fmt(s['stock_removed'], 1)} | {fmt(s['numbers'], 1)} | {fmt(s['names'], 1)} | "
+                         f"{fmt(s['change'], 1)} | {fmt(s['stock_removed'], 1)} | {s['stock_added']} | {fmt(s['numbers'], 1)} | {fmt(s['names'], 1)} | "
                          f"{fmt(s['meaning'])} | {fmt(s['grammar'])} | {fmt(s['natural'])} | {s['bad']}/{s['judged']} | "
                          f"{s['secs']:.1f} | {results[m].get('decode_tps', '-')} |")
     for m in args.models:
         if m not in results:
-            lines.append(f"| {m.replace('.gguf', '')} | failed: {meta['failed'].get(m, '?')} ||||||||||||||")
+            lines.append(f"| {m.replace('.gguf', '')} | failed: {meta['failed'].get(m, '?')} |||||||||||||||")
 
     if meta["judge"]:
         lines += ["", "## Grammar by language (judge, all levels)", "",
@@ -662,7 +677,7 @@ def main():
     ap.add_argument("--api", help="an OpenAI-compatible server that is already running (use with one model)")
     ap.add_argument("--parallel", type=int, default=4, help="server slots and browser pages (server backend)")
     ap.add_argument("--ctx", type=int, default=4096, help="context per server slot")
-    ap.add_argument("--gpu-layers", type=int, default=999)
+    ap.add_argument("--gpu-layers", default="999", help="layers on the GPU: a number, or 'auto' to fit around whatever else uses it")
     ap.add_argument("--port", type=int, default=8691)
     ap.add_argument("--webgpu", action="store_true", help="wllama backend: load with WebGPU")
     ap.add_argument("--judge", default="auto", help="a GGUF in --models-dir, 'auto' (gpt-oss-20b, else Qwen3-8B) or 'none'")
