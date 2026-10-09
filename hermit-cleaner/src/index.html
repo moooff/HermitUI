@@ -61,6 +61,11 @@
                         <option value="paragraph">paragraphs</option>
                     </select>
                 </label>
+                <label class="field" title="Sentences and paragraphs with fewer letters are not sent to the model">
+                    <span>Min.</span>
+                    <input type="number" id="optMin" class="num-field" min="1" max="200" value="6" aria-label="Fewest letters a sentence or paragraph needs to be reworded">
+                    <span>letters</span>
+                </label>
                 <label class="field">
                     <span>Change</span>
                     <select id="optLevel" class="select" title="How much the model may change. Light: a few words per sentence; a reply that changes more than half the words is refused.">

@@ -5,7 +5,7 @@ import { check, section, report } from "./check.mjs";
 
 const { detectLanguage, splitParagraphs, splitSentences, rewordUnits, groupUnits, applyRewrites, pickUnits, mulberry32, buildRewriteMessages, buildRewriteBody,
     stripThinking, acceptRewrite, addTypos, chatErrorHint, normalizeApiUrl, apiEndpoint, buildRewriteSystem, wordDiff, REWORD_LEVELS,
-    normalizeGgufUrl, ggufFileName, wllamaMaxTokens } = m;
+    normalizeGgufUrl, ggufFileName, wllamaMaxTokens, retryNote, MIN_LETTERS } = m;
 
 const EN = "The committee reviewed the proposal and decided that it was not ready for a vote this year.";
 const DE = "Der Ausschuss hat den Vorschlag gepr\u00fcft und entschieden, dass er in diesem Jahr nicht zur Abstimmung kommt.";
@@ -30,13 +30,17 @@ section("detectLanguage");
 section("splitParagraphs");
 {
     const text = "# Heading\n\nFirst paragraph is long enough to be reworded by the model, for sure it is.\nSecond line of it.\n\n\n```js\nconst a = 1;\n\nconst b = 2;\n```\n| a | b |\n| 1 | 2 |\n\nshort one\n\nhttps://example.com/a/very/long/url/that/keeps/going/and/going/forever\n\nLast paragraph that is also quite long enough to be reworded by the model.";
-    const blocks = splitParagraphs(text);
+    const blocks = splitParagraphs(text, 40);
     check("round-trips exactly", blocks.map(b => b.text).join("") === text);
     check("starts are offsets", blocks.every(b => text.slice(b.start, b.start + b.text.length) === b.text));
     const code = blocks.find(b => b.kind === "code");
     check("fence with a blank line stays one block", code && code.text === "```js\nconst a = 1;\n\nconst b = 2;\n```\n", JSON.stringify(code));
     const rw = blocks.filter(b => b.rewrite).map(b => b.text.trim().slice(0, 10));
-    check("only the two prose paragraphs are rewritable", rw.length === 2 && rw[0] === "First para" && rw[1] === "Last parag", JSON.stringify(rw));
+    check("only the two prose paragraphs are rewritable (40 letters)", rw.length === 2 && rw[0] === "First para" && rw[1] === "Last parag", JSON.stringify(rw));
+    const rwDefault = splitParagraphs(text).filter(b => b.rewrite).map(b => b.text.trim());
+    check("the default limit is low: \"short one\" is sent too, heading, table and URL still not", MIN_LETTERS === 6
+        && rwDefault.length === 3 && rwDefault.includes("short one"), JSON.stringify(rwDefault));
+    check("greetings pass the default, a bare name doesn't", splitParagraphs("Hi Sarah,\n\nTom\n").filter(b => b.rewrite).map(b => b.text.trim()).join() === "Hi Sarah,");
     check("unclosed fence runs to the end", splitParagraphs("text\n```\ncode\n\nmore").filter(b => b.kind === "code").length === 1);
     check("empty input", splitParagraphs("").length === 0);
 }
@@ -79,8 +83,11 @@ section("rewordUnits");
     const paras = rewordUnits(text, "paragraph");
     check("paragraphs: the two prose blocks", paras.length === 2 && paras[0].text === p1 && paras[1].text === p2);
     check("paragraphs: ranges point at the text, no context", paras.every(u => text.slice(u.start, u.end) === u.text && u.context === null));
-    const sents = rewordUnits(text, "sentence");
-    check("sentences: short ones left out", sents.length === 3 && !sents.some(u => u.text === "Short one."), JSON.stringify(sents.map(u => u.text)));
+    const sents = rewordUnits(text, "sentence", 20);
+    check("sentences: short ones left out (20 letters)", sents.length === 3 && !sents.some(u => u.text === "Short one."), JSON.stringify(sents.map(u => u.text)));
+    check("sentences: the default limit sends the short one", rewordUnits(text, "sentence").some(u => u.text === "Short one."));
+    check("the limit is configurable", rewordUnits(text, "sentence", 100).length === 0 && rewordUnits(text, "paragraph", 100).length === 0
+        && rewordUnits(text, "sentence", 1).length === 4);
     check("sentences: ranges point at the text", sents.every(u => text.slice(u.start, u.end) === u.text));
     check("sentences: the paragraph is the context", sents[0].context === p1 && sents[1].context === p1);
     check("a one-sentence paragraph needs no context", sents[2].context === null);
@@ -252,6 +259,19 @@ section("Copied from HermitUI");
     for (const bad of ["", "model.gguf", "https://x/y.bin", "https://x/m-00001-of-00003.gguf"]) { try { normalizeGgufUrl(bad); } catch { threw++; } }
     check("bad model URLs are refused", threw === 4, threw);
     check("file name from URL", ggufFileName("https://x/a/Qwen%203.gguf?download=1") === "Qwen 3.gguf" && ggufFileName("https://x/%E0.gguf") === "%E0.gguf");
+}
+
+section("retryNote and the second try");
+{
+    check("an accepted reply needs no second try", retryNote({ ok: true, text: "x" }, EN) === "");
+    check("unchanged: ask for real changes", /word for word/.test(retryNote({ ok: false, unchanged: true }, EN)));
+    check("a short unchanged unit is left alone", retryNote({ ok: false, unchanged: true }, "Best regards,") === "");
+    check("a refusal is named", /refused \(the model added an introduction\)/.test(retryNote({ ok: false, reason: "the model added an introduction" }, EN)));
+    check("empty reply", /was empty/.test(retryNote({ ok: false, reason: "empty reply" }, EN)));
+    const first = buildRewriteBody("q", EN, false, "en", null, { level: "light" });
+    const second = buildRewriteBody("q", EN, false, "en", null, { level: "light", retry: "Your first answer repeated the passage word for word." });
+    check("the note goes into the rules, before the reply rule", /word for word\.\n- Reply with/.test(second.messages[0].content) && !/word for word/.test(first.messages[0].content));
+    check("a second try samples a little more freely", first.temperature === 0.7 && second.temperature === 0.9, [first.temperature, second.temperature]);
 }
 
 section("wllamaMaxTokens");

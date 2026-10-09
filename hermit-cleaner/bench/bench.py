@@ -248,6 +248,7 @@ async def run_once(page, text, level, unit="sentence", share="1", timeout=1800):
     report = await page.inner_text("#report")
     m = re.search(r"Rewording: (\d+) of (\d+)", report)
     un = re.search(r"(\d+) \w+ came back unchanged", report)
+    re2 = re.search(r"(\d+) \w+ got a second try, (\d+) of them", report)
     return {
         "secs": secs,
         "status": await page.text_content("#status"),
@@ -255,6 +256,8 @@ async def run_once(page, text, level, unit="sentence", share="1", timeout=1800):
         "done": int(m.group(1)) if m else 0,
         "eligible": int(m.group(2)) if m else 0,
         "unchanged": int(un.group(1)) if un else 0,
+        "retried": int(re2.group(1)) if re2 else 0,
+        "rescued": int(re2.group(2)) if re2 else 0,
         "refused": re.findall(r'^".*?": (.*?) \u2014 kept the original\.$', report, re.M),
     }
 
@@ -291,6 +294,7 @@ async def bench_model(browser, app_url, setup, jobs, pages, corpus):
                      for s in r["spans"]]
             results.append({"text": text_id, "lang": t["lang"], "level": level, "run": run, "secs": r["secs"],
                             "done": r["done"], "eligible": r["eligible"], "unchanged": r["unchanged"],
+                            "retried": r["retried"], "rescued": r["rescued"],
                             "refused": r["refused"], "pairs": pairs, "status": r["status"]})
         await page.close()
 
@@ -401,6 +405,7 @@ def summarize(rows):
         "accepted": sum(r["done"] for r in rows) / req_units,
         "unchanged": sum(r["unchanged"] for r in rows) / req_units,
         "refused": sum(len(r["refused"]) for r in rows),
+        "retried": sum(r.get("retried", 0) for r in rows), "rescued": sum(r.get("rescued", 0) for r in rows),
         "change": statistics.median([p["change"] for p in pairs]) if pairs else float("nan"),
         "stock_removed": 1 - sum(p["stock_after"] for p in pairs) / stock_b if stock_b else float("nan"),
         "numbers": mean([p["numbers"] for p in pairs]),
@@ -426,22 +431,22 @@ def write_reports(out_dir, args, meta, results):
              "Accepted = sentences reworded and kept; Unchanged = sentences the model returned as they were. "
              "Words changed is the median per request. Meaning/Grammar/Natural are the judge's 1-5 averages; "
              "Bad counts rewrites it scored 3 or lower on meaning or grammar. s/run is one text through the app.", "",
-             "| Model | Level | Accepted | Unchanged | Refused | Words changed | Stock phrases removed | Numbers kept | Names kept "
+             "| Model | Level | Accepted | Unchanged | Refused | 2nd try (reworded) | Words changed | Stock phrases removed | Numbers kept | Names kept "
              "| Meaning | Grammar | Natural | Bad | s/run | decode tok/s |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     summary = {}
     for m in models:
         for lv in args.levels:
             rows = [r for r in results[m]["rows"] if r["level"] == lv]
             s = summarize(rows)
             summary[(m, lv)] = s
-            lines.append(f"| {m.replace('.gguf', '')} | {lv} | {fmt(s['accepted'], 1)} | {fmt(s['unchanged'], 1)} | {s['refused']} | "
+            lines.append(f"| {m.replace('.gguf', '')} | {lv} | {fmt(s['accepted'], 1)} | {fmt(s['unchanged'], 1)} | {s['refused']} | {s['retried']} ({s['rescued']}) | "
                          f"{fmt(s['change'], 1)} | {fmt(s['stock_removed'], 1)} | {fmt(s['numbers'], 1)} | {fmt(s['names'], 1)} | "
                          f"{fmt(s['meaning'])} | {fmt(s['grammar'])} | {fmt(s['natural'])} | {s['bad']}/{s['judged']} | "
                          f"{s['secs']:.1f} | {results[m].get('decode_tps', '-')} |")
     for m in args.models:
         if m not in results:
-            lines.append(f"| {m.replace('.gguf', '')} | failed: {meta['failed'].get(m, '?')} |||||||||||||")
+            lines.append(f"| {m.replace('.gguf', '')} | failed: {meta['failed'].get(m, '?')} ||||||||||||||")
 
     if meta["judge"]:
         lines += ["", "## Grammar by language (judge, all levels)", "",

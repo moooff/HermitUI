@@ -54,6 +54,7 @@ Per model and level:
 |---|---|
 | Accepted / Unchanged | share of sentences reworded and kept, or returned as they were |
 | Refused | requests the app threw away (wrong language, an introduction, too long, a Light edit that changed too much) |
+| 2nd try (reworded) | sentences that got the app's one retry after an unchanged or refused reply, and how many it then reworded |
 | Words changed | median share of words changed per request (the app's `wordDiff`) |
 | Stock phrases removed | how many of the corpus's `stock_phrases` disappeared |
 | Numbers / Names kept | rewrites with the same numbers, and with every listed name of the text |

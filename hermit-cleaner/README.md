@@ -3,7 +3,7 @@
 *Clean up text another model wrote: hidden characters out, typography plain, some
 sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.2.0.** One self-contained HTML file in two flavours:
+> **Status: v0.2.1.** One self-contained HTML file in two flavours:
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 290 KB)
 > rewords through a model server, and
 > [`dist/hermit-cleaner-wllama.html`](dist/hermit-cleaner-wllama.html) (≈ 3.6 MB) can also
@@ -52,11 +52,18 @@ Three steps, each one optional:
    - The words the model changed are highlighted inside each reworded span, and the
      report gives the average share of words changed. A reply with the same words as
      the original is reported as unchanged.
+   - A reply that comes back unchanged or is refused gets **one second try**, told what
+     was wrong and sampled a little more freely. At Light this rewords most of what
+     small models first leave alone (Qwen3-1.7B: 66 % → 83 % of the sentences). Units
+     under 20 letters that come back unchanged get no second try: those are mostly
+     greetings and names the model rightly left as they were.
+   - **Min. letters** (default 6): sentences and paragraphs with fewer letters are not
+     sent. 6 lets "Hi Sarah," and "Best regards," through but not a bare "Tom".
 
    By sentence, each one is sent with its paragraph as context, so the rewrite still fits in, and picked sentences
    next to each other (up to three) go together in one request. Abbreviations like
    "z. B.", "Dr." or "e.g." and dates like "3. Mai" don't end a sentence. Headings, code
-   blocks, tables and short lines are never sent. The language is detected (English, German, French, Spanish,
+   blocks, tables and lines under the Min. letters are never sent. The language is detected (English, German, French, Spanish,
    Italian, Dutch, Portuguese) and named in the prompt. A reply that comes back empty,
    much shorter or longer than the original, with an introduction ("Here is…"), or in
    the wrong language is discarded, and the original is kept. The model's

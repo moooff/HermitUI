@@ -39,11 +39,11 @@ function constDecl(name) {
 }
 
 const CONSTS = ["APP_VERSION", "KEEP_RE", "INVISIBLE_RE", "SPACE_CHARS", "CHAR_MAP", "HOMOGLYPHS", "CHAR_NAMES",
-    "CLEAN_CATEGORIES", "STOPWORDS", "LANGUAGE_NAMES", "KEYBOARD_FOR_LANGUAGE", "REWORD_LEVELS", "REWORD_EXAMPLE_INPUT", "REWORD_TONES", "STOCK_PHRASES", "PREAMBLE_RE", "KEYBOARDS", "TYPO_WEIGHTS", "TYPO_NAMES", "GERMAN_DETERMINER_RE", "GERMAN_COMMA_WORDS", "LETTER_KINDS", "ABBREVIATIONS"];
+    "CLEAN_CATEGORIES", "STOPWORDS", "LANGUAGE_NAMES", "KEYBOARD_FOR_LANGUAGE", "REWORD_LEVELS", "REWORD_EXAMPLE_INPUT", "REWORD_TONES", "STOCK_PHRASES", "MIN_LETTERS", "RETRY_MIN_LETTERS", "PREAMBLE_RE", "KEYBOARDS", "TYPO_WEIGHTS", "TYPO_NAMES", "GERMAN_DETERMINER_RE", "GERMAN_COMMA_WORDS", "LETTER_KINDS", "ABBREVIATIONS"];
 const FUNCS = [
     "charLabel", "transliterate", "homoglyphPositions", "cleanText", "mergeCleanReports", "cleanTotal",
     "detectLanguage", "splitParagraphs", "isRewritable", "splitSentences", "rewordUnits", "groupUnits", "applyRewrites", "mulberry32", "pickUnits", "buildRewriteSystem", "buildRewriteMessages", "buildRewriteBody", "wordDiff",
-    "stripThinking", "acceptRewrite",
+    "stripThinking", "acceptRewrite", "retryNote",
     "keyNeighbors", "protectedRanges", "makeTypo", "addTypos", "shiftMarks",
     "isLocalEndpoint", "apiEndpoint", "normalizeApiUrl", "chatErrorHint", "normalizeGgufUrl", "ggufFileName", "wllamaMaxTokens",
 ];

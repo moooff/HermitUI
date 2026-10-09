@@ -144,12 +144,30 @@ def scenarios(page, port, state, browser_name):
     page.select_option("#optTone", "keep")
     page.fill("#optExtra", "")
 
+    print("\n-- Min. letters: a greeting is sent, a bare name is not")
+    state.requests.clear()
+    set_input(page, "Hi Sarah,\n\n" + DE_PARA_1 + "\n\nTom\n")
+    run(page)
+    sent = {r["messages"][-1]["content"] for r in state.requests}
+    check("default 6: the greeting goes, \"Tom\" doesn't", "Hi Sarah," in sent and "Tom" not in sent and len(sent) == 2, sent)
+    state.requests.clear()
+    page.fill("#optMin", "40")
+    run(page)
+    sent = {r["messages"][-1]["content"] for r in state.requests}
+    check("raised to 40: only the paragraph", len(sent) == 1 and "Hi Sarah," not in sent, sent)
+    page.fill("#optMin", "6")
+    set_input(page, DIRTY)
+
     print("\n-- the model changes nothing")
     state.mode = "same"
+    state.requests.clear()
     ok, status = run(page)
     report = page.text_content("#report")
     check("unchanged replies are reported, not refused", ok and "0 of 2" in report and "2 paragraphs came back unchanged" in report
           and "kept the original" not in report, report)
+    check("each got one second try, with a note", len(state.requests) == 4
+          and sum("word for word" in r["messages"][0]["content"] for r in state.requests) == 2
+          and "2 paragraphs got a second try, 0 of them reworded then" in report, report)
     check("no reword marks for them", page.locator("#outputText .m-reword").count() == 0)
     state.mode = "ok"
 

@@ -279,7 +279,17 @@ main {
     font-family: inherit;
     font-size: 0.8rem;
 }
-.text-field:focus { outline: none; border-color: var(--primary); }
+.text-field:focus, .num-field:focus { outline: none; border-color: var(--primary); }
+.num-field {
+    width: 4.5em;
+    background: var(--field-bg);
+    color: var(--text-main);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 5px 6px;
+    font-family: inherit;
+    font-size: 0.8rem;
+}
 
 .run-row {
     display: flex;
@@ -646,6 +656,11 @@ body.is-running .options {
                         <option value="paragraph">paragraphs</option>
                     </select>
                 </label>
+                <label class="field" title="Sentences and paragraphs with fewer letters are not sent to the model">
+                    <span>Min.</span>
+                    <input type="number" id="optMin" class="num-field" min="1" max="200" value="6" aria-label="Fewest letters a sentence or paragraph needs to be reworded">
+                    <span>letters</span>
+                </label>
                 <label class="field">
                     <span>Change</span>
                     <select id="optLevel" class="select" title="How much the model may change. Light: a few words per sentence; a reply that changes more than half the words is refused.">
@@ -806,7 +821,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.2.1";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1128,11 +1143,15 @@ function detectLanguage(text) {
 
 // ========== Stage 2: rewording ==========
 
+// The fewest letters a sentence or paragraph needs to be sent to the model (the Min.
+// letters option). Low enough for "Hi Sarah," and "Best regards,"; a bare "Tom" stays.
+const MIN_LETTERS = 6;
+
 // Split text into blocks whose texts concatenate back to the input exactly:
 // "code" (a fenced block), "sep" (blank lines) and "para" (consecutive non-blank lines).
 // `rewrite` marks paragraphs worth sending to the model: real prose, not a table,
-// heading, bare URL or something too short to reword.
-function splitParagraphs(text) {
+// heading, bare URL or something with fewer than `minLetters` letters.
+function splitParagraphs(text, minLetters = MIN_LETTERS) {
     const lines = String(text || "").match(/[^\n]*\n|[^\n]+$/g) || [];
     const blocks = [];
     let fence = null;
@@ -1159,15 +1178,15 @@ function splitParagraphs(text) {
     for (const b of blocks) {
         b.start = offset;
         offset += b.text.length;
-        b.rewrite = b.kind === "para" && isRewritable(b.text);
+        b.rewrite = b.kind === "para" && isRewritable(b.text, minLetters);
     }
     return blocks;
 }
 
-function isRewritable(para) {
+function isRewritable(para, minLetters = MIN_LETTERS) {
     const t = para.trim();
     const letters = (t.match(/\p{L}/gu) || []).length;
-    if (letters < 40) return false;
+    if (letters < minLetters) return false;
     const lines = t.split("\n");
     if (lines.every(l => /^\s*\|/.test(l))) return false;               // a table
     if (lines.length === 1 && /^#{1,6}\s/.test(t)) return false;         // a heading
@@ -1222,17 +1241,18 @@ function splitSentences(para) {
 
 // What to send to the model, as [start, end) ranges into `text`, in order: the core of
 // each rewritable paragraph, or with `unit` "sentence" each sentence in them that has
-// at least 20 letters, with its paragraph as context. `block` numbers the paragraph.
-function rewordUnits(text, unit) {
+// at least `minLetters` letters, with its paragraph as context. `block` numbers the
+// paragraph.
+function rewordUnits(text, unit, minLetters = MIN_LETTERS) {
     const units = [];
-    splitParagraphs(text).forEach((b, block) => {
+    splitParagraphs(text, minLetters).forEach((b, block) => {
         if (!b.rewrite) return;
         const context = b.text.trim();
         const lead = b.text.length - b.text.trimStart().length;
         const ranges = unit === "sentence" ? splitSentences(b.text) : [[lead, lead + context.length]];
         for (const [s, e] of ranges) {
             const t = b.text.slice(s, e);
-            if (unit === "sentence" && (t.match(/\p{L}/gu) || []).length < 20) continue;
+            if (unit === "sentence" && (t.match(/\p{L}/gu) || []).length < minLetters) continue;
             units.push({ start: b.start + s, end: b.start + e, text: t, block, context: t === context ? null : context });
         }
     });
@@ -1371,9 +1391,10 @@ const STOCK_PHRASES = {
 };
 
 // Assemble the system prompt for a reword level (REWORD_LEVELS key), a tone
-// (REWORD_TONES key), an optional instruction from the user and the passage's
-// language (a LANGUAGE_NAMES code, or null when unknown).
-function buildRewriteSystem(level, tone, extra, lang) {
+// (REWORD_TONES key), an optional instruction from the user, the passage's language
+// (a LANGUAGE_NAMES code, or null when unknown) and, on a second try, what was wrong
+// with the first answer (retryNote).
+function buildRewriteSystem(level, tone, extra, lang, retry) {
     const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
     const name = LANGUAGE_NAMES[lang];
     const lines = [
@@ -1389,6 +1410,7 @@ function buildRewriteSystem(level, tone, extra, lang) {
     if (REWORD_TONES[tone]) lines.push(REWORD_TONES[tone]);
     const own = String(extra || "").replace(/\s+/g, " ").trim().slice(0, 300);
     if (own) lines.push("- " + own);
+    if (retry) lines.push("- " + retry);
     lines.push("- Reply with the edited passage only: no introduction, no comments, no quotation marks around it.");
     return lines.join("\n");
 }
@@ -1401,7 +1423,7 @@ function buildRewriteSystem(level, tone, extra, lang) {
 // example is in the passage's language, or it would pull the reply into English).
 function buildRewriteMessages(passage, lang, context, opts) {
     const o = opts || {};
-    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang);
+    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang, o.retry);
     if (context) system += "\n- The passage is part of a longer text, shown below for context only. Rewrite just the passage, so that it still fits in its place: don't repeat or continue the text around it."
         + `\n\nThe longer text:\n${String(context).trim()}`;
     const lv = REWORD_LEVELS[o.level] || REWORD_LEVELS.strong;
@@ -1423,7 +1445,8 @@ function buildRewriteBody(model, passage, noKwargs, lang, context, opts) {
     const body = {
         model: model || "local-model",
         messages: buildRewriteMessages(passage, lang, context, o),
-        temperature: (REWORD_LEVELS[o.level] || REWORD_LEVELS.strong).temperature,
+        // A second try samples a little more freely, or it tends to repeat the first.
+        temperature: Math.round(((REWORD_LEVELS[o.level] || REWORD_LEVELS.strong).temperature + (o.retry ? 0.2 : 0)) * 10) / 10,
         stream: false,
     };
     if (!noKwargs) body.chat_template_kwargs = { enable_thinking: false };
@@ -1509,6 +1532,25 @@ function acceptRewrite(orig, reply, lang, level) {
     const change = wordDiff(o, t).ratio;
     if (change > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
     return { ok: true, text: t, change };
+}
+
+// A unit shorter than this that comes back unchanged gets no second try: it is likely a
+// greeting or a name the model rightly left alone, and pushing it to "change a word"
+// would only damage it.
+const RETRY_MIN_LETTERS = 20;
+
+// The extra rule for a second try after acceptRewrite refused a reply (`verdict`) for
+// `passage`, or "" when a second try isn't worth it. Small models return a third of
+// the sentences unchanged at the Light level; a second try with this note and a
+// slightly higher temperature rewords most of them (bench/README.md).
+function retryNote(verdict, passage) {
+    if (!verdict || verdict.ok) return "";
+    if (verdict.unchanged) {
+        if ((String(passage || "").match(/\p{L}/gu) || []).length < RETRY_MIN_LETTERS) return "";
+        return "Your first answer repeated the passage word for word. This time, change at least one or two words in every sentence.";
+    }
+    if (verdict.reason === "empty reply") return "Your first answer was empty. Reply with the edited passage.";
+    return `Your first answer was refused (${verdict.reason}). Avoid that this time.`;
 }
 
 // ========== Stage 3: typos ==========
@@ -2417,16 +2459,17 @@ if (typeof document !== "undefined") {
         level: () => $("optLevel").value,
         tone: () => $("optTone").value,
         extra: () => $("optExtra").value,
+        minLetters: () => { const n = parseInt($("optMin").value, 10); return Number.isFinite(n) && n > 0 ? n : MIN_LETTERS; },
         rate: () => Number($("optRate").value) / 100,
         layout: () => $("optLayout").value,
     };
     function syncOptions() {
-        ["optShare", "optUnit", "optLevel", "optTone", "optExtra"].forEach(id => { $(id).disabled = !opt.reword(); });
+        ["optShare", "optUnit", "optMin", "optLevel", "optTone", "optExtra"].forEach(id => { $(id).disabled = !opt.reword(); });
         $("optRate").disabled = $("optLayout").disabled = !opt.typos();
         $("rateValue").textContent = Number($("optRate").value).toFixed(1) + " %";
         $("rerollBtn").disabled = !last || !opt.typos() || !!running;
     }
-    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optLevel", "optTone", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
+    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optMin", "optLevel", "optTone", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
     syncOptions();
 
     function setStatus(text, kind) {
@@ -2484,7 +2527,7 @@ if (typeof document !== "undefined") {
         const empty = { counts: Object.fromEntries(CLEAN_CATEGORIES.map(c => [c, {}])), hiddenText: [] };
         let text = source, marks = [], clean1 = empty, clean2 = empty;
         const docLang = detectLanguage(source);
-        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, changes: [], skipped: [], stopped: false, error: null };
+        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, retried: 0, rescued: 0, changes: [], skipped: [], stopped: false, error: null };
         const ropts = { level: opt.level(), tone: opt.tone(), extra: opt.extra() };
         try {
             if (opt.clean()) {
@@ -2492,7 +2535,7 @@ if (typeof document !== "undefined") {
                 text = r.text; marks = r.marks; clean1 = r.report;
             }
             if (opt.reword()) {
-                const units = rewordUnits(text, reword.unit);
+                const units = rewordUnits(text, reword.unit, opt.minLetters());
                 const picked = pickUnits(units.length, opt.share(), mulberry32(Date.now() >>> 0));
                 const groups = groupUnits(text, units, picked);
                 reword.eligible = units.length;
@@ -2503,8 +2546,16 @@ if (typeof document !== "undefined") {
                     setStatus(`Rewording ${k + 1} of ${groups.length}…`, "busy");
                     try {
                         const lang = detectLanguage(g.context || g.text) || docLang;
-                        const reply = await rewordOne(g.text, signal, lang, g.context, ropts);
-                        const verdict = acceptRewrite(g.text, reply, lang, ropts.level);
+                        let reply = await rewordOne(g.text, signal, lang, g.context, ropts);
+                        let verdict = acceptRewrite(g.text, reply, lang, ropts.level);
+                        const note = retryNote(verdict, g.text);
+                        if (note) {
+                            reword.retried += g.count;
+                            setStatus(`Rewording ${k + 1} of ${groups.length}, second try…`, "busy");
+                            reply = await rewordOne(g.text, signal, lang, g.context, { ...ropts, retry: note });
+                            verdict = acceptRewrite(g.text, reply, lang, ropts.level);
+                            if (verdict.ok) reword.rescued += g.count;
+                        }
                         const cleaned = !verdict.ok ? null : opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
                         const core = cleaned && cleaned.text.trim();
                         if (core) {
@@ -2674,6 +2725,7 @@ if (typeof document !== "undefined") {
                 const avg = reword.changes.reduce((s, r) => s + r, 0) / reword.changes.length;
                 add("p", `On average the model changed ${Math.round(avg * 100)} % of the words in what it reworded.`, "report-note");
             }
+            if (reword.retried) add("p", `${reword.retried} ${reword.unit}${reword.retried === 1 ? "" : "s"} got a second try, ${reword.rescued} of them reworded then.`, "report-note");
             if (reword.unchanged) add("p", `${reword.unchanged} ${reword.unit}${reword.unchanged === 1 ? "" : "s"} came back unchanged.`, "report-note");
             reword.skipped.forEach(s => add("p", s, "report-note"));
             const fixed = cleanTotal(clean2);

@@ -250,7 +250,17 @@ main {
     font-family: inherit;
     font-size: 0.8rem;
 }
-.text-field:focus { outline: none; border-color: var(--primary); }
+.text-field:focus, .num-field:focus { outline: none; border-color: var(--primary); }
+.num-field {
+    width: 4.5em;
+    background: var(--field-bg);
+    color: var(--text-main);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 5px 6px;
+    font-family: inherit;
+    font-size: 0.8rem;
+}
 
 .run-row {
     display: flex;
