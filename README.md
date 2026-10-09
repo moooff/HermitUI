@@ -48,6 +48,8 @@ Built for the machines where nothing else fits: air-gapped boxes, locked-down co
 
 **New:** [🤖 **HermitUI Agent**](#-new-hermitui-agent-preview), a supervised coding agent with its own Python sandbox, in the same one-file, store-nothing spirit.
 
+**Also new:** [🧹 **HermitUI Cleaner**](hermit-cleaner/) cleans AI-written text. It strips hidden characters and typography, can reword paragraphs with your own local model, and can add natural typos.
+
 ## ⚡ Try it in 60 seconds
 
 **One click:** open the [🧠 In-Browser AI Demo](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) — it pre-fills Qwen3-0.6B (~380 MB) via the `#gguf=` hash parameter; confirm the banner and chat.

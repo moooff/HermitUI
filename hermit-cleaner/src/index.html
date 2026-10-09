@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- connect-src stays open: the model endpoint is user-configured at runtime.
+         build.py swaps in a policy without the dev font hosts and local files. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src 'self' file: data:; connect-src *; base-uri 'none'; form-action 'none'">
+    <title>HermitUI Cleaner</title>
+    <meta name="description" content="Clean up AI-written text: hidden characters, typography, rewording with a local model, and natural typos.">
+    <link rel="icon" href="favicon.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h2>🧹 HermitUI Cleaner <span class="version-badge" id="versionBadge"></span></h2>
+            <span class="model-badge" id="endpointBadge"></span>
+        </div>
+        <div class="header-actions">
+            <button type="button" class="header-btn icon-only" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
+            <button type="button" class="header-btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">⚙️</button>
+        </div>
+    </header>
+
+    <main>
+        <section class="options card" aria-label="Steps">
+            <div class="steps">
+                <label class="step">
+                    <input type="checkbox" id="optClean" checked>
+                    <span><strong>Clean</strong> hidden &amp; unusual characters</span>
+                </label>
+                <label class="step">
+                    <input type="checkbox" id="optReword">
+                    <span><strong>Reword</strong> with the local model</span>
+                </label>
+                <label class="field">
+                    <span>Share</span>
+                    <select id="optShare" class="select">
+                        <option value="0.3">30 % of paragraphs</option>
+                        <option value="0.6" selected>60 % of paragraphs</option>
+                        <option value="1">All paragraphs</option>
+                    </select>
+                </label>
+                <label class="step">
+                    <input type="checkbox" id="optTypos">
+                    <span><strong>Typos</strong></span>
+                </label>
+                <label class="field">
+                    <span>Rate <output id="rateValue">0.8 %</output></span>
+                    <input type="range" id="optRate" min="0.2" max="4" step="0.2" value="0.8" aria-label="Typo rate, percent of eligible words">
+                </label>
+                <label class="field">
+                    <span>Keyboard</span>
+                    <select id="optLayout" class="select">
+                        <option value="auto" selected>Auto (from language)</option>
+                        <option value="qwertz">QWERTZ</option>
+                        <option value="qwerty">QWERTY</option>
+                        <option value="azerty">AZERTY</option>
+                    </select>
+                </label>
+            </div>
+            <div class="run-row">
+                <span class="status" id="status" role="status" aria-live="polite"></span>
+                <div class="run-actions">
+                    <button type="button" class="secondary-btn" id="rerollBtn" disabled title="New typos on the same text, without calling the model again">🎲 Reroll typos</button>
+                    <button type="button" class="primary-btn" id="runBtn" disabled title="Ctrl+Enter">Run</button>
+                    <button type="button" class="stop-btn" id="stopBtn" hidden>Stop</button>
+                </div>
+            </div>
+            <p class="remote-warning" id="remoteWarning" hidden>⚠️ Rewording sends the text to a server that is not on this machine or network.</p>
+        </section>
+
+        <div class="panes">
+            <section class="card pane" id="inputCard" aria-label="Input">
+                <div class="pane-head">
+                    <h3>Input</h3>
+                    <span class="pane-stats" id="inputStats"></span>
+                    <div class="pane-actions">
+                        <button type="button" class="secondary-btn" id="openBtn">📂 Open</button>
+                        <button type="button" class="secondary-btn" id="clearBtn">Clear</button>
+                    </div>
+                </div>
+                <textarea id="inputText" spellcheck="false" placeholder="Paste text here, or drop a .txt / .md file…" aria-label="Input text"></textarea>
+                <input type="file" id="fileInput" accept=".txt,.md,.markdown,.text,text/*" hidden>
+            </section>
+
+            <section class="card pane" aria-label="Output">
+                <div class="pane-head">
+                    <h3>Output</h3>
+                    <span class="pane-stats" id="outputStats"></span>
+                    <div class="pane-actions">
+                        <button type="button" class="secondary-btn" id="changesBtn" aria-pressed="true">Hide changes</button>
+                        <button type="button" class="primary-btn small" id="copyBtn" disabled>Copy</button>
+                    </div>
+                </div>
+                <div id="outputText" class="output" tabindex="0" aria-label="Output text"></div>
+                <div class="legend" aria-hidden="true">
+                    <span><i class="m-clean">a</i> replaced</span>
+                    <span><i class="m-removed"></i> removed</span>
+                    <span><i class="m-reword">a</i> reworded</span>
+                    <span><i class="m-typo">a</i> typo</span>
+                </div>
+            </section>
+        </div>
+
+        <section class="card report-card" aria-label="Report">
+            <h3>Report</h3>
+            <div id="report" class="report"><p class="report-note">Run the cleaner to see what was changed. Hover a highlight in the output for details.</p></div>
+        </section>
+    </main>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+        <div class="modal">
+            <h3 id="settingsModalTitle">⚙️ Settings</h3>
+            <p class="field-hint">Used only by the Reword step. Kept in this tab's memory; nothing is saved.</p>
+            <label for="settingUrl">API Base URL</label>
+            <input type="text" id="settingUrl" placeholder="http://localhost:8080/v1" autocomplete="off">
+            <label for="settingModel">Model</label>
+            <input type="text" id="settingModel" list="modelList" placeholder="Empty: the server's first model" autocomplete="off">
+            <datalist id="modelList"></datalist>
+            <label for="settingKey">API Key (optional)</label>
+            <input type="password" id="settingKey" placeholder="Not needed for llama.cpp or Ollama" autocomplete="off">
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" id="testConnectionBtn">Test Connection</button>
+                <span class="spacer"></span>
+                <button type="button" class="cancel-btn" id="settingsCancel">Cancel</button>
+                <button type="button" class="primary-btn" id="settingsSave">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
