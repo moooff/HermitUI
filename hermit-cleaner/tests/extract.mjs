@@ -39,11 +39,11 @@ function constDecl(name) {
 }
 
 const CONSTS = ["APP_VERSION", "KEEP_RE", "INVISIBLE_RE", "SPACE_CHARS", "CHAR_MAP", "HOMOGLYPHS", "CHAR_NAMES",
-    "CLEAN_CATEGORIES", "STOPWORDS", "LANGUAGE_NAMES", "KEYBOARD_FOR_LANGUAGE", "REWRITE_SYSTEM", "PREAMBLE_RE", "KEYBOARDS", "TYPO_KINDS"];
+    "CLEAN_CATEGORIES", "STOPWORDS", "LANGUAGE_NAMES", "KEYBOARD_FOR_LANGUAGE", "REWRITE_SYSTEM", "PREAMBLE_RE", "KEYBOARDS", "TYPO_WEIGHTS", "TYPO_NAMES", "GERMAN_DETERMINER_RE", "GERMAN_COMMA_WORDS", "LETTER_KINDS", "ABBREVIATIONS"];
 const FUNCS = [
     "charLabel", "transliterate", "homoglyphPositions", "cleanText", "mergeCleanReports", "cleanTotal",
-    "detectLanguage", "splitParagraphs", "isRewritable", "mulberry32", "pickParagraphs", "buildRewriteMessages", "buildRewriteBody",
-    "stripThinking", "acceptRewrite", "keepWhitespace",
+    "detectLanguage", "splitParagraphs", "isRewritable", "splitSentences", "rewordUnits", "groupUnits", "applyRewrites", "mulberry32", "pickUnits", "buildRewriteMessages", "buildRewriteBody",
+    "stripThinking", "acceptRewrite",
     "keyNeighbors", "protectedRanges", "makeTypo", "addTypos", "shiftMarks",
     "isLocalEndpoint", "apiEndpoint", "normalizeApiUrl", "chatErrorHint",
 ];

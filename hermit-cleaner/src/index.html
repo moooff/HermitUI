@@ -38,9 +38,16 @@
                 <label class="field">
                     <span>Share</span>
                     <select id="optShare" class="select">
-                        <option value="0.3">30 % of paragraphs</option>
-                        <option value="0.6" selected>60 % of paragraphs</option>
-                        <option value="1">All paragraphs</option>
+                        <option value="0.3">30 %</option>
+                        <option value="0.6" selected>60 %</option>
+                        <option value="1">All</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Of the</span>
+                    <select id="optUnit" class="select" title="Sentences: one sentence (or a few next to each other) per request, with its paragraph as context">
+                        <option value="sentence" selected>sentences</option>
+                        <option value="paragraph">paragraphs</option>
                     </select>
                 </label>
                 <label class="step">

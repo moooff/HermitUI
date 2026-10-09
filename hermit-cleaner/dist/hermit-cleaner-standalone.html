@@ -556,9 +556,16 @@ body.is-running .options {
                 <label class="field">
                     <span>Share</span>
                     <select id="optShare" class="select">
-                        <option value="0.3">30 % of paragraphs</option>
-                        <option value="0.6" selected>60 % of paragraphs</option>
-                        <option value="1">All paragraphs</option>
+                        <option value="0.3">30 %</option>
+                        <option value="0.6" selected>60 %</option>
+                        <option value="1">All</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Of the</span>
+                    <select id="optUnit" class="select" title="Sentences: one sentence (or a few next to each other) per request, with its paragraph as context">
+                        <option value="sentence" selected>sentences</option>
+                        <option value="paragraph">paragraphs</option>
                     </select>
                 </label>
                 <label class="step">
@@ -659,7 +666,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.1.1";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1028,6 +1035,109 @@ function isRewritable(para) {
     return true;
 }
 
+// Abbreviations a full stop doesn't end a sentence after (lower case, without the dot).
+// Single letters ("z. B.", "J. Smith"), words with a dot inside ("e.g", "d.h") and
+// one- or two-digit numbers (German ordinals: "am 3. Mai") are caught by rule instead.
+const ABBREVIATIONS = new Set(["dr", "prof", "nr", "no", "ca", "bzw", "usw", "etc", "vs", "mr", "mrs", "ms", "st", "jr", "sr",
+    "inkl", "ggf", "evtl", "vgl", "sog", "bzgl", "abs", "art", "approx", "dept", "fig", "mio", "mrd", "tel", "str", "jh", "hr", "fr", "vol",
+]);
+
+// The sentences of one paragraph, as [start, end) ranges into it without surrounding
+// whitespace. A line break always ends a sentence; a list or quote marker at the start
+// of a line is left out, and heading and table lines are skipped. A full stop ends a
+// sentence only before an upper-case letter, a digit or an opening quote, and not
+// after an abbreviation.
+function splitSentences(para) {
+    const text = String(para || "");
+    const out = [];
+    const push = (a, b) => {
+        while (a < b && /\s/.test(text[a])) a++;
+        while (b > a && /\s/.test(text[b - 1])) b--;
+        if (b > a) out.push([a, b]);
+    };
+    let pos = 0;
+    for (const line of text.split("\n")) {
+        const base = pos;
+        pos += line.length + 1;
+        if (/^\s*(?:#{1,6}\s|\|)/.test(line)) continue;
+        let s = line.match(/^\s*(?:(?:[-*+]|\d{1,3}[.)])\s+|>\s*)*/)[0].length;
+        const stop = /[.!?\u2026]+["'\u00ab\u00bb)\]]*(?=\s+\S)/g;
+        stop.lastIndex = s;
+        let m;
+        while ((m = stop.exec(line))) {
+            const after = m.index + m[0].length;
+            const next = line.slice(after).trimStart()[0];
+            if (!/[\p{Lu}\d"'\u00ab\u00bb(\u00bf\u00a1]/u.test(next)) continue;
+            if (/^\.["'\u00ab\u00bb)\]]*$/.test(m[0])) {
+                const word = line.slice(s, m.index).match(/[\p{L}\d.]*$/u)[0];
+                if (/^\p{L}$/u.test(word) || /^\d{1,2}$/.test(word) || /\p{L}\.\p{L}/u.test(word) || ABBREVIATIONS.has(word.toLowerCase())) continue;
+            }
+            push(base + s, base + after);
+            s = after;
+        }
+        push(base + s, base + line.length);
+    }
+    return out;
+}
+
+// What to send to the model, as [start, end) ranges into `text`, in order: the core of
+// each rewritable paragraph, or with `unit` "sentence" each sentence in them that has
+// at least 20 letters, with its paragraph as context. `block` numbers the paragraph.
+function rewordUnits(text, unit) {
+    const units = [];
+    splitParagraphs(text).forEach((b, block) => {
+        if (!b.rewrite) return;
+        const context = b.text.trim();
+        const lead = b.text.length - b.text.trimStart().length;
+        const ranges = unit === "sentence" ? splitSentences(b.text) : [[lead, lead + context.length]];
+        for (const [s, e] of ranges) {
+            const t = b.text.slice(s, e);
+            if (unit === "sentence" && (t.match(/\p{L}/gu) || []).length < 20) continue;
+            units.push({ start: b.start + s, end: b.start + e, text: t, block, context: t === context ? null : context });
+        }
+    });
+    return units;
+}
+
+// The picked units, in order, as requests: picked sentences next to each other on the
+// same line go to the model together (up to `maxRun`), so they are rewritten as one
+// piece and still read as one. `count` is how many units a request holds.
+function groupUnits(text, units, picked, maxRun = 3) {
+    const groups = [];
+    let prev = -2;
+    for (const i of picked) {
+        const u = units[i], g = groups[groups.length - 1];
+        if (g && prev === i - 1 && g.count < maxRun && units[prev].block === u.block && /^[ \t]+$/.test(text.slice(g.end, u.start))) {
+            g.end = u.end;
+            g.text = text.slice(g.start, g.end);
+            g.count++;
+            if (g.text === g.context) g.context = null;
+        } else {
+            groups.push({ start: u.start, end: u.end, text: u.text, context: u.context, count: 1 });
+        }
+        prev = i;
+    }
+    return groups;
+}
+
+// Put the rewritten ranges `reps` ({start, end, text}, in order) into `text`. Marks
+// inside a replaced range go with the text they pointed at, the rest move with the
+// edits, and each replacement gets a "reword" mark labelled with the original.
+function applyRewrites(text, marks, reps) {
+    let out = "", pos = 0;
+    const edits = [], added = [];
+    for (const r of reps) {
+        out += text.slice(pos, r.start);
+        edits.push({ at: r.start, removed: r.end - r.start, inserted: r.text.length });
+        added.push({ start: out.length, end: out.length + r.text.length, kind: "reword", labels: [text.slice(r.start, r.end)] });
+        out += r.text;
+        pos = r.end;
+    }
+    out += text.slice(pos);
+    const inside = m => reps.some(r => m.start < r.end && (m.start > r.start || (m.start === r.start && m.end > m.start)));
+    return { text: out, marks: shiftMarks(marks.filter(m => !inside(m)), edits).concat(added) };
+}
+
 // Seeded PRNG (mulberry32): a seed gives the same run every time.
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -1040,9 +1150,9 @@ function mulberry32(seed) {
     };
 }
 
-// Which of `n` eligible paragraphs to reword: a random `share` of them (0-1), at least
-// one when share > 0. Returns sorted indices into the eligible list.
-function pickParagraphs(n, share, rng) {
+// Which of `n` eligible units (paragraphs or sentences) to reword: a random `share` of
+// them (0-1), at least one when share > 0. Returns sorted indices into the list.
+function pickUnits(n, share, rng) {
     if (n <= 0 || share <= 0) return [];
     const k = Math.min(n, Math.max(1, Math.round(n * share)));
     const idx = Array.from({ length: n }, (_, i) => i);
@@ -1065,23 +1175,28 @@ const REWRITE_SYSTEM = [
 ].join("\n");
 
 // `lang` (a LANGUAGE_NAMES code) is spelled out in the prompt: "keep the language" alone
-// isn't enough for small models, which drift into English on German text.
-function buildRewriteMessages(paragraph, lang) {
+// isn't enough for small models, which drift into English on German text. `context`
+// (the paragraph a sentence comes from) goes into the system message, so the user
+// message holds only what is to be rewritten.
+function buildRewriteMessages(passage, lang, context) {
     const name = LANGUAGE_NAMES[lang];
-    const system = name ? `${REWRITE_SYSTEM}\n- The passage is in ${name}. Write your rewrite in ${name}.` : REWRITE_SYSTEM;
+    let system = REWRITE_SYSTEM;
+    if (name) system += `\n- The passage is in ${name}. Write your rewrite in ${name}.`;
+    if (context) system += "\n- The passage is part of a longer text, shown below for context only. Rewrite just the passage, so that it still fits in its place: don't repeat or continue the text around it."
+        + `\n\nThe longer text:\n${String(context).trim()}`;
     return [
         { role: "system", content: system },
-        { role: "user", content: String(paragraph).trim() },
+        { role: "user", content: String(passage).trim() },
     ];
 }
 
-// The chat request body for one paragraph. Thinking is switched off where the chat
+// The chat request body for one passage (a paragraph, or one or a few sentences). Thinking is switched off where the chat
 // template supports it (a reasoning trace only costs time here); `noKwargs` drops that
 // for a strict server that refused it once.
-function buildRewriteBody(model, paragraph, noKwargs, lang) {
+function buildRewriteBody(model, passage, noKwargs, lang, context) {
     const body = {
         model: model || "local-model",
-        messages: buildRewriteMessages(paragraph, lang),
+        messages: buildRewriteMessages(passage, lang, context),
         temperature: 0.9,
         stream: false,
     };
@@ -1112,6 +1227,8 @@ function acceptRewrite(orig, reply, lang) {
     const o = String(orig || "").trim();
     // Quotes wrapped around the whole reply that the original didn't have.
     if (t.length > 1 && /^["'\u201c\u201e]/.test(t) && /["'\u201c\u201d]$/.test(t) && !/^["'\u201c\u201e]/.test(o)) t = t.slice(1, -1).trim();
+    // A sentence comes back on one line, even if the model broke it.
+    if (!o.includes("\n")) t = t.replace(/\s*\n\s*/g, " ");
     if (!t) return { ok: false, reason: "empty reply" };
     if (PREAMBLE_RE.test(t)) return { ok: false, reason: "the model added an introduction" };
     const ratio = t.length / Math.max(1, o.length);
@@ -1120,13 +1237,6 @@ function acceptRewrite(orig, reply, lang) {
     const got = lang ? detectLanguage(t) : null;
     if (got && got !== lang) return { ok: false, reason: `the model answered in ${LANGUAGE_NAMES[got]} instead of ${LANGUAGE_NAMES[lang]}` };
     return { ok: true, text: t };
-}
-
-// Put a rewritten core back between the paragraph's own leading/trailing whitespace.
-function keepWhitespace(original, core) {
-    const lead = original.match(/^\s*/)[0];
-    const trail = original.match(/\s*$/)[0];
-    return lead + core + trail;
 }
 
 // ========== Stage 3: typos ==========
@@ -1164,13 +1274,61 @@ function protectedRanges(text) {
     return ranges;
 }
 
-// One typo in `word` (letters only). Returns the new word and the kind, or null.
+// Typo kinds and how often each is picked. Kinds that don't fit a word are skipped
+// and the rest re-weighted. German adds the slips German typists make most.
+const TYPO_WEIGHTS = {
+    default: { neighbor: 0.33, swap: 0.24, drop: 0.12, double: 0.11, case: 0.05, shift: 0.06, repeat: 0.04, space: 0.05 },
+    de: { neighbor: 0.19, swap: 0.13, drop: 0.08, double: 0.07, case: 0.03, shift: 0.05, repeat: 0.03, space: 0.03,
+        nounCase: 0.08, ending: 0.09, nTail: 0.09, dass: 0.06, comma: 0.06, eszett: 0.01 },
+};
+const TYPO_NAMES = {
+    neighbor: "neighbouring key", swap: "swapped letters", drop: "missing letter", double: "doubled letter",
+    case: "missing capital", shift: "two capitals", repeat: "repeated word", space: "missing space",
+    nounCase: "noun in lower case", ending: "-em/-en mixed up", nTail: "an n too many or missing",
+    dass: "das/dass", comma: "missing comma", eszett: "\u00df as ss",
+};
+// German articles and pronouns whose -em/-en endings get mixed up ("mit einen Freund").
+const GERMAN_DETERMINER_RE = /^(?:d|ein|kein|mein|dein|sein|ihr|unser|eur|dies|jen|jed|welch|manch|solch|all)e[mn]$/;
+// German conjunctions that take a comma before them, a comma typists often leave out.
+const GERMAN_COMMA_WORDS = ["dass", "weil", "obwohl", "damit", "wenn", "ob", "sondern", "aber", "als", "bevor", "nachdem", "sodass", "falls", "w\u00e4hrend"];
+const LETTER_KINDS = ["neighbor", "swap", "drop", "double"];
+
+// One typo in `word` (letters only): the new word, or null when the kind doesn't fit.
 function makeTypo(word, kind, layout, rng, sentenceStart) {
     const pick = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
     const n = word.length;
+    if (LETTER_KINDS.includes(kind) && n < 4) return null;
     if (kind === "case") {
         if (!sentenceStart || word[0] === word[0].toLowerCase()) return null;
         return word[0].toLowerCase() + word.slice(1);
+    }
+    if (kind === "shift") {
+        // Shift held a moment too long: "DIese".
+        if (n < 3 || !/^\p{Lu}\p{Ll}/u.test(word) || word[1] === "\u00df") return null;
+        return word[0] + word[1].toUpperCase() + word.slice(2);
+    }
+    if (kind === "nounCase") {
+        if (sentenceStart || !/^\p{Lu}\p{Ll}+$/u.test(word)) return null;
+        return word[0].toLowerCase() + word.slice(1);
+    }
+    if (kind === "ending") {
+        if (!GERMAN_DETERMINER_RE.test(word.toLowerCase())) return null;
+        const swapped = word.endsWith("m") ? "n" : word.endsWith("n") ? "m" : word.endsWith("M") ? "N" : "M";
+        return word.slice(0, -1) + swapped;
+    }
+    if (kind === "nTail") {
+        if (n >= 5 && /\p{Ll}en$/u.test(word)) return word.slice(0, -1);
+        if (n >= 4 && /\p{Ll}e$/u.test(word)) return word + "n";
+        return null;
+    }
+    if (kind === "dass") {
+        if (/^dass$/i.test(word)) return word.slice(0, 3);
+        if (/^das$/i.test(word)) return word + "s";
+        return null;
+    }
+    if (kind === "eszett") {
+        const i = word.indexOf("\u00df");
+        return i < 0 ? null : word.slice(0, i) + "ss" + word.slice(i + 1);
     }
     if (kind === "neighbor") {
         for (let tries = 0; tries < 4; tries++) {
@@ -1201,29 +1359,37 @@ function makeTypo(word, kind, layout, rng, sentenceStart) {
     return null;
 }
 
-const TYPO_KINDS = [["neighbor", 0.35], ["swap", 0.25], ["drop", 0.15], ["double", 0.15], ["case", 0.10]];
-
 // Add typing mistakes to `text`. opts.rate is the chance per eligible word (0-1),
 // opts.layout a KEYBOARDS key, opts.minGap the fewest words between two typos.
-// opts.lang "de" makes capitalised words in mid-sentence eligible: in German those are
-// mostly nouns, not names. (A typo never changes a word's first letter, except the
-// "case" kind at a sentence start.)
-// Returns the text, marks (offsets into the new text) and the edits made (offsets into
-// the input), which shiftMarks uses to move earlier marks along.
+// opts.lang "de" adds the German kinds and makes capitalised words in mid-sentence
+// eligible: in German those are mostly nouns, not names.
+// Returns the text, marks (offsets into the new text; `typo` names the kind, the label
+// is the replaced original) and the edits made (offsets into the input), which
+// shiftMarks uses to move earlier marks along.
 function addTypos(text, opts, rng) {
-    const rate = Math.max(0, Number((opts || {}).rate) || 0);
-    const layout = (opts || {}).layout || "qwertz";
-    const minGap = (opts || {}).minGap ?? 12;
-    const nounsCapitalised = (opts || {}).lang === "de";
+    const o = opts || {};
+    const rate = Math.max(0, Number(o.rate) || 0);
+    const layout = o.layout || "qwertz";
+    const minGap = o.minGap ?? 12;
+    const german = o.lang === "de";
+    const weights = Object.entries(TYPO_WEIGHTS[german ? "de" : "default"]);
     const src = String(text || "");
     const ranges = protectedRanges(src);
     const isProtected = (a, b) => ranges.some(([s, e]) => a < e && b > s);
+    // Ordinary text: not touching digits, paths, file names, code, URLs or addresses.
+    const plain = (a, b) => {
+        const prev = src[a - 1] || "", next = src[b] || "";
+        return !/[\d_@/\\]/.test(prev + next)
+            && !(next === "." && /\p{L}/u.test(src[b + 1] || ""))
+            && !(prev === "." && /\p{L}/u.test(src[a - 2] || ""))
+            && !isProtected(a, b);
+    };
     let out = "", last = 0, sinceTypo = minGap;
     const marks = [], edits = [];
     for (const m of src.matchAll(/\p{L}+/gu)) {
         const word = m[0], at = m.index, end = at + word.length;
+        if (at < last) continue;   // already part of the previous edit
         sinceTypo++;
-        const prev = src[at - 1] || "", next = src[end] || "";
         // Sentence start: only spaces, quotes or a list bullet since the last full stop,
         // line break or the beginning of the text.
         let p = at - 1;
@@ -1234,23 +1400,45 @@ function addTypos(text, opts, rng) {
             while (q >= 0 && /[ \t]/.test(src[q])) q--;
             sentenceStart = q < 0 || src[q] === "\n";
         }
-        const eligible = word.length >= 4
-            && !(word.length > 1 && word === word.toUpperCase())
-            && !/[\d_@/\\]/.test(prev + next)
-            && !(next === "." && /\p{L}/u.test(src[end + 1] || ""))
-            && !(prev === "." && /\p{L}/u.test(src[at - 2] || ""))
-            && !(word[0] !== word[0].toLowerCase() && !sentenceStart && !nounsCapitalised)
-            && !isProtected(at, end);
-        if (!eligible || sinceTypo < minGap || rng() >= rate) continue;
-        let r = rng(), kind = TYPO_KINDS[TYPO_KINDS.length - 1][0];
-        for (const [k, w] of TYPO_KINDS) { if (r < w) { kind = k; break; } r -= w; }
-        const typo = makeTypo(word, kind, layout, rng, sentenceStart) || makeTypo(word, "swap", layout, rng, sentenceStart);
-        if (!typo || typo === word) continue;
-        out += src.slice(last, at);
-        marks.push({ start: out.length, end: out.length + typo.length, kind: "typo", labels: [word] });
-        edits.push({ at, removed: word.length, inserted: typo.length });
-        out += typo;
-        last = end;
+        const capital = word[0] !== word[0].toLowerCase();
+        if (!plain(at, end)) continue;
+        if (word.length > 1 && word === word.toUpperCase()) continue;   // an acronym
+        if (capital && !sentenceStart && !german) continue;              // likely a name
+        if (sinceTypo < minGap || rng() >= rate) continue;
+
+        const tryKind = kind => {
+            if (kind === "repeat") return word.length >= 2 && !capital ? { from: at, to: end, text: word + " " + word } : null;
+            if (kind === "space") {
+                if (src[end] !== " ") return null;
+                const nm = /^\p{L}+/u.exec(src.slice(end + 1, end + 41));
+                if (!nm) return null;
+                const next = nm[0], nEnd = end + 1 + next.length;
+                if (!plain(end + 1, nEnd) || (next.length > 1 && next === next.toUpperCase())) return null;
+                if (!german && next[0] !== next[0].toLowerCase()) return null;
+                return { from: at, to: nEnd, text: word + next };
+            }
+            if (kind === "comma") {
+                if (!GERMAN_COMMA_WORDS.includes(word.toLowerCase()) || src[at - 1] !== " " || src[at - 2] !== ",") return null;
+                return { from: at - 2, to: end, text: " " + word };
+            }
+            const t = makeTypo(word, kind, layout, rng, sentenceStart);
+            return t && t !== word ? { from: at, to: end, text: t } : null;
+        };
+        let pool = weights.slice(), edit = null, kind = null;
+        while (pool.length && !edit) {
+            const total = pool.reduce((sum, [, w]) => sum + w, 0);
+            let r = rng() * total, k = 0;
+            while (k < pool.length - 1 && r >= pool[k][1]) { r -= pool[k][1]; k++; }
+            kind = pool[k][0];
+            edit = tryKind(kind);
+            pool.splice(k, 1);
+        }
+        if (!edit || edit.from < last) continue;
+        out += src.slice(last, edit.from);
+        marks.push({ start: out.length, end: out.length + edit.text.length, kind: "typo", typo: kind, labels: [src.slice(edit.from, edit.to)] });
+        edits.push({ at: edit.from, removed: edit.to - edit.from, inserted: edit.text.length });
+        out += edit.text;
+        last = edit.to;
         sinceTypo = 0;
     }
     out += src.slice(last);
@@ -1524,16 +1712,17 @@ if (typeof document !== "undefined") {
         reword: () => $("optReword").checked,
         typos: () => $("optTypos").checked,
         share: () => Number($("optShare").value),
+        unit: () => $("optUnit").value,
         rate: () => Number($("optRate").value) / 100,
         layout: () => $("optLayout").value,
     };
     function syncOptions() {
-        $("optShare").disabled = !opt.reword();
+        $("optShare").disabled = $("optUnit").disabled = !opt.reword();
         $("optRate").disabled = $("optLayout").disabled = !opt.typos();
         $("rateValue").textContent = Number($("optRate").value).toFixed(1) + " %";
         $("rerollBtn").disabled = !last || !opt.typos() || !!running;
     }
-    ["optClean", "optReword", "optTypos", "optShare", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
+    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
     syncOptions();
 
     function setStatus(text, kind) {
@@ -1543,7 +1732,7 @@ if (typeof document !== "undefined") {
     }
 
     // ----- the model call -----
-    async function rewordOne(paragraph, signal, lang) {
+    async function rewordOne(passage, signal, lang, context) {
         if (!MODEL_NAME) {
             // Ollama needs a real model name; llama.cpp takes any. Ask the server once.
             try {
@@ -1558,7 +1747,7 @@ if (typeof document !== "undefined") {
             const res = await fetch(apiEndpoint(API_URL, "/chat/completions"), {
                 method: "POST",
                 headers: authHeaders(),
-                body: JSON.stringify(buildRewriteBody(MODEL_NAME, paragraph, kwargsRejected, lang)),
+                body: JSON.stringify(buildRewriteBody(MODEL_NAME, passage, kwargsRejected, lang, context)),
                 signal,
             });
             if (res.ok) {
@@ -1588,58 +1777,42 @@ if (typeof document !== "undefined") {
         const empty = { counts: Object.fromEntries(CLEAN_CATEGORIES.map(c => [c, {}])), hiddenText: [] };
         let text = source, marks = [], clean1 = empty, clean2 = empty;
         const docLang = detectLanguage(source);
-        const reword = { attempted: 0, done: 0, eligible: 0, skipped: [], stopped: false, error: null };
+        const reword = { unit: opt.unit(), attempted: 0, done: 0, eligible: 0, skipped: [], stopped: false, error: null };
         try {
             if (opt.clean()) {
                 const r = cleanText(text);
                 text = r.text; marks = r.marks; clean1 = r.report;
             }
             if (opt.reword()) {
-                const blocks = splitParagraphs(text);
-                const eligible = blocks.filter(b => b.rewrite);
-                reword.eligible = eligible.length;
-                const chosen = new Set(pickParagraphs(eligible.length, opt.share(), mulberry32(Date.now() >>> 0)).map(i => eligible[i]));
-                reword.attempted = chosen.size;
-                let out = "", newMarks = [], k = 0;
-                for (const b of blocks) {
-                    const start = out.length;
-                    let replaced = null;
-                    if (chosen.has(b) && !reword.stopped && !reword.error) {
-                        k++;
-                        setStatus(`Rewording paragraph ${k} of ${chosen.size}…`, "busy");
-                        try {
-                            const lang = detectLanguage(b.text) || docLang;
-                            const reply = await rewordOne(b.text, signal, lang);
-                            const verdict = acceptRewrite(b.text, reply, lang);
-                            if (verdict.ok) {
-                                const cleaned = opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
-                                clean2 = mergeCleanReports(clean2, cleaned.report);
-                                replaced = keepWhitespace(b.text, cleaned.text);
-                                reword.done++;
-                            } else {
-                                reword.skipped.push(`Paragraph ${k}: ${verdict.reason} — kept the original.`);
-                            }
-                        } catch (e) {
-                            if (e.name === "AbortError") reword.stopped = true;
-                            else reword.error = e;
+                const units = rewordUnits(text, reword.unit);
+                const picked = pickUnits(units.length, opt.share(), mulberry32(Date.now() >>> 0));
+                const groups = groupUnits(text, units, picked);
+                reword.eligible = units.length;
+                reword.attempted = picked.length;
+                const reps = [];
+                for (const [k, g] of groups.entries()) {
+                    if (reword.stopped || reword.error) break;
+                    setStatus(`Rewording ${k + 1} of ${groups.length}…`, "busy");
+                    try {
+                        const lang = detectLanguage(g.context || g.text) || docLang;
+                        const reply = await rewordOne(g.text, signal, lang, g.context);
+                        const verdict = acceptRewrite(g.text, reply, lang);
+                        const cleaned = !verdict.ok ? null : opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
+                        const core = cleaned && cleaned.text.trim();
+                        if (core) {
+                            clean2 = mergeCleanReports(clean2, cleaned.report);
+                            reps.push({ start: g.start, end: g.end, text: core });
+                            reword.done += g.count;
+                        } else {
+                            const t = g.text.length > 50 ? g.text.slice(0, 50).trimEnd() + "…" : g.text;
+                            reword.skipped.push(`"${t}": ${verdict.ok ? "nothing left after cleanup" : verdict.reason} — kept the original.`);
                         }
-                    }
-                    if (replaced !== null) {
-                        out += replaced;
-                        const core = replaced.trim();
-                        const coreStart = start + replaced.indexOf(core);
-                        newMarks.push({ start: coreStart, end: coreStart + core.length, kind: "reword", labels: [b.text.trim()] });
-                    } else {
-                        out += b.text;
-                        // This block's cleanup marks move with it.
-                        const shift = start - b.start, bEnd = b.start + b.text.length;
-                        const isLast = b === blocks[blocks.length - 1];
-                        marks.filter(m => (m.start >= b.start && m.start < bEnd) || (isLast && m.start === bEnd))
-                            .forEach(m => newMarks.push({ ...m, start: m.start + shift, end: m.end + shift }));
+                    } catch (e) {
+                        if (e.name === "AbortError") reword.stopped = true;
+                        else reword.error = e;
                     }
                 }
-                text = out;
-                marks = newMarks;
+                ({ text, marks } = applyRewrites(text, marks, reps));
             }
             last = { text, marks, clean1, clean2, reword, lang: docLang, did: { clean: opt.clean(), reword: opt.reword() } };
             finish();
@@ -1656,20 +1829,20 @@ if (typeof document !== "undefined") {
     // The typo stage and rendering; also what Reroll typos reruns.
     function finish() {
         let { text, marks } = last;
-        let typos = 0;
+        let typos = [];
         last.layout = opt.layout() === "auto" ? (KEYBOARD_FOR_LANGUAGE[last.lang] || "qwerty") : opt.layout();
         if (opt.typos()) {
             const r = addTypos(text, { rate: opt.rate(), layout: last.layout, lang: last.lang }, mulberry32((Math.random() * 2 ** 32) >>> 0));
             marks = shiftMarks(marks, r.edits).concat(r.marks);
             text = r.text;
-            typos = r.marks.length;
+            typos = r.marks;
         }
         last.output = text;
         renderOutput(text, marks);
         renderReport(typos);
         const { reword } = last;
         if (reword.error) setStatus("❌ " + errorText(reword.error), "error");
-        else if (reword.stopped) setStatus(`Stopped — reworded ${reword.done} of ${reword.attempted} paragraphs.`, "warn");
+        else if (reword.stopped) setStatus(`Stopped — reworded ${reword.done} of ${reword.attempted} ${reword.unit}s.`, "warn");
         else setStatus("Done.", "ok");
     }
 
@@ -1724,7 +1897,7 @@ if (typeof document !== "undefined") {
             if (m) {
                 const s = document.createElement("span");
                 s.className = "m-" + m.kind;
-                s.title = m.kind === "typo" ? `Typo (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
+                s.title = m.kind === "typo" ? `Typo, ${TYPO_NAMES[m.typo] || "typo"} (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
                 s.textContent = piece;
                 target().appendChild(s);
             } else {
@@ -1779,14 +1952,20 @@ if (typeof document !== "undefined") {
             }
         }
         if (did.reword) {
-            if (!reword.eligible) add("h4", "Rewording: no paragraph long enough to reword");
-            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} paragraph${reword.eligible === 1 ? "" : "s"} reworded`);
+            if (!reword.eligible) add("h4", `Rewording: no ${reword.unit} long enough to reword`);
+            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} ${reword.unit}${reword.eligible === 1 ? "" : "s"} reworded`);
             reword.skipped.forEach(s => add("p", s, "report-note"));
             const fixed = cleanTotal(clean2);
             if (fixed) add("p", `Cleaned ${fixed} character${fixed === 1 ? "" : "s"} out of the model's answers.`, "report-note");
             add("p", "Rewording changes the word choice, which is what statistical watermarks live in. No tool can promise what an AI detector will say.", "report-note");
         }
-        if (opt.typos()) add("h4", `Typos: ${typos} added (${last.layout.toUpperCase()} keyboard)`);
+        if (opt.typos()) {
+            add("h4", `Typos: ${typos.length} added (${last.layout.toUpperCase()} keyboard)`);
+            const byKind = {};
+            typos.forEach(mk => { byKind[mk.typo] = (byKind[mk.typo] || 0) + 1; });
+            const parts = Object.entries(byKind).sort((x, y) => y[1] - x[1]).map(([k, c]) => `${c} × ${TYPO_NAMES[k] || k}`);
+            if (parts.length) add("p", parts.join(", "), "report-note");
+        }
     }
 
     $("runBtn").addEventListener("click", () => { run().catch(e => setStatus("❌ " + errorText(e), "error")); });

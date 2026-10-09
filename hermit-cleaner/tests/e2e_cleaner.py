@@ -27,6 +27,11 @@ DE_PARA_1 = ("Der Ausschuss hat den Vorschlag gr\u00fcndlich gepr\u00fcft und en
              "nicht zur Abstimmung kommt \u2014 die \u201eKosten\u201c sind zu hoch.")
 DE_PARA_2 = ("Au\u00dferdem ist es wichtig zu beachten, dass die Mitglieder sich\u200b nicht einig sind und die "
              "Diskussion im n\u00e4chsten Jahr fortgesetzt werden soll.")
+SENTENCES = ["Der Ausschuss hat den Vorschlag lange gepr\u00fcft.",
+             "Er kommt in diesem Jahr nicht zur Abstimmung, weil die Kosten zu hoch sind.",
+             "Das sagte z. B. Dr. M\u00fcller am 3. Mai im Rathaus.",
+             "Die Mitglieder wollen im n\u00e4chsten Jahr weiter dar\u00fcber reden."]
+SENT_PARA = " ".join(SENTENCES)
 DIRTY = (f"# \u00dcberschrift\n\n{DE_PARA_1}{HIDDEN}\n\n```python\nprint(\u201cx\u201d)\n```\n\n{DE_PARA_2} \u2705\n")
 
 
@@ -99,6 +104,7 @@ def scenarios(page, port, state, browser_name):
     state.requests.clear()
     set_steps(page, clean=True, reword=True)
     page.select_option("#optShare", "1")
+    page.select_option("#optUnit", "paragraph")
     ok, status = run(page)
     out = output(page)
     check("run finishes", ok and "Done" in status, status)
@@ -145,6 +151,30 @@ def scenarios(page, port, state, browser_name):
     state.mode = "401"
     ok, status = run(page)
     check("error with the API-key hint", "401" in status and "API key" in status, status)
+
+    print("\n-- reword by sentence")
+    state.mode = "ok"
+    state.requests.clear()
+    set_input(page, "# Titel\n\n" + SENT_PARA + "\n")
+    page.select_option("#optUnit", "sentence")
+    page.select_option("#optShare", "0.3")
+    ok, status = run(page)
+    out = output(page)
+    check("run finishes", ok and "Done" in status, status)
+    sent = [r["messages"][-1]["content"] for r in state.requests]
+    check("one whole sentence sent", len(sent) == 1 and sent[0] in SENTENCES, sent)
+    check("the paragraph goes along as context", all(SENT_PARA in r["messages"][0]["content"] for r in state.requests))
+    check("only that sentence replaced", out.count('"New" - ') == 1 and out.replace('"New" - ', "") == "# Titel\n\n" + SENT_PARA + "\n", out)
+    check("one reword mark", page.locator("#outputText .m-reword").count() == 1)
+    check("report counts sentences", "1 of 4 sentences reworded" in page.text_content("#report"), page.text_content("#report"))
+    state.requests.clear()
+    page.select_option("#optShare", "1")
+    ok, status = run(page)
+    sent = [r["messages"][-1]["content"] for r in state.requests]
+    check("neighbours go together: 3 + 1 sentences", len(sent) == 2 and sent[0] == " ".join(SENTENCES[:3]) and sent[1] == SENTENCES[3], sent)
+    check("both requests carry the paragraph", all(SENT_PARA in r["messages"][0]["content"] for r in state.requests))
+    check("all four reworded", "4 of 4 sentences reworded" in page.text_content("#report"))
+    page.select_option("#optUnit", "paragraph")
 
     print("\n-- typos and reroll")
     state.mode = "ok"

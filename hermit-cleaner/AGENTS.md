@@ -8,7 +8,7 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-v0.1.0: cleanup, rewording through an OpenAI-compatible server, and typos. Phase 2 is
+v0.1.1: cleanup, rewording (by sentence or paragraph) through an OpenAI-compatible server, and typos. Phase 2 is
 in-browser rewording through wllama (`@wllama` marker blocks and a `-wllama` output,
 as in the root app).
 

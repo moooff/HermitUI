@@ -1,9 +1,9 @@
 # HermitUI Cleaner
 
 *Clean up text another model wrote: hidden characters out, typography plain, some
-paragraphs reworded by your own local model, and a few natural typos.*
+sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.1.0.** One self-contained HTML file,
+> **Status: v0.1.1.** One self-contained HTML file,
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 260 KB).
 > It is a sibling of [HermitUI](../) and [HermitUI Agent](../hermit-agent/), developed
 > separately in this folder. Nothing is stored: the text and the settings live in the
@@ -37,19 +37,33 @@ Three steps, each one optional:
    - **Whitespace**, a known hiding place for data: trailing spaces and repeated spaces
      inside a line are removed. Indentation and fenced code blocks are left as they are.
      (This also removes Markdown's two-space line breaks.)
-2. **Reword** (optional). Your local model rewrites 30 %, 60 % or all of the prose
-   paragraphs, one request per paragraph. Headings, code blocks, tables and short
-   lines are never sent. The language is detected (English, German, French, Spanish,
+2. **Reword** (optional). Your local model rewrites 30 %, 60 % or all of the
+   **sentences** (the default) or **paragraphs** of the prose. By sentence, each one is
+   sent with its paragraph as context, so the rewrite still fits in, and picked sentences
+   next to each other (up to three) go together in one request. Abbreviations like
+   "z. B.", "Dr." or "e.g." and dates like "3. Mai" don't end a sentence. Headings, code
+   blocks, tables and short lines are never sent. The language is detected (English, German, French, Spanish,
    Italian, Dutch, Portuguese) and named in the prompt. A reply that comes back empty,
    much shorter or longer than the original, with an introduction ("Here is…"), or in
-   the wrong language is discarded, and the original paragraph is kept. The model's
+   the wrong language is discarded, and the original is kept. The model's
    answers go through the cleanup again.
-3. **Typos** (optional). A low rate of realistic mistakes: a neighbouring key, two
-   letters swapped, a letter dropped or doubled, a missing capital at a sentence
-   start. The keyboard follows the language (QWERTZ for German, AZERTY for French,
+3. **Typos** (optional). A low rate of realistic mistakes:
+   - **In every language:** a neighbouring key, two letters swapped, a letter dropped
+     or doubled, a missing capital at a sentence start, Shift held too long ("DIese"),
+     a repeated word ("the the"), a missing space ("inthe").
+   - **In German text, also:**
+     - an "n" too many or missing ("habe" → "haben", "keinen" → "keine")
+     - -em/-en mixed up ("mit einen Freund", "dem" → "den")
+     - das/dass
+     - a missing comma before dass/weil/wenn/obwohl and similar conjunctions
+     - a noun in lower case
+     - ß typed as ss
+
+   The report lists how many of each kind were added. The keyboard follows the language (QWERTZ for German, AZERTY for French,
    QWERTY otherwise), or you pick it. The typos never touch code, URLs, e-mail
-   addresses, numbers, ALL-CAPS words, words under four letters, or capitalised words
-   mid-sentence (likely names). German is the exception to the last rule, since there
+   addresses, numbers, ALL-CAPS words, or capitalised words mid-sentence (likely
+   names). Words under four letters never get a letter typo: only whole-word slips
+   like a repeat or "dem"/"den". German is the exception to the last rule, since there
    those are mostly nouns. **Reroll typos** makes new ones without calling the model
    again.
 

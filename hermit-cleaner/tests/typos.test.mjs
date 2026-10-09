@@ -2,7 +2,7 @@
 import m from "./extract.mjs";
 import { check, section, report } from "./check.mjs";
 
-const { addTypos, makeTypo, keyNeighbors, shiftMarks, mulberry32, KEEP_RE } = m;
+const { addTypos, makeTypo, keyNeighbors, shiftMarks, mulberry32, KEEP_RE, TYPO_WEIGHTS, TYPO_NAMES } = m;
 
 const prose = ("The quick brown foxes jumped over several lazy sleeping dogs before running across "
     + "the meadow toward distant hills where nobody would ever think about looking for them. ").repeat(60);
@@ -89,7 +89,64 @@ section("addTypos: never touches");
     const hit = forbidden.filter(w => touched.has(w));
     check("protected words never get a typo", hit.length === 0, hit.join(", "));
     check("but ordinary words do", touched.has("Visit") || touched.has("today") || touched.has("about") || touched.has("Numbers"), [...touched].join(", "));
-    check("short words never", ![...touched].some(w => w.length < 4));
+    let shortOk = true;
+    for (let seed = 1; seed <= 100; seed++) {
+        const r = addTypos(text, { rate: 1, minGap: 0 }, mulberry32(seed));
+        for (const mk of r.marks) {
+            const was = mk.labels[0], now = r.text.slice(mk.start, mk.end);
+            if (/^\p{L}{1,3}$/u.test(was) && !(now === was + " " + was || mk.typo === "case" || mk.typo === "shift")) shortOk = false;
+        }
+    }
+    check("short words keep their letters", shortOk);
+}
+
+section("More slips, all languages");
+{
+    const rng = mulberry32(3);
+    check("shift held too long", makeTypo("Diese", "shift", "qwertz", rng, true) === "DIese");
+    check("shift needs a capital", makeTypo("diese", "shift", "qwertz", rng, false) === null);
+    const words = "we went to the market and then we walked home along the river in the evening light".repeat(1);
+    const text = (words + ". ").repeat(40);
+    const kinds = new Set(), samples = {};
+    for (let seed = 1; seed <= 60; seed++) {
+        const r = addTypos(text, { rate: 0.3, minGap: 0, lang: "en" }, mulberry32(seed));
+        r.marks.forEach(mk => { kinds.add(mk.typo); samples[mk.typo] = [mk.labels[0], r.text.slice(mk.start, mk.end)]; });
+    }
+    check("a repeated word appears", kinds.has("repeat") && samples.repeat[1] === samples.repeat[0] + " " + samples.repeat[0], JSON.stringify(samples.repeat));
+    check("a missing space appears", kinds.has("space") && samples.space[1] === samples.space[0].replace(" ", ""), JSON.stringify(samples.space));
+    const german = ["nounCase", "ending", "nTail", "dass", "comma", "eszett"];
+    check("no German kinds in English text", !german.some(k => kinds.has(k)), [...kinds].join(", "));
+    check("every kind has a name", Object.values(TYPO_WEIGHTS).every(w => Object.keys(w).every(k => TYPO_NAMES[k])));
+}
+
+section("German slips");
+{
+    const rng = mulberry32(5);
+    check("noun in lower case", makeTypo("Regierung", "nounCase", "qwertz", rng, false) === "regierung");
+    check("not at a sentence start", makeTypo("Regierung", "nounCase", "qwertz", rng, true) === null);
+    check("einem -> einen", makeTypo("einem", "ending", "qwertz", rng, false) === "einen");
+    check("den -> dem", makeTypo("den", "ending", "qwertz", rng, false) === "dem");
+    check("diesen -> diesem", makeTypo("diesen", "ending", "qwertz", rng, false) === "diesem");
+    check("ending only on articles and pronouns", makeTypo("Atem", "ending", "qwertz", rng, false) === null);
+    check("an n too many: habe -> haben", makeTypo("habe", "nTail", "qwertz", rng, false) === "haben");
+    check("an n missing: keinen -> keine", makeTypo("keinen", "nTail", "qwertz", rng, false) === "keine");
+    check("dass -> das", makeTypo("dass", "dass", "qwertz", rng, false) === "das");
+    check("Das -> Dass", makeTypo("Das", "dass", "qwertz", rng, true) === "Dass");
+    check("\u00df -> ss", makeTypo("Stra\u00dfe", "eszett", "qwertz", rng, false) === "Strasse");
+
+    const de = ("Ich habe gestern mit einem Freund gesprochen, weil ich wissen wollte, dass die Stra\u00dfe "
+        + "wieder offen ist. Er sagte, dass er keinen Bescheid bekommen hat, aber den Weg kennt. ").repeat(30);
+    const kinds = new Set(), samples = {};
+    for (let seed = 1; seed <= 150; seed++) {
+        const r = addTypos(de, { rate: 0.4, minGap: 0, lang: "de" }, mulberry32(seed));
+        r.marks.forEach(mk => { kinds.add(mk.typo); (samples[mk.typo] = samples[mk.typo] || []).push([mk.labels[0], r.text.slice(mk.start, mk.end)]); });
+    }
+    for (const k of ["nounCase", "ending", "nTail", "dass", "comma", "eszett", "shift", "repeat", "space", "neighbor"]) {
+        check(`German text gets "${TYPO_NAMES[k]}"`, kinds.has(k), [...kinds].join(", "));
+    }
+    check("missing comma: \", dass\" -> \" dass\"", (samples.comma || []).every(([was, now]) => /^, \p{L}+$/u.test(was) && now === was.slice(1)), JSON.stringify((samples.comma || []).slice(0, 3)));
+    check("das/dass only on das and dass", (samples.dass || []).every(([was]) => /^das{1,2}$/i.test(was)));
+    check("-em/-en only swaps the last letter", (samples.ending || []).every(([was, now]) => was.slice(0, -1) === now.slice(0, -1) && /[mn]$/.test(now)));
 }
 
 section("shiftMarks");

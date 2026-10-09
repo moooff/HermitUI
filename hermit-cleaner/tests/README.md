@@ -33,7 +33,8 @@ The comment at the top of `extract.mjs` shows how to see the real error.
     into minutes.
 - **`typos.test.mjs`**:
   - keyboard neighbours (QWERTZ, QWERTY and umlauts)
-  - each typo kind
+  - each typo kind, including Shift held too long, repeated words and missing spaces
+  - the German kinds (an n too many or missing, -em/-en, das/dass, a missing comma, a noun in lower case, ß as ss), and that English text never gets them
   - seeded determinism, rate and gap
   - the marks and edits reproduce the input
   - URLs, e-mail, code, numbers, ALL-CAPS words, names and file names are never touched
@@ -41,8 +42,10 @@ The comment at the top of `extract.mjs` shows how to see the real error.
 - **`rewrite.test.mjs`**:
   - `detectLanguage` (en, de, fr, es, it, nl)
   - `splitParagraphs` (exact round trip, fences with blank lines, which blocks get rewritten)
-  - `pickParagraphs`
-  - the request body (language named, thinking off, the retry without kwargs)
+  - `splitSentences` (abbreviations, ordinals, quotes, line breaks, list markers)
+  - `rewordUnits`, `groupUnits` and `applyRewrites` (sentence or paragraph units, neighbours sent together, marks moved)
+  - `pickUnits`
+  - the request body (language named, the paragraph as context, thinking off, the retry without kwargs)
   - `stripThinking`
   - `acceptRewrite` (empty, preamble, length, wrong language)
   - German typos on nouns
@@ -53,7 +56,7 @@ The comment at the top of `extract.mjs` shows how to see the real error.
 Opens the built file from `file://` in Chromium and Firefox against
 `mock_openai.py`. It checks:
 - cleanup of a German text, the report and the change view
-- rewording: what is sent, the second cleanup, the retry without `chat_template_kwargs` and an English answer refused for German text
+- rewording by paragraph and by sentence: what is sent (and the context), the second cleanup, the retry without `chat_template_kwargs` and an English answer refused for German text
 - Stop and a 401 hint
 - typos and Reroll, which makes no model call
 - Test Connection and Copy
