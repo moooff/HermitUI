@@ -1,0 +1,138 @@
+{
+ "texts": [
+  {
+   "id": "en-blog",
+   "lang": "en",
+   "kind": "blog post",
+   "names": [
+    "Atlassian",
+    "Slack",
+    "Microsoft Teams"
+   ],
+   "text": "Remote work has fundamentally transformed the way modern teams collaborate. Moreover, it is important to note that companies like Atlassian reported a 23 % increase in productivity after 2021. Furthermore, employees save an average of 72 minutes per day by not commuting, which allows them to delve deeper into meaningful tasks.\n\nHowever, remote work also presents unique challenges that should not be overlooked. Communication can become fragmented when teams rely solely on asynchronous tools such as Slack or Microsoft Teams. In conclusion, a thoughtful hybrid approach that balances flexibility with regular in-person meetings is essential for long-term success.\n"
+  },
+  {
+   "id": "en-email",
+   "lang": "en",
+   "kind": "e-mail",
+   "names": [
+    "Sarah",
+    "Q3",
+    "Berlin"
+   ],
+   "text": "Hi Sarah,\n\nI hope this email finds you well. I wanted to reach out regarding the Q3 budget review that is scheduled for next Thursday. Additionally, I have taken the liberty of preparing a comprehensive overview of the key figures, which I will share with you by Tuesday at the latest.\n\nIt is worth mentioning that the travel costs for the Berlin trade fair exceeded our initial estimate by roughly 4,500 euros. Please do not hesitate to reach out if you have any questions or require further clarification. I look forward to our productive discussion.\n\nBest regards,\nTom\n"
+  },
+  {
+   "id": "en-product",
+   "lang": "en",
+   "kind": "product text with a list",
+   "names": [
+    "AeroBrew",
+    "Bluetooth"
+   ],
+   "text": "## AeroBrew Pro\n\nThe AeroBrew Pro is a game-changer for coffee enthusiasts who value both convenience and quality. Crafted with meticulous attention to detail, it seamlessly combines cutting-edge technology with an elegant design that elevates any kitchen.\n\n- It heats water to the perfect temperature in just 45 seconds, ensuring an optimal extraction every single time.\n- The intuitive app connects via Bluetooth and lets you fine-tune 12 different brewing profiles to suit your unique taste.\n\nWhether you are a seasoned barista or a casual drinker, the AeroBrew Pro is designed to unlock the full potential of every bean.\n"
+  },
+  {
+   "id": "en-report",
+   "lang": "en",
+   "kind": "report",
+   "names": [
+    "Lisbon",
+    "EU"
+   ],
+   "text": "The pilot project in Lisbon demonstrated that shared electric scooters can significantly reduce short car trips in dense urban areas. Over a period of 6 months, the city recorded 180,000 rides, with an average distance of 2.3 kilometres per ride. Notably, around 30 % of users stated that they would otherwise have taken a car or taxi.\n\nNevertheless, several issues emerged that warrant careful consideration. Improperly parked scooters frequently blocked sidewalks, which led to numerous complaints from residents. Consequently, the report recommends designated parking zones and stricter enforcement before the program is expanded with EU funding.\n"
+  },
+  {
+   "id": "de-blog",
+   "lang": "de",
+   "kind": "Blogartikel",
+   "names": [
+    "Bitkom"
+   ],
+   "text": "Die Digitalisierung stellt kleine und mittlere Unternehmen vor erhebliche Herausforderungen. Dar\u00fcber hinaus ist es wichtig zu beachten, dass laut einer Studie des Bitkom aus dem Jahr 2023 rund 38 Prozent der Betriebe keine klare Digitalstrategie haben. Viele Gesch\u00e4ftsf\u00fchrer untersch\u00e4tzen den Aufwand, der mit der Einf\u00fchrung neuer Software verbunden ist.\n\nZusammenfassend l\u00e4sst sich sagen, dass eine schrittweise Umstellung die besten Ergebnisse liefert. Unternehmen sollten zun\u00e4chst ihre bestehenden Prozesse analysieren und anschlie\u00dfend gezielt in Schulungen investieren. Nur so kann gew\u00e4hrleistet werden, dass die Mitarbeitenden die neuen Werkzeuge auch tats\u00e4chlich nutzen.\n"
+  },
+  {
+   "id": "de-email",
+   "lang": "de",
+   "kind": "E-Mail (Sie)",
+   "names": [
+    "Frau Weber",
+    "Hamburg"
+   ],
+   "text": "Sehr geehrte Frau Weber,\n\nvielen Dank f\u00fcr Ihre schnelle R\u00fcckmeldung bez\u00fcglich des Angebots. Gerne m\u00f6chte ich Ihnen mitteilen, dass wir die gew\u00fcnschten \u00c4nderungen bereits umgesetzt haben. Dar\u00fcber hinaus haben wir die Lieferzeit auf 14 Werktage verk\u00fcrzt, was Ihnen eine reibungslose Planung erm\u00f6glichen sollte.\n\nSelbstverst\u00e4ndlich stehe ich Ihnen f\u00fcr ein pers\u00f6nliches Gespr\u00e4ch in unserem B\u00fcro in Hamburg jederzeit zur Verf\u00fcgung. Bitte z\u00f6gern Sie nicht, mich bei weiteren Fragen zu kontaktieren. Ich freue mich auf die weitere Zusammenarbeit.\n\nMit freundlichen Gr\u00fc\u00dfen\nJonas Becker\n"
+  },
+  {
+   "id": "de-post",
+   "lang": "de",
+   "kind": "Social-Media-Beitrag",
+   "names": [
+    "M\u00fcnchen"
+   ],
+   "text": "Letzte Woche durfte ich auf einer Konferenz in M\u00fcnchen \u00fcber nachhaltige Lieferketten sprechen. Es war eine unglaublich inspirierende Erfahrung, die mir einmal mehr gezeigt hat, wie wichtig der Austausch zwischen Wirtschaft und Wissenschaft ist. Besonders beeindruckt hat mich, dass \u00fcber 400 Teilnehmende vor Ort waren.\n\nIn der heutigen schnelllebigen Welt ist es entscheidender denn je, Verantwortung zu \u00fcbernehmen. Lassen Sie uns gemeinsam die Zukunft gestalten und den Wandel aktiv vorantreiben. Ich bin gespannt auf Ihre Gedanken zu diesem Thema!\n"
+  },
+  {
+   "id": "de-doc",
+   "lang": "de",
+   "kind": "Anleitung",
+   "names": [
+    "VPN",
+    "IT-Abteilung"
+   ],
+   "text": "Um eine sichere Verbindung zum Firmennetz herzustellen, ist die Einrichtung des VPN-Clients unerl\u00e4sslich. Zun\u00e4chst sollten Sie sicherstellen, dass Ihr Betriebssystem auf dem neuesten Stand ist. Anschlie\u00dfend laden Sie die Konfigurationsdatei aus dem Intranet herunter und importieren diese in den Client.\n\nEs ist von entscheidender Bedeutung, dass Sie Ihr Passwort alle 90 Tage \u00e4ndern. Sollten dabei Probleme auftreten, wenden Sie sich bitte umgehend an die IT-Abteilung. Diese steht Ihnen werktags von 8 bis 17 Uhr zur Verf\u00fcgung.\n"
+  },
+  {
+   "id": "fr-blog",
+   "lang": "fr",
+   "kind": "article (no example in the prompt)",
+   "names": [
+    "Lyon"
+   ],
+   "text": "Le t\u00e9l\u00e9travail a profond\u00e9ment transform\u00e9 la mani\u00e8re dont les \u00e9quipes collaborent au quotidien. Par ailleurs, il est important de souligner qu'une entreprise de Lyon a constat\u00e9 une hausse de 15 % de la productivit\u00e9 en un an. De plus, les salari\u00e9s gagnent en moyenne 50 minutes par jour gr\u00e2ce \u00e0 l'absence de trajets.\n\nN\u00e9anmoins, cette organisation pr\u00e9sente des d\u00e9fis qu'il ne faut pas n\u00e9gliger. La communication peut devenir fragment\u00e9e lorsque les \u00e9changes se font uniquement par \u00e9crit. En conclusion, une approche hybride \u00e9quilibr\u00e9e semble \u00eatre la cl\u00e9 d'un succ\u00e8s durable.\n"
+  }
+ ],
+ "stock_phrases": {
+  "en": [
+   "moreover",
+   "furthermore",
+   "additionally",
+   "in conclusion",
+   "it is important to note",
+   "it is worth mentioning",
+   "delve",
+   "game-changer",
+   "seamlessly",
+   "cutting-edge",
+   "elevate",
+   "unlock the full potential",
+   "nevertheless",
+   "consequently",
+   "notably",
+   "do not hesitate",
+   "i hope this email finds you well",
+   "meticulous",
+   "warrant"
+  ],
+  "de": [
+   "dar\u00fcber hinaus",
+   "es ist wichtig zu beachten",
+   "zusammenfassend l\u00e4sst sich sagen",
+   "nur so kann gew\u00e4hrleistet werden",
+   "z\u00f6gern sie nicht",
+   "unglaublich inspirierend",
+   "in der heutigen schnelllebigen welt",
+   "entscheidender denn je",
+   "lassen sie uns gemeinsam",
+   "von entscheidender bedeutung",
+   "unerl\u00e4sslich",
+   "selbstverst\u00e4ndlich",
+   "reibungslos"
+  ],
+  "fr": [
+   "par ailleurs",
+   "il est important de souligner",
+   "de plus",
+   "n\u00e9anmoins",
+   "en conclusion"
+  ]
+ }
+}

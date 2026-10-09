@@ -8,15 +8,16 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-v0.1.1: cleanup, rewording (by sentence or paragraph) through an OpenAI-compatible server, and typos. Phase 2 is
-in-browser rewording through wllama (`@wllama` marker blocks and a `-wllama` output,
-as in the root app).
+v0.2.0: cleanup; rewording by sentence or paragraph at three change levels (Light, the
+default, Medium, Strong), with a tone and an extra instruction, through an
+OpenAI-compatible server or, in the `-wllama` build, a GGUF model in the tab; typos.
 
 ## Build & test
 ```bash
-python3 build.py                                     # → dist/hermit-cleaner-standalone.html
+python3 build.py                                     # → dist/hermit-cleaner-standalone.html and -wllama.html
 node tests/run.mjs                                   # unit tests (pure logic)
 ../benchmark/.venv/bin/python tests/e2e_cleaner.py   # e2e vs. a mock endpoint, Chromium + Firefox
+../benchmark/.venv/bin/python bench/bench.py        # reword benchmark on llama-server (GPU), judged; see bench/README.md
 ```
 The page's CSP blocks `eval`, so Playwright's `wait_for_function` can't run inside it:
 poll with `page.evaluate` instead.
@@ -50,6 +51,30 @@ poll with `page.evaluate` instead.
   that it beats AI detectors.
 - **A version bump in every commit** that changes this folder: `APP_VERSION` in
   `src/script.js` and the status line in `README.md`.
+- **In-browser model (`-wllama` build).** All wllama code sits between
+  `@wllama:start`/`@wllama:end` markers (`<!-- -->`, `/* */`, `//`), as in the root app;
+  `build.py` strips them for the standalone file and fails on unbalanced markers. The
+  engine is pinned only by `WLLAMA_CDN_BASE` in `src/script.js` and inlined as
+  `window.__WLLAMA_INLINE__`. The rules learned in the root app hold here too: models
+  load into memory (`MemBlob`), never through wllama's `loadModelFromUrl` (it persists
+  to OPFS); `reasoning_format: "none"`; a `success: false` context is a failed load.
+- **The `-wllama` CSP needs `connect-src data: blob:`.** The engine's worker reads the
+  wasm from a `data:` URL with XHR. Without it, Emscripten aborts inside the worker and
+  `loadModel` never settles: the page just shows "Loading…" forever. It also needs
+  `script-src blob: 'wasm-unsafe-eval'` and `worker-src blob:`. The standalone policy
+  stays without all of these; the root app has no CSP, so it never had this problem.
+- **Prompt changes are measured, not guessed.** Run `bench/bench.py` before and after
+  (`--app` takes a patched copy of the build), and read the judge's problem list and
+  `samples.md`, not only the table. Keep `JUDGE_CALIBRATION` passing; a judge that
+  misses the known cases makes the scores meaningless.
+- **Name no other language in the reword prompt.** Stock phrases are listed in the
+  passage's language only (`STOCK_PHRASES`). Naming German in an English prompt made
+  Qwen3-1.7B answer in German 18 % of the time on one sentence. Findings so far (2026-10-09): an example exchange per level moved small models
+  far more than rule wording did (1.7B Medium vs Strong: 24 % vs 40 % median words
+  changed, unchanged replies 13 → 7 of 48); every model kept numbers and names; 1.7B
+  German turns ungrammatical past Light edits; Qwen3-4B separates the levels best
+  (18 / 37 / 50 %) but once flipped a meaning ("unterschätzen" → "überschätzen");
+  Gemma-4-E2B writes the best German but changes ~23 % even at Light.
 - **Tests:** pure logic goes in unit tests that slice the real functions out of
   `src/script.js` (`tests/extract.mjs`, the same approach as `../tests/`). Renaming a
   function fails the suite; update the lists there. DOM behaviour goes in
@@ -62,4 +87,7 @@ poll with `page.evaluate` instead.
 | `chatErrorHint` | `script.js` | `7773cdd` | wllama branch dropped; context advice talks about the paragraph |
 | `showToast`, toast and settings-modal CSS | `script.js`, `style.css` | `7773cdd` | unchanged apart from theme variables |
 | `tests/check.mjs`, `tests/run.mjs`, the `extract.mjs` approach | `../hermit-agent/tests/` | `7773cdd` | the extractor also slices multi-line `const` tables |
-| `build.py` techniques (Inter woff2 inlining, `</script` escaping, strict CSP) | `../hermit-agent/build.py` | `7773cdd` | one output; only the Latin Inter subsets, one block each |
+| `build.py` techniques (Inter woff2 inlining, `</script` escaping, strict CSP) | `../hermit-agent/build.py` | `7773cdd` | only the Latin Inter subsets, one block each |
+| `strip_wllama`, the inlined wllama engine | `../build.py` | `7773cdd` | a second output beside the standalone one; its own CSP |
+| `#gguf=` link banner (`applyGgufLink`) | `../src/script.js` (`handleWllamaHashParams`) | `7773cdd` | a banner in the page, not over the chat; only `gguf`, no `api`/`model`/`key` params |
+| `normalizeGgufUrl`, `ggufFileName`, `MemBlob`, `downloadGgufToBlob`, `resolveWllamaEngine`, `gunzipToBytes`, the model load loop | `../src/script.js` | `7773cdd` | no debug console or chat formats; context default 4096, retry floor 2048; the reply streamed and collected, so Stop is immediate |

@@ -14,6 +14,7 @@
     --mark-clean-line: #3b82f6;
     --mark-removed: #ef4444;
     --mark-reword: rgba(139, 92, 246, 0.12);
+    --mark-changed: rgba(139, 92, 246, 0.28);
     --mark-typo: rgba(245, 158, 11, 0.25);
     --mark-typo-line: #d97706;
 }
@@ -34,6 +35,7 @@
     --mark-clean-line: #60a5fa;
     --mark-removed: #f87171;
     --mark-reword: rgba(167, 139, 250, 0.16);
+    --mark-changed: rgba(167, 139, 250, 0.34);
     --mark-typo: rgba(251, 191, 36, 0.22);
     --mark-typo-line: #fbbf24;
 }
@@ -236,6 +238,19 @@ main {
     font-size: 0.8rem;
 }
 .select:disabled, .field input:disabled { opacity: 0.45; }
+.field-wide { flex: 1 1 260px; }
+.text-field {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--field-bg);
+    color: var(--text-main);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 0.8rem;
+}
+.text-field:focus { outline: none; border-color: var(--primary); }
 
 .run-row {
     display: flex;
@@ -362,9 +377,14 @@ body.is-running .options {
     background: var(--mark-removed);
     border-radius: 2px;
 }
+.m-changed {
+    background: var(--mark-changed);
+    border-radius: 2px;
+}
 .output.plain .m-clean,
 .output.plain .m-typo,
-.output.plain .m-reword {
+.output.plain .m-reword,
+.output.plain .m-changed {
     background: none;
     border: none;
     box-shadow: none;
@@ -472,6 +492,53 @@ body.is-running .options {
     cursor: pointer;
 }
 .cancel-btn:hover { color: var(--text-main); }
+
+/* @wllama:start */
+/* ----- in-browser model (settings modal) ----- */
+.modal-select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+}
+.wllama-group {
+    padding: 14px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    background: var(--field-bg);
+}
+.wllama-group .field-hint { margin-bottom: 12px; }
+.wllama-hint { color: #b45309; }
+.modal input[type="file"] { padding: 8px; font-size: 0.85rem; margin-bottom: 12px; }
+.url-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 6px; }
+.url-row input { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.url-row .secondary-btn { flex-shrink: 0; }
+.wllama-status { font-size: 0.85rem; color: var(--text-main); overflow-wrap: anywhere; margin-bottom: 6px; }
+#wllamaProgress { width: 100%; height: 6px; margin-bottom: 8px; accent-color: var(--primary); }
+.model-options summary { cursor: pointer; font-size: 0.85rem; color: var(--text-muted); margin: 6px 0 10px; }
+.modal .check-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 500;
+    font-size: 0.85rem;
+}
+.modal .check-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+.link-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    font-size: 0.9rem;
+    border-color: rgba(59, 130, 246, 0.45);
+}
+.link-banner > span:first-child { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
+.link-banner-actions { display: flex; gap: 8px; }
+/* @wllama:end */
 
 /* ----- toast (from HermitUI) ----- */
 .toast {

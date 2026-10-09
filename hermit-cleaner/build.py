@@ -4,16 +4,21 @@
     python3 build.py            # from hermit-cleaner/ (or any directory)
     python3 build.py --refresh  # re-download the cached font files
 
-Reads src/ (index.html, style.css, script.js, favicon.svg) and writes
-dist/hermit-cleaner-standalone.html with everything inlined: the stylesheet, the
-script, the favicon and the Inter font (as data: URLs). Downloads are cached in libs/
-(gitignored). Like the root build it fails loudly instead of writing an output that
-still points at a remote host.
+Reads src/ (index.html, style.css, script.js, favicon.svg) and writes two files with
+everything inlined (the stylesheet, the script, the favicon and the Inter font as
+data: URLs):
+- dist/hermit-cleaner-standalone.html: the @wllama:start/@wllama:end blocks stripped.
+- dist/hermit-cleaner-wllama.html: with them, plus the wllama engine (JS + wasm,
+  pinned by WLLAMA_CDN_BASE in src/script.js), gzipped + base64-encoded as
+  window.__WLLAMA_INLINE__, so a model loads without any network access.
+Downloads are cached in libs/ (gitignored). Like the root build it fails loudly
+instead of writing an output that still points at a remote host.
 
 Adapted from ../hermit-agent/build.py; it never reads from or writes to anything
 outside this folder.
 """
 import base64
+import gzip
 import json
 import pathlib
 import re
@@ -33,6 +38,12 @@ REFRESH = "--refresh" in sys.argv
 # step with the dev policy in src/index.html minus its font hosts and local files.
 STANDALONE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
                   "font-src data:; img-src data:; connect-src *; base-uri 'none'; form-action 'none'")
+# The -wllama build also imports the engine from a blob: URL, runs it in a blob: worker
+# and compiles its wasm, which the worker reads from a data: URL by XHR (connect-src).
+WLLAMA_CSP = (STANDALONE_CSP
+              .replace("script-src 'unsafe-inline';", "script-src 'unsafe-inline' blob: 'wasm-unsafe-eval'; worker-src blob:;")
+              .replace("connect-src *;", "connect-src * data: blob:;"))
+assert WLLAMA_CSP.count("blob:") == 3
 
 INTER_TAG = r'<link\s+href="(https://fonts\.googleapis\.com/css2[^"]+)"\s+rel="stylesheet"\s*>'
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -55,6 +66,22 @@ def fetch(url, headers=None):
 
 def escape_script_close(js):
     return re.sub(r'</(script)', r'<\\/\1', js, flags=re.IGNORECASE)
+
+
+def strip_wllama(text, what):
+    """Remove @wllama:start/@wllama:end blocks (HTML, CSS and JS comment styles), as the
+    root build does."""
+    for start, end in [("<!-- @wllama:start -->", "<!-- @wllama:end -->"),
+                       ("/* @wllama:start */", "/* @wllama:end */"),
+                       ("// @wllama:start", "// @wllama:end")]:
+        if text.count(start) != text.count(end):
+            fail(f"{what}: unbalanced wllama markers ({text.count(start)} x '{start}', {text.count(end)} x '{end}').")
+    text = re.sub(r'[ \t]*<!-- @wllama:start -->.*?<!-- @wllama:end -->\n?', '', text, flags=re.DOTALL)
+    text = re.sub(r'[ \t]*/\* @wllama:start \*/.*?/\* @wllama:end \*/\n?', '', text, flags=re.DOTALL)
+    text = re.sub(r'[ \t]*// @wllama:start\n.*?// @wllama:end[^\n]*\n?', '', text, flags=re.DOTALL)
+    if "@wllama" in text:
+        fail(f"{what}: stripping the wllama blocks left residue.")
+    return text
 
 
 def replace_once(text, old, new, what):
@@ -122,26 +149,44 @@ def main():
         if re.search(r'</style', body, re.IGNORECASE):
             fail(f"{name} contains a literal '</style'.")
 
-    print("🔨 Assembling")
-    out = html
-    out, n = re.subn(r'(<meta http-equiv="Content-Security-Policy" content=")[^"]*(")',
-                     lambda mm: mm.group(1) + STANDALONE_CSP + mm.group(2), out)
-    if n != 1:
-        fail("Content-Security-Policy <meta> not found in src/index.html.")
-    out, n = re.subn(INTER_TAG, lambda mm: f"<style>{inter_css}</style>", out)
-    if n != 1:
-        fail(f"inlining Inter: expected one tag, found {n}.")
-    out = replace_once(out, '<link rel="stylesheet" href="style.css">', f"<style>\n{css}\n</style>", "style.css")
-    out = replace_once(out, '<script src="script.js"></script>', f"<script>\n{escape_script_close(script_js)}\n</script>", "script.js")
+    print("📥 wllama engine")
+    m = re.search(r'WLLAMA_CDN_BASE = "([^"]+)"', script_js)
+    if not m:
+        fail("WLLAMA_CDN_BASE not found in src/script.js.")
+    engine = {}
+    for key, path in (("js", "index.js"), ("wasm", "wasm/wllama.wasm")):
+        data = cached(f"{m.group(1)}/{path}", "wllama/" + path.rsplit("/", 1)[-1])
+        engine[key] = base64.b64encode(gzip.compress(data, 9)).decode()
+    engine_script = f'<script>window.__WLLAMA_INLINE__ = {{ js: "{engine["js"]}", wasm: "{engine["wasm"]}" }};</script>'
     favicon = base64.b64encode((SRC / "favicon.svg").read_bytes()).decode()
-    out = replace_once(out, '<link rel="icon" href="favicon.svg">',
-                       f'<link rel="icon" href="data:image/svg+xml;base64,{favicon}">', "favicon")
-    if re.search(r'(?:src|href)="https?://', out):
-        fail("The standalone output still references a remote URL.")
 
-    target = DIST / "hermit-cleaner-standalone.html"
-    target.write_text(out, encoding="utf-8")
-    print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e3:.0f} KB")
+    def assemble(page, style, script, csp):
+        out, n = re.subn(r'(<meta http-equiv="Content-Security-Policy" content=")[^"]*(")',
+                         lambda mm: mm.group(1) + csp + mm.group(2), page)
+        if n != 1:
+            fail("Content-Security-Policy <meta> not found in src/index.html.")
+        out, n = re.subn(INTER_TAG, lambda mm: f"<style>{inter_css}</style>", out)
+        if n != 1:
+            fail(f"inlining Inter: expected one tag, found {n}.")
+        out = replace_once(out, '<link rel="stylesheet" href="style.css">', f"<style>\n{style}\n</style>", "style.css")
+        out = replace_once(out, '<script src="script.js"></script>', f"<script>\n{escape_script_close(script)}\n</script>", "script.js")
+        out = replace_once(out, '<link rel="icon" href="favicon.svg">',
+                           f'<link rel="icon" href="data:image/svg+xml;base64,{favicon}">', "favicon")
+        if re.search(r'(?:src|href)="https?://', out):
+            fail("The output still references a remote URL.")
+        return out
+
+    print("🔨 Assembling")
+    outputs = {
+        "hermit-cleaner-standalone.html": assemble(strip_wllama(html, "src/index.html"), strip_wllama(css, "src/style.css"),
+                                                   strip_wllama(script_js, "src/script.js"), STANDALONE_CSP),
+        "hermit-cleaner-wllama.html": replace_once(assemble(html, css, script_js, WLLAMA_CSP),
+                                                   "<!-- @wllama:inline-engine -->", engine_script, "engine placeholder"),
+    }
+    for name, out in outputs.items():
+        target = DIST / name
+        target.write_text(out, encoding="utf-8")
+        print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e3:.0f} KB")
 
 
 if __name__ == "__main__":

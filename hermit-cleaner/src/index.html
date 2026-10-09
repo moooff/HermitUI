@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- connect-src stays open: the model endpoint is user-configured at runtime.
-         build.py swaps in a policy without the dev font hosts and local files. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src 'self' file: data:; connect-src *; base-uri 'none'; form-action 'none'">
+         build.py swaps in a policy without the dev font hosts and local files, and
+         without blob:, the CDN and wasm outside the -wllama build. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'unsafe-inline' blob: https://cdn.jsdelivr.net 'wasm-unsafe-eval'; worker-src blob:; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src 'self' file: data:; connect-src * data: blob:; base-uri 'none'; form-action 'none'">
     <title>HermitUI Cleaner</title>
     <meta name="description" content="Clean up AI-written text: hidden characters, typography, rewording with a local model, and natural typos.">
     <link rel="icon" href="favicon.svg">
@@ -25,6 +26,15 @@
     </header>
 
     <main>
+        <!-- @wllama:start -->
+        <div class="card link-banner" id="ggufBanner" role="region" aria-label="Model from the link" hidden>
+            <span>🔗 This link wants to load <b id="ggufBannerName"></b> from <span id="ggufBannerHost"></span> into this tab.</span>
+            <span class="link-banner-actions">
+                <button type="button" class="primary-btn small" id="ggufBannerLoad">Load model</button>
+                <button type="button" class="secondary-btn" id="ggufBannerDismiss">Dismiss</button>
+            </span>
+        </div>
+        <!-- @wllama:end -->
         <section class="options card" aria-label="Steps">
             <div class="steps">
                 <label class="step">
@@ -38,6 +48,7 @@
                 <label class="field">
                     <span>Share</span>
                     <select id="optShare" class="select">
+                        <option value="0.1">10 %</option>
                         <option value="0.3">30 %</option>
                         <option value="0.6" selected>60 %</option>
                         <option value="1">All</option>
@@ -49,6 +60,27 @@
                         <option value="sentence" selected>sentences</option>
                         <option value="paragraph">paragraphs</option>
                     </select>
+                </label>
+                <label class="field">
+                    <span>Change</span>
+                    <select id="optLevel" class="select" title="How much the model may change. Light: a few words per sentence; a reply that changes more than half the words is refused.">
+                        <option value="light" selected>Light: a few words</option>
+                        <option value="medium">Medium: rephrase</option>
+                        <option value="strong">Strong: rewrite freely</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Tone</span>
+                    <select id="optTone" class="select">
+                        <option value="keep" selected>Keep</option>
+                        <option value="casual">More casual</option>
+                        <option value="formal">More formal</option>
+                        <option value="simple">Simpler</option>
+                    </select>
+                </label>
+                <label class="field field-wide">
+                    <span>Also</span>
+                    <input type="text" id="optExtra" class="text-field" maxlength="300" placeholder="optional instruction, e.g. use &quot;du&quot;, British spelling" aria-label="An extra instruction for the model">
                 </label>
                 <label class="step">
                     <input type="checkbox" id="optTypos">
@@ -107,6 +139,7 @@
                     <span><i class="m-clean">a</i> replaced</span>
                     <span><i class="m-removed"></i> removed</span>
                     <span><i class="m-reword">a</i> reworded</span>
+                    <span><i class="m-changed">a</i> changed word</span>
                     <span><i class="m-typo">a</i> typo</span>
                 </div>
             </section>
@@ -123,6 +156,40 @@
         <div class="modal">
             <h3 id="settingsModalTitle">⚙️ Settings</h3>
             <p class="field-hint">Used only by the Reword step. Kept in this tab's memory; nothing is saved.</p>
+            <!-- @wllama:start -->
+            <label for="settingBackend">Model</label>
+            <select id="settingBackend" class="select modal-select">
+                <option value="api">A server (OpenAI-compatible: llama.cpp, Ollama …)</option>
+                <option value="wllama">In this tab (a GGUF file, no server)</option>
+            </select>
+            <div id="wllamaGroup" class="wllama-group" hidden>
+                <p class="field-hint wllama-hint" id="wllamaHint" hidden></p>
+                <label for="wllamaFile">GGUF model file</label>
+                <input type="file" id="wllamaFile" accept=".gguf">
+                <label for="wllamaUrl">…or download it</label>
+                <div class="url-row">
+                    <input type="text" id="wllamaUrl" list="wllamaSuggestions" placeholder="https://…/model.gguf or hf:user/repo/file.gguf" autocomplete="off">
+                    <button type="button" class="secondary-btn" id="wllamaUrlBtn">Load</button>
+                </div>
+                <datalist id="wllamaSuggestions">
+                    <option value="hf:unsloth/gemma-4-E2B-it-GGUF/gemma-4-E2B-it-Q4_K_M.gguf">Gemma-4 E2B (3.1 GB): the best results, English and German</option>
+                    <option value="hf:unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf">Qwen3 1.7B (1.1 GB): fast, good English</option>
+                    <option value="hf:unsloth/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf">Qwen3 4B (2.5 GB)</option>
+                    <option value="hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf">Qwen3 0.6B (0.4 GB): tiny, English only</option>
+                </datalist>
+                <p class="field-hint">Held in memory only and gone when the tab closes.</p>
+                <p class="wllama-status" id="wllamaStatus" role="status" aria-live="polite">No model loaded.</p>
+                <progress id="wllamaProgress" max="100" hidden></progress>
+                <details class="model-options">
+                    <summary>Model options</summary>
+                    <label for="wllamaCtx">Context window (tokens)</label>
+                    <input type="number" id="wllamaCtx" value="4096" min="2048" step="1024">
+                    <label class="check-row"><input type="checkbox" id="wllamaWebGpu"> Use WebGPU (graphics card)</label>
+                    <p class="field-hint">Both apply when a model is loaded. The context is halved automatically if it doesn't fit.</p>
+                </details>
+            </div>
+            <div id="apiGroup">
+            <!-- @wllama:end -->
             <label for="settingUrl">API Base URL</label>
             <input type="text" id="settingUrl" placeholder="http://localhost:8080/v1" autocomplete="off">
             <label for="settingModel">Model</label>
@@ -130,6 +197,9 @@
             <datalist id="modelList"></datalist>
             <label for="settingKey">API Key (optional)</label>
             <input type="password" id="settingKey" placeholder="Not needed for llama.cpp or Ollama" autocomplete="off">
+            <!-- @wllama:start -->
+            </div>
+            <!-- @wllama:end -->
             <div class="modal-actions">
                 <button type="button" class="secondary-btn" id="testConnectionBtn">Test Connection</button>
                 <span class="spacer"></span>
@@ -139,6 +209,9 @@
         </div>
     </div>
 
+    <!-- @wllama:start -->
+    <!-- @wllama:inline-engine -->
+    <!-- @wllama:end -->
     <script src="script.js"></script>
 </body>
 </html>

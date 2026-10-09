@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- connect-src stays open: the model endpoint is user-configured at runtime.
-         build.py swaps in a policy without the dev font hosts and local files. -->
+         build.py swaps in a policy without the dev font hosts and local files, and
+         without blob:, the CDN and wasm outside the -wllama build. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:; connect-src *; base-uri 'none'; form-action 'none'">
     <title>HermitUI Cleaner</title>
     <meta name="description" content="Clean up AI-written text: hidden characters, typography, rewording with a local model, and natural typos.">
@@ -42,6 +43,7 @@
     --mark-clean-line: #3b82f6;
     --mark-removed: #ef4444;
     --mark-reword: rgba(139, 92, 246, 0.12);
+    --mark-changed: rgba(139, 92, 246, 0.28);
     --mark-typo: rgba(245, 158, 11, 0.25);
     --mark-typo-line: #d97706;
 }
@@ -62,6 +64,7 @@
     --mark-clean-line: #60a5fa;
     --mark-removed: #f87171;
     --mark-reword: rgba(167, 139, 250, 0.16);
+    --mark-changed: rgba(167, 139, 250, 0.34);
     --mark-typo: rgba(251, 191, 36, 0.22);
     --mark-typo-line: #fbbf24;
 }
@@ -264,6 +267,19 @@ main {
     font-size: 0.8rem;
 }
 .select:disabled, .field input:disabled { opacity: 0.45; }
+.field-wide { flex: 1 1 260px; }
+.text-field {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--field-bg);
+    color: var(--text-main);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 0.8rem;
+}
+.text-field:focus { outline: none; border-color: var(--primary); }
 
 .run-row {
     display: flex;
@@ -390,9 +406,14 @@ body.is-running .options {
     background: var(--mark-removed);
     border-radius: 2px;
 }
+.m-changed {
+    background: var(--mark-changed);
+    border-radius: 2px;
+}
 .output.plain .m-clean,
 .output.plain .m-typo,
-.output.plain .m-reword {
+.output.plain .m-reword,
+.output.plain .m-changed {
     background: none;
     border: none;
     box-shadow: none;
@@ -501,6 +522,7 @@ body.is-running .options {
 }
 .cancel-btn:hover { color: var(--text-main); }
 
+
 /* ----- toast (from HermitUI) ----- */
 .toast {
     position: fixed;
@@ -556,6 +578,7 @@ body.is-running .options {
                 <label class="field">
                     <span>Share</span>
                     <select id="optShare" class="select">
+                        <option value="0.1">10 %</option>
                         <option value="0.3">30 %</option>
                         <option value="0.6" selected>60 %</option>
                         <option value="1">All</option>
@@ -567,6 +590,27 @@ body.is-running .options {
                         <option value="sentence" selected>sentences</option>
                         <option value="paragraph">paragraphs</option>
                     </select>
+                </label>
+                <label class="field">
+                    <span>Change</span>
+                    <select id="optLevel" class="select" title="How much the model may change. Light: a few words per sentence; a reply that changes more than half the words is refused.">
+                        <option value="light" selected>Light: a few words</option>
+                        <option value="medium">Medium: rephrase</option>
+                        <option value="strong">Strong: rewrite freely</option>
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Tone</span>
+                    <select id="optTone" class="select">
+                        <option value="keep" selected>Keep</option>
+                        <option value="casual">More casual</option>
+                        <option value="formal">More formal</option>
+                        <option value="simple">Simpler</option>
+                    </select>
+                </label>
+                <label class="field field-wide">
+                    <span>Also</span>
+                    <input type="text" id="optExtra" class="text-field" maxlength="300" placeholder="optional instruction, e.g. use &quot;du&quot;, British spelling" aria-label="An extra instruction for the model">
                 </label>
                 <label class="step">
                     <input type="checkbox" id="optTypos">
@@ -625,6 +669,7 @@ body.is-running .options {
                     <span><i class="m-clean">a</i> replaced</span>
                     <span><i class="m-removed"></i> removed</span>
                     <span><i class="m-reword">a</i> reworded</span>
+                    <span><i class="m-changed">a</i> changed word</span>
                     <span><i class="m-typo">a</i> typo</span>
                 </div>
             </section>
@@ -666,7 +711,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.1.1";
+const APP_VERSION = "0.2.0";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1122,7 +1167,8 @@ function groupUnits(text, units, picked, maxRun = 3) {
 
 // Put the rewritten ranges `reps` ({start, end, text}, in order) into `text`. Marks
 // inside a replaced range go with the text they pointed at, the rest move with the
-// edits, and each replacement gets a "reword" mark labelled with the original.
+// edits, and each replacement gets a "reword" mark labelled with the original. A rep's
+// optional `changed` ranges (into its text, from wordDiff) become "changed" marks.
 function applyRewrites(text, marks, reps) {
     let out = "", pos = 0;
     const edits = [], added = [];
@@ -1130,6 +1176,7 @@ function applyRewrites(text, marks, reps) {
         out += text.slice(pos, r.start);
         edits.push({ at: r.start, removed: r.end - r.start, inserted: r.text.length });
         added.push({ start: out.length, end: out.length + r.text.length, kind: "reword", labels: [text.slice(r.start, r.end)] });
+        for (const [s, e] of r.changed || []) added.push({ start: out.length + s, end: out.length + e, kind: "changed", labels: [] });
         out += r.text;
         pos = r.end;
     }
@@ -1163,29 +1210,112 @@ function pickUnits(n, share, rng) {
     return idx.slice(0, k).sort((a, b) => a - b);
 }
 
-const REWRITE_SYSTEM = [
-    "You rewrite one passage of text so it reads as if a person wrote it themselves.",
-    "Rules:",
-    "- Keep the meaning and every fact, name, number and quote.",
-    "- Keep the language of the passage: German stays German, English stays English.",
-    "- Vary the sentence length, and prefer plain everyday words over formal ones.",
-    "- Avoid stock phrases such as \"delve\", \"moreover\", \"furthermore\", \"in conclusion\", \"it is important to note\", and their equivalents in other languages (German: \"dar\u00fcber hinaus\", \"zusammenfassend l\u00e4sst sich sagen\", \"es ist wichtig zu beachten\").",
-    "- Don't add or drop information. Keep Markdown that is there (lists, bold), but add none.",
-    "- Reply with the rewritten passage only: no introduction, no comments, no quotation marks around it.",
-].join("\n");
+// How much the model may change. `rules` go into the prompt; `maxChange` is the largest
+// share of words a rewrite may change before it is refused (see wordDiff), and
+// minLength/maxLength bound its length relative to the original. `example` is one
+// exchange shown before the passage, per language: small models copy an example far
+// more reliably than they follow a rule (measured with tests/model_eval.py).
+const REWORD_LEVELS = {
+    light: {
+        temperature: 0.7, maxChange: 0.5, minLength: 0.6, maxLength: 1.6,
+        rules: [
+            "- Make light edits: in every sentence, replace one or two words with a plainer word, or shorten a stock phrase. Leave all other words exactly as they are, and keep every sentence.",
+        ],
+        example: {
+            en: "The new tool clearly reduces the time needed for reports. Note that the team tested it for 6 weeks.",
+            de: "Au\u00dferdem verk\u00fcrzt das neue Tool die Zeit f\u00fcr Berichte deutlich. Das Team hat es \u00fcbrigens 6 Wochen lang getestet.",
+        },
+    },
+    medium: {
+        temperature: 0.8, maxChange: 1, minLength: 0.5, maxLength: 2,
+        rules: [
+            "- Rephrase every sentence in your own words, with different wording and structure. Keep the order of the ideas.",
+            "- Prefer plain everyday words over formal ones.",
+        ],
+        example: {
+            en: "With the new tool, reports take a lot less time. The team spent 6 weeks testing it.",
+            de: "Mit dem neuen Tool gehen Berichte viel schneller. Das Team hat es 6 Wochen lang ausprobiert.",
+        },
+    },
+    strong: {
+        temperature: 0.9, maxChange: 1, minLength: 0.5, maxLength: 2,
+        rules: [
+            "- Rewrite the passage freely in your own words: you may split, merge or reorder sentences.",
+            "- Vary the sentence length, and prefer plain everyday words over formal ones.",
+        ],
+        example: {
+            en: "Reports are done much faster now. That's thanks to the new tool, which the team tried out for 6 weeks first.",
+            de: "Berichte sind jetzt viel schneller fertig. Das liegt am neuen Tool, das das Team vorher 6 Wochen lang ausprobiert hat.",
+        },
+    },
+};
+// The passage the examples above rewrite.
+const REWORD_EXAMPLE_INPUT = {
+    en: "Moreover, the new tool significantly reduces the time needed for reports. It is important to note that the team tested it for 6 weeks.",
+    de: "Dar\u00fcber hinaus verk\u00fcrzt das neue Tool die Zeit f\u00fcr Berichte erheblich. Es ist wichtig zu beachten, dass das Team es 6 Wochen lang getestet hat.",
+};
+
+const REWORD_TONES = {
+    keep: "",
+    casual: "- Make the tone a little more casual and conversational, as in a message to a colleague.",
+    formal: "- Make the tone a little more formal and precise.",
+    simple: "- Use simple words and short sentences, easy to read for anyone.",
+};
+
+// Stock phrases to replace, named in the passage's own language only: a prompt for an
+// English passage that mentions German pulls small models into German (Qwen3-1.7B
+// answered 18 % of one English sentence in German; bench/README.md).
+const STOCK_PHRASES = {
+    en: "\"delve\", \"moreover\", \"furthermore\", \"in conclusion\", \"it is important to note\"",
+    de: "\"dar\u00fcber hinaus\", \"zusammenfassend l\u00e4sst sich sagen\", \"es ist wichtig zu beachten\"",
+    fr: "\"par ailleurs\", \"en conclusion\", \"il est important de souligner\"",
+    es: "\"adem\u00e1s\", \"en conclusi\u00f3n\", \"es importante destacar\"",
+    it: "\"inoltre\", \"in conclusione\", \"\u00e8 importante sottolineare\"",
+    nl: "\"bovendien\", \"concluderend\", \"het is belangrijk op te merken\"",
+    pt: "\"al\u00e9m disso\", \"em conclus\u00e3o\", \"\u00e9 importante notar\"",
+};
+
+// Assemble the system prompt for a reword level (REWORD_LEVELS key), a tone
+// (REWORD_TONES key), an optional instruction from the user and the passage's
+// language (a LANGUAGE_NAMES code, or null when unknown).
+function buildRewriteSystem(level, tone, extra, lang) {
+    const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
+    const name = LANGUAGE_NAMES[lang];
+    const lines = [
+        "You edit one passage of text so it reads as if a person wrote it themselves.",
+        "Rules:",
+        ...lv.rules,
+        "- Keep the meaning and every fact, name, number and quote.",
+        name ? `- The passage is in ${name}. Write your rewrite in ${name}.` : "- Write your rewrite in the language of the passage.",
+        STOCK_PHRASES[lang] ? `- Replace stock phrases such as ${STOCK_PHRASES[lang]}.`
+            : `- Replace stock phrases such as ${STOCK_PHRASES.en}, and their equivalents in the passage's language.`,
+        "- Don't add or drop information. Keep Markdown that is there (lists, bold), but add none.",
+    ];
+    if (REWORD_TONES[tone]) lines.push(REWORD_TONES[tone]);
+    const own = String(extra || "").replace(/\s+/g, " ").trim().slice(0, 300);
+    if (own) lines.push("- " + own);
+    lines.push("- Reply with the edited passage only: no introduction, no comments, no quotation marks around it.");
+    return lines.join("\n");
+}
 
 // `lang` (a LANGUAGE_NAMES code) is spelled out in the prompt: "keep the language" alone
 // isn't enough for small models, which drift into English on German text. `context`
 // (the paragraph a sentence comes from) goes into the system message, so the user
-// message holds only what is to be rewritten.
-function buildRewriteMessages(passage, lang, context) {
-    const name = LANGUAGE_NAMES[lang];
-    let system = REWRITE_SYSTEM;
-    if (name) system += `\n- The passage is in ${name}. Write your rewrite in ${name}.`;
+// message holds only what is to be rewritten. `opts` holds level, tone and extra. For
+// English and German an example exchange at that level goes before the passage (the
+// example is in the passage's language, or it would pull the reply into English).
+function buildRewriteMessages(passage, lang, context, opts) {
+    const o = opts || {};
+    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang);
     if (context) system += "\n- The passage is part of a longer text, shown below for context only. Rewrite just the passage, so that it still fits in its place: don't repeat or continue the text around it."
         + `\n\nThe longer text:\n${String(context).trim()}`;
+    const lv = REWORD_LEVELS[o.level] || REWORD_LEVELS.strong;
+    const example = REWORD_EXAMPLE_INPUT[lang] && lv.example[lang]
+        ? [{ role: "user", content: REWORD_EXAMPLE_INPUT[lang] }, { role: "assistant", content: lv.example[lang] }]
+        : [];
     return [
         { role: "system", content: system },
+        ...example,
         { role: "user", content: String(passage).trim() },
     ];
 }
@@ -1193,15 +1323,56 @@ function buildRewriteMessages(passage, lang, context) {
 // The chat request body for one passage (a paragraph, or one or a few sentences). Thinking is switched off where the chat
 // template supports it (a reasoning trace only costs time here); `noKwargs` drops that
 // for a strict server that refused it once.
-function buildRewriteBody(model, passage, noKwargs, lang, context) {
+function buildRewriteBody(model, passage, noKwargs, lang, context, opts) {
+    const o = opts || {};
     const body = {
         model: model || "local-model",
-        messages: buildRewriteMessages(passage, lang, context),
-        temperature: 0.9,
+        messages: buildRewriteMessages(passage, lang, context, o),
+        temperature: (REWORD_LEVELS[o.level] || REWORD_LEVELS.strong).temperature,
         stream: false,
     };
     if (!noKwargs) body.chat_template_kwargs = { enable_thinking: false };
     return body;
+}
+
+// Compare a rewrite `b` with its original `a` word by word (letters and digits; case
+// ignored). Returns `ratio`, the share of words changed (0 = same words, 1 = nothing
+// in common), and `changed`, the [start, end) ranges in `b` of words that are new,
+// with neighbouring ones merged, for the change view.
+function wordDiff(a, b) {
+    const words = s => Array.from(String(s || "").matchAll(/[\p{L}\p{N}]+/gu), m => ({ w: m[0].toLowerCase(), start: m.index, end: m.index + m[0].length }));
+    const x = words(a), y = words(b);
+    const n = x.length, m = y.length;
+    const kept = new Uint8Array(m);
+    let common = 0;
+    if (n && m && n * m <= 4e6) {
+        // Longest common subsequence, filled from the end so it can be walked forwards.
+        const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+        for (let i = n - 1; i >= 0; i--) {
+            for (let j = m - 1; j >= 0; j--) {
+                dp[i][j] = x[i].w === y[j].w ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+        }
+        let i = 0, j = 0;
+        while (i < n && j < m) {
+            if (x[i].w === y[j].w) { kept[j] = 1; common++; i++; j++; }
+            else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+            else j++;
+        }
+    } else if (n && m) {
+        // Too long to align: count shared words regardless of order.
+        const bag = new Map();
+        x.forEach(t => bag.set(t.w, (bag.get(t.w) || 0) + 1));
+        y.forEach((t, j) => { const c = bag.get(t.w); if (c) { bag.set(t.w, c - 1); kept[j] = 1; common++; } });
+    }
+    const changed = [];
+    y.forEach((t, j) => {
+        if (kept[j]) return;
+        const last = changed[changed.length - 1];
+        if (last && j > 0 && !kept[j - 1]) last[1] = t.end;
+        else changed.push([t.start, t.end]);
+    });
+    return { ratio: n || m ? 1 - common / Math.max(n, m) : 0, changed };
 }
 
 // The answer without any reasoning trace. A reply that is all trace (cut off before
@@ -1220,9 +1391,11 @@ function stripThinking(text) {
 
 const PREAMBLE_RE = /^(?:here(?:'s| is| are)\b|sure[,!.]|certainly[,!.]|of course[,!.]|okay[,!.]|ok[,!.]|hier ist\b|hier sind\b|gerne[,!.]|klar[,!.]|nat\u00fcrlich[,!.]|rewritten\b|umformuliert\b|voici\b|voil\u00e0\b|claro[,!.]|aqu\u00ed (?:est\u00e1|tienes)\b|ecco\b|certo[,!.])/i;
 
-// Is the model's reply a usable rewrite of `orig` (in language `lang`, if known)?
-// Returns the text to use, or why not.
-function acceptRewrite(orig, reply, lang) {
+// Is the model's reply a usable rewrite of `orig` (in language `lang`, if known, at
+// reword `level`)? Returns the text to use and the share of words changed, or why not.
+// `unchanged` marks a reply identical to the original: kept, but not an error.
+function acceptRewrite(orig, reply, lang, level) {
+    const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
     let t = stripThinking(reply);
     const o = String(orig || "").trim();
     // Quotes wrapped around the whole reply that the original didn't have.
@@ -1230,13 +1403,17 @@ function acceptRewrite(orig, reply, lang) {
     // A sentence comes back on one line, even if the model broke it.
     if (!o.includes("\n")) t = t.replace(/\s*\n\s*/g, " ");
     if (!t) return { ok: false, reason: "empty reply" };
+    // Same words (spacing, punctuation or case aside): nothing was reworded.
+    if (t === o || wordDiff(o, t).ratio === 0) return { ok: false, unchanged: true, reason: "the model changed nothing" };
     if (PREAMBLE_RE.test(t)) return { ok: false, reason: "the model added an introduction" };
     const ratio = t.length / Math.max(1, o.length);
-    if (ratio < 0.5) return { ok: false, reason: "reply much shorter than the original" };
-    if (ratio > 2) return { ok: false, reason: "reply much longer than the original" };
+    if (ratio < lv.minLength) return { ok: false, reason: "reply much shorter than the original" };
+    if (ratio > lv.maxLength) return { ok: false, reason: "reply much longer than the original" };
     const got = lang ? detectLanguage(t) : null;
     if (got && got !== lang) return { ok: false, reason: `the model answered in ${LANGUAGE_NAMES[got]} instead of ${LANGUAGE_NAMES[lang]}` };
-    return { ok: true, text: t };
+    const change = wordDiff(o, t).ratio;
+    if (change > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
+    return { ok: true, text: t, change };
 }
 
 // ========== Stage 3: typos ==========
@@ -1553,6 +1730,7 @@ async function serverError(res) {
     return new Error(`Server Error ${res.status}: ${detail.slice(0, 300)}`);
 }
 
+
 // ========== DOM ==========
 
 if (typeof document !== "undefined") {
@@ -1676,6 +1854,7 @@ if (typeof document !== "undefined") {
         }
     });
 
+
     // ----- input: paste, open, drop -----
     const input = $("inputText");
     function updateInputStats() {
@@ -1713,16 +1892,19 @@ if (typeof document !== "undefined") {
         typos: () => $("optTypos").checked,
         share: () => Number($("optShare").value),
         unit: () => $("optUnit").value,
+        level: () => $("optLevel").value,
+        tone: () => $("optTone").value,
+        extra: () => $("optExtra").value,
         rate: () => Number($("optRate").value) / 100,
         layout: () => $("optLayout").value,
     };
     function syncOptions() {
-        $("optShare").disabled = $("optUnit").disabled = !opt.reword();
+        ["optShare", "optUnit", "optLevel", "optTone", "optExtra"].forEach(id => { $(id).disabled = !opt.reword(); });
         $("optRate").disabled = $("optLayout").disabled = !opt.typos();
         $("rateValue").textContent = Number($("optRate").value).toFixed(1) + " %";
         $("rerollBtn").disabled = !last || !opt.typos() || !!running;
     }
-    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
+    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optLevel", "optTone", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
     syncOptions();
 
     function setStatus(text, kind) {
@@ -1732,7 +1914,7 @@ if (typeof document !== "undefined") {
     }
 
     // ----- the model call -----
-    async function rewordOne(passage, signal, lang, context) {
+    async function rewordOne(passage, signal, lang, context, ropts) {
         if (!MODEL_NAME) {
             // Ollama needs a real model name; llama.cpp takes any. Ask the server once.
             try {
@@ -1747,7 +1929,7 @@ if (typeof document !== "undefined") {
             const res = await fetch(apiEndpoint(API_URL, "/chat/completions"), {
                 method: "POST",
                 headers: authHeaders(),
-                body: JSON.stringify(buildRewriteBody(MODEL_NAME, passage, kwargsRejected, lang, context)),
+                body: JSON.stringify(buildRewriteBody(MODEL_NAME, passage, kwargsRejected, lang, context, ropts)),
                 signal,
             });
             if (res.ok) {
@@ -1777,7 +1959,8 @@ if (typeof document !== "undefined") {
         const empty = { counts: Object.fromEntries(CLEAN_CATEGORIES.map(c => [c, {}])), hiddenText: [] };
         let text = source, marks = [], clean1 = empty, clean2 = empty;
         const docLang = detectLanguage(source);
-        const reword = { unit: opt.unit(), attempted: 0, done: 0, eligible: 0, skipped: [], stopped: false, error: null };
+        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, changes: [], skipped: [], stopped: false, error: null };
+        const ropts = { level: opt.level(), tone: opt.tone(), extra: opt.extra() };
         try {
             if (opt.clean()) {
                 const r = cleanText(text);
@@ -1795,14 +1978,18 @@ if (typeof document !== "undefined") {
                     setStatus(`Rewording ${k + 1} of ${groups.length}…`, "busy");
                     try {
                         const lang = detectLanguage(g.context || g.text) || docLang;
-                        const reply = await rewordOne(g.text, signal, lang, g.context);
-                        const verdict = acceptRewrite(g.text, reply, lang);
+                        const reply = await rewordOne(g.text, signal, lang, g.context, ropts);
+                        const verdict = acceptRewrite(g.text, reply, lang, ropts.level);
                         const cleaned = !verdict.ok ? null : opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
                         const core = cleaned && cleaned.text.trim();
                         if (core) {
+                            const diff = wordDiff(g.text, core);
                             clean2 = mergeCleanReports(clean2, cleaned.report);
-                            reps.push({ start: g.start, end: g.end, text: core });
+                            reps.push({ start: g.start, end: g.end, text: core, changed: diff.changed });
                             reword.done += g.count;
+                            reword.changes.push(diff.ratio);
+                        } else if (verdict.unchanged) {
+                            reword.unchanged += g.count;
                         } else {
                             const t = g.text.length > 50 ? g.text.slice(0, 50).trimEnd() + "…" : g.text;
                             reword.skipped.push(`"${t}": ${verdict.ok ? "nothing left after cleanup" : verdict.reason} — kept the original.`);
@@ -1897,7 +2084,9 @@ if (typeof document !== "undefined") {
             if (m) {
                 const s = document.createElement("span");
                 s.className = "m-" + m.kind;
-                s.title = m.kind === "typo" ? `Typo, ${TYPO_NAMES[m.typo] || "typo"} (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
+                // A changed word keeps no title of its own: hovering it shows the
+                // reworded span's original.
+                if (m.kind !== "changed") s.title = m.kind === "typo" ? `Typo, ${TYPO_NAMES[m.typo] || "typo"} (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
                 s.textContent = piece;
                 target().appendChild(s);
             } else {
@@ -1918,6 +2107,8 @@ if (typeof document !== "undefined") {
         transliterated: "Letters outside Latin-1",
         dropped: "Removed (no keyboard equivalent)",
     };
+
+    const LEVEL_TEXT = { light: "light edits", medium: "rephrased", strong: "rewritten freely" };
 
     function renderReport(typos) {
         const box = $("report");
@@ -1953,7 +2144,12 @@ if (typeof document !== "undefined") {
         }
         if (did.reword) {
             if (!reword.eligible) add("h4", `Rewording: no ${reword.unit} long enough to reword`);
-            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} ${reword.unit}${reword.eligible === 1 ? "" : "s"} reworded`);
+            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} ${reword.unit}${reword.eligible === 1 ? "" : "s"} reworded (${LEVEL_TEXT[reword.level]})`);
+            if (reword.changes.length) {
+                const avg = reword.changes.reduce((s, r) => s + r, 0) / reword.changes.length;
+                add("p", `On average the model changed ${Math.round(avg * 100)} % of the words in what it reworded.`, "report-note");
+            }
+            if (reword.unchanged) add("p", `${reword.unchanged} ${reword.unit}${reword.unchanged === 1 ? "" : "s"} came back unchanged.`, "report-note");
             reword.skipped.forEach(s => add("p", s, "report-note"));
             const fixed = cleanTotal(clean2);
             if (fixed) add("p", `Cleaned ${fixed} character${fixed === 1 ? "" : "s"} out of the model's answers.`, "report-note");

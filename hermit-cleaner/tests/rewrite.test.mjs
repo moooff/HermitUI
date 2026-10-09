@@ -4,7 +4,8 @@ import m from "./extract.mjs";
 import { check, section, report } from "./check.mjs";
 
 const { detectLanguage, splitParagraphs, splitSentences, rewordUnits, groupUnits, applyRewrites, pickUnits, mulberry32, buildRewriteMessages, buildRewriteBody,
-    stripThinking, acceptRewrite, addTypos, chatErrorHint, normalizeApiUrl, apiEndpoint } = m;
+    stripThinking, acceptRewrite, addTypos, chatErrorHint, normalizeApiUrl, apiEndpoint, buildRewriteSystem, wordDiff, REWORD_LEVELS,
+    normalizeGgufUrl, ggufFileName, wllamaMaxTokens } = m;
 
 const EN = "The committee reviewed the proposal and decided that it was not ready for a vote this year.";
 const DE = "Der Ausschuss hat den Vorschlag gepr\u00fcft und entschieden, dass er in diesem Jahr nicht zur Abstimmung kommt.";
@@ -120,16 +121,48 @@ section("applyRewrites");
     check("marks moved or dropped", kinds === "removed:3-3 clean:8-9 removed:13-13 reword:0-3 reword:13-19", kinds);
     check("reword marks keep the original", r.marks.filter(m => m.kind === "reword").map(m => m.labels[0]).join("|") === "Aaa bbb.|Eee.");
     check("nothing to apply", applyRewrites(text, marks, []).text === text && applyRewrites(text, marks, []).marks.length === 4);
+    const c = applyRewrites("Aa bb. Cc.", [], [{ start: 0, end: 6, text: "Aa dd ee.", changed: [[3, 8]] }]);
+    const ch = c.marks.filter(mk => mk.kind === "changed");
+    check("changed words become marks in the new text", ch.length === 1 && c.text.slice(ch[0].start, ch[0].end) === "dd ee", JSON.stringify(c.marks));
+}
+
+section("wordDiff");
+{
+    check("identical: no change", wordDiff("The cat sat.", "The cat sat.").ratio === 0);
+    check("case and punctuation don't count", wordDiff("The cat sat.", "the cat sat!").ratio === 0);
+    const d = wordDiff("The cat sat on the mat.", "The dog sat on the mat.");
+    check("one word of six", Math.abs(d.ratio - 1 / 6) < 1e-9, d.ratio);
+    check("its range in the rewrite", JSON.stringify(d.changed) === "[[4,7]]", JSON.stringify(d.changed));
+    const n = wordDiff("one two three four", "one five six four");
+    check("neighbouring changes merge", JSON.stringify(n.changed) === "[[4,12]]", JSON.stringify(n.changed));
+    check("nothing in common", wordDiff("alpha beta", "gamma delta").ratio === 1);
+    check("added words count against the longer side", Math.abs(wordDiff("a b", "a b c d").ratio - 0.5) < 1e-9);
+    check("reordering counts as change", wordDiff("a b c d", "d c b a").ratio > 0.5);
+    check("German letters are words", Math.abs(wordDiff("Gr\u00fc\u00dfe aus M\u00fcnchen", "Gr\u00fc\u00dfe aus K\u00f6ln").ratio - 1 / 3) < 1e-9);
+    const long = Array.from({ length: 3000 }, (_, i) => "w" + i).join(" ");
+    const t0 = Date.now();
+    check("very long texts fall back to counting words", wordDiff(long, long + " extra").ratio < 0.01 && Date.now() - t0 < 2000);
 }
 
 section("Rewrite request");
 {
     const msgs = buildRewriteMessages("  " + DE + "\n", "de");
-    check("system + user", msgs.length === 2 && msgs[0].role === "system" && msgs[1].role === "user");
-    check("user is the trimmed paragraph", msgs[1].content === DE);
+    check("system, example exchange, then the passage", msgs.map(x => x.role).join(",") === "system,user,assistant,user");
+    check("user is the trimmed paragraph", msgs[3].content === DE);
+    check("the example is in German for German text", /Dar\u00fcber hinaus/.test(msgs[1].content) && /6 Wochen/.test(msgs[2].content));
+    check("English example for English text", /Moreover/.test(buildRewriteMessages(EN, "en")[1].content));
+    check("no example for other languages", buildRewriteMessages(FR, "fr").length === 2 && buildRewriteMessages(EN, null).length === 2);
+    const exLight = buildRewriteMessages(EN, "en", null, { level: "light" })[2].content, exStrong = buildRewriteMessages(EN, "en", null, { level: "strong" })[2].content;
+    check("the example follows the level", exLight !== exStrong && wordDiff(buildRewriteMessages(EN, "en")[1].content, exLight).ratio < wordDiff(buildRewriteMessages(EN, "en")[1].content, exStrong).ratio);
     check("language spelled out", /The passage is in German\. Write your rewrite in German\./.test(msgs[0].content));
     check("no language line when unknown", !/The passage is in/.test(buildRewriteMessages(EN, null)[0].content));
     check("German stock phrases listed", /dar\u00fcber hinaus/.test(msgs[0].content));
+    const enSys = buildRewriteMessages(EN, "en")[0].content;
+    check("an English prompt never mentions German", !/German|dar\u00fcber/.test(enSys) && /moreover/.test(enSys), enSys);
+    check("a German prompt lists only German stock phrases", !/moreover/.test(msgs[0].content));
+    check("unknown language: generic line, English examples of stock phrases", /language of the passage/.test(buildRewriteMessages(EN, null)[0].content)
+        && /their equivalents in the passage's language/.test(buildRewriteMessages(EN, null)[0].content));
+    check("French gets French stock phrases", /par ailleurs/.test(buildRewriteMessages(FR, "fr")[0].content) && !/German/.test(buildRewriteMessages(FR, "fr")[0].content));
     const body = buildRewriteBody("qwen", EN, false, "en");
     check("OpenAI shape", body.model === "qwen" && body.stream === false && Array.isArray(body.messages));
     check("thinking off via kwargs", body.chat_template_kwargs && body.chat_template_kwargs.enable_thinking === false);
@@ -137,9 +170,20 @@ section("Rewrite request");
     check("placeholder model name", buildRewriteBody("", EN, false).model === "local-model");
     const ctx = buildRewriteMessages("Second sentence.", "en", "First sentence. Second sentence. Third one.");
     check("context goes into the system message", /context only/.test(ctx[0].content) && ctx[0].content.endsWith("First sentence. Second sentence. Third one."));
-    check("the user message holds only the sentence", ctx[1].content === "Second sentence.");
+    check("the user message holds only the sentence", ctx[ctx.length - 1].content === "Second sentence.");
     check("no context line without context", !/context only/.test(msgs[0].content));
     check("body passes the context on", buildRewriteBody("q", "A.", false, "en", "A. B.").messages[0].content.includes("A. B."));
+    check("default level is strong (as before levels)", buildRewriteBody("q", EN, false, "en").temperature === 0.9 && /Rewrite the passage freely/.test(msgs[0].content));
+    const light = buildRewriteBody("q", EN, false, "en", null, { level: "light" });
+    check("light: its rules and lower temperature", /Make light edits/.test(light.messages[0].content) && !/Rewrite the passage freely/.test(light.messages[0].content) && light.temperature === REWORD_LEVELS.light.temperature);
+    check("medium rules", /Rephrase every sentence/.test(buildRewriteSystem("medium")));
+    check("tone line", /more casual/.test(buildRewriteSystem("light", "casual")) && !/tone/.test(buildRewriteSystem("light", "keep")));
+    const extra = buildRewriteSystem("light", "keep", "  Use \"du\".\n Not \"Sie\".  ");
+    check("extra instruction on one line, before the reply rule", /\n- Use "du"\. Not "Sie"\.\n- Reply with/.test(extra), extra);
+    check("extra instruction capped", buildRewriteSystem("light", "keep", "x".repeat(1000)).includes("x".repeat(300) + "\n"));
+    check("reply rule stays last", /Reply with the edited passage only[^\n]*$/.test(buildRewriteSystem("strong", "formal", "Be brief.")));
+    check("level goes through to the language and context lines", /Make light edits[\s\S]*The passage is in English[\s\S]*The longer text/.test(
+        buildRewriteMessages("A b c.", "en", "Z. A b c.", { level: "light" })[0].content));
 }
 
 section("stripThinking");
@@ -168,6 +212,18 @@ section("acceptRewrite");
     check("English answer to German text is refused", !wrong.ok && /English instead of German/.test(wrong.reason), wrong.reason);
     check("German answer to German text passes", acceptRewrite(DE, "Der Ausschuss hat sich den Vorschlag angesehen und will dieses Jahr nicht dar\u00fcber abstimmen.", "de").ok);
     check("unknown language: no language check", acceptRewrite(DE, "The committee examined the proposal and decided it will not come to a vote this year.", null).ok);
+    const same = acceptRewrite(orig, "  " + orig + " ", "en", "light");
+    check("an identical reply is 'unchanged', not an error", !same.ok && same.unchanged, JSON.stringify(same));
+    check("only spacing or punctuation changed: unchanged too", acceptRewrite("It rose 23 % in 2021.", "It rose 23% in 2021!", "en", "light").unchanged === true);
+    check("the share of changed words comes back", Math.abs(acceptRewrite(orig, good, "en").change - wordDiff(orig, good).ratio) < 1e-9);
+    const lightEdit = "The committee reviewed the plan and decided that it was not ready for a vote this year.";
+    check("light: a small edit passes", acceptRewrite(orig, lightEdit, "en", "light").ok);
+    const heavy = "Members looked over this idea, then concluded voting must wait until next spring at earliest.";
+    const lr = acceptRewrite(orig, heavy, "en", "light");
+    check("light: a rewrite of most words is refused", !lr.ok && /changed \d+ % of the words/.test(lr.reason), lr.reason);
+    check("strong: the same rewrite passes", acceptRewrite(orig, heavy, "en", "strong").ok);
+    check("light: tighter length bounds", !acceptRewrite(orig, orig + " It was a long and difficult meeting for all of the people involved.", "en", "light").ok
+        && acceptRewrite(orig, orig + " It was a long and difficult meeting for all of the people involved.", "en", "strong").ok);
 }
 
 section("German typos");
@@ -190,6 +246,18 @@ section("Copied from HermitUI");
     check("context hint", /context/.test(chatErrorHint("the request exceeds the available context size")));
     check("normalizeApiUrl adds http for local", normalizeApiUrl("localhost:8080/v1") === "http://localhost:8080/v1");
     check("apiEndpoint", apiEndpoint("http://x/v1/", "/chat/completions") === "http://x/v1/chat/completions");
+    check("hf: shorthand", normalizeGgufUrl("hf:unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf") === "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf");
+    check("blob page becomes resolve", normalizeGgufUrl("https://huggingface.co/a/b/blob/main/m.gguf") === "https://huggingface.co/a/b/resolve/main/m.gguf");
+    let threw = 0;
+    for (const bad of ["", "model.gguf", "https://x/y.bin", "https://x/m-00001-of-00003.gguf"]) { try { normalizeGgufUrl(bad); } catch { threw++; } }
+    check("bad model URLs are refused", threw === 4, threw);
+    check("file name from URL", ggufFileName("https://x/a/Qwen%203.gguf?download=1") === "Qwen 3.gguf" && ggufFileName("https://x/%E0.gguf") === "%E0.gguf");
+}
+
+section("wllamaMaxTokens");
+{
+    check("grows with the passage", wllamaMaxTokens("a".repeat(400)) === 364 && wllamaMaxTokens("") === 64);
+    check("capped", wllamaMaxTokens("a".repeat(100000)) === 2048);
 }
 
 report();

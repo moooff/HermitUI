@@ -9,6 +9,7 @@ is all the Cleaner uses). Every chat request body is recorded in `state.requests
   "kwargs400"  400 for any request carrying chat_template_kwargs, like a strict server
   "401"        401 for every request
   "slow"       like "ok", but each answer takes 1.5 s (for Stop)
+  "same"       answers with the passage unchanged
 """
 import json
 import threading
@@ -74,7 +75,7 @@ def make_handler(state):
             if mode == "slow":
                 time.sleep(1.5)
             paragraph = body["messages"][-1]["content"]
-            content = ENGLISH if mode == "english" else PREFIX + paragraph
+            content = ENGLISH if mode == "english" else paragraph if mode == "same" else PREFIX + paragraph
             try:
                 self.send_json(200, {"id": "x", "object": "chat.completion", "model": body.get("model"),
                                      "choices": [{"index": 0, "finish_reason": "stop",

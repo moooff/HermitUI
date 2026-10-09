@@ -6,7 +6,7 @@
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.1.1";
+const APP_VERSION = "0.2.0";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -462,7 +462,8 @@ function groupUnits(text, units, picked, maxRun = 3) {
 
 // Put the rewritten ranges `reps` ({start, end, text}, in order) into `text`. Marks
 // inside a replaced range go with the text they pointed at, the rest move with the
-// edits, and each replacement gets a "reword" mark labelled with the original.
+// edits, and each replacement gets a "reword" mark labelled with the original. A rep's
+// optional `changed` ranges (into its text, from wordDiff) become "changed" marks.
 function applyRewrites(text, marks, reps) {
     let out = "", pos = 0;
     const edits = [], added = [];
@@ -470,6 +471,7 @@ function applyRewrites(text, marks, reps) {
         out += text.slice(pos, r.start);
         edits.push({ at: r.start, removed: r.end - r.start, inserted: r.text.length });
         added.push({ start: out.length, end: out.length + r.text.length, kind: "reword", labels: [text.slice(r.start, r.end)] });
+        for (const [s, e] of r.changed || []) added.push({ start: out.length + s, end: out.length + e, kind: "changed", labels: [] });
         out += r.text;
         pos = r.end;
     }
@@ -503,29 +505,112 @@ function pickUnits(n, share, rng) {
     return idx.slice(0, k).sort((a, b) => a - b);
 }
 
-const REWRITE_SYSTEM = [
-    "You rewrite one passage of text so it reads as if a person wrote it themselves.",
-    "Rules:",
-    "- Keep the meaning and every fact, name, number and quote.",
-    "- Keep the language of the passage: German stays German, English stays English.",
-    "- Vary the sentence length, and prefer plain everyday words over formal ones.",
-    "- Avoid stock phrases such as \"delve\", \"moreover\", \"furthermore\", \"in conclusion\", \"it is important to note\", and their equivalents in other languages (German: \"dar\u00fcber hinaus\", \"zusammenfassend l\u00e4sst sich sagen\", \"es ist wichtig zu beachten\").",
-    "- Don't add or drop information. Keep Markdown that is there (lists, bold), but add none.",
-    "- Reply with the rewritten passage only: no introduction, no comments, no quotation marks around it.",
-].join("\n");
+// How much the model may change. `rules` go into the prompt; `maxChange` is the largest
+// share of words a rewrite may change before it is refused (see wordDiff), and
+// minLength/maxLength bound its length relative to the original. `example` is one
+// exchange shown before the passage, per language: small models copy an example far
+// more reliably than they follow a rule (measured with tests/model_eval.py).
+const REWORD_LEVELS = {
+    light: {
+        temperature: 0.7, maxChange: 0.5, minLength: 0.6, maxLength: 1.6,
+        rules: [
+            "- Make light edits: in every sentence, replace one or two words with a plainer word, or shorten a stock phrase. Leave all other words exactly as they are, and keep every sentence.",
+        ],
+        example: {
+            en: "The new tool clearly reduces the time needed for reports. Note that the team tested it for 6 weeks.",
+            de: "Au\u00dferdem verk\u00fcrzt das neue Tool die Zeit f\u00fcr Berichte deutlich. Das Team hat es \u00fcbrigens 6 Wochen lang getestet.",
+        },
+    },
+    medium: {
+        temperature: 0.8, maxChange: 1, minLength: 0.5, maxLength: 2,
+        rules: [
+            "- Rephrase every sentence in your own words, with different wording and structure. Keep the order of the ideas.",
+            "- Prefer plain everyday words over formal ones.",
+        ],
+        example: {
+            en: "With the new tool, reports take a lot less time. The team spent 6 weeks testing it.",
+            de: "Mit dem neuen Tool gehen Berichte viel schneller. Das Team hat es 6 Wochen lang ausprobiert.",
+        },
+    },
+    strong: {
+        temperature: 0.9, maxChange: 1, minLength: 0.5, maxLength: 2,
+        rules: [
+            "- Rewrite the passage freely in your own words: you may split, merge or reorder sentences.",
+            "- Vary the sentence length, and prefer plain everyday words over formal ones.",
+        ],
+        example: {
+            en: "Reports are done much faster now. That's thanks to the new tool, which the team tried out for 6 weeks first.",
+            de: "Berichte sind jetzt viel schneller fertig. Das liegt am neuen Tool, das das Team vorher 6 Wochen lang ausprobiert hat.",
+        },
+    },
+};
+// The passage the examples above rewrite.
+const REWORD_EXAMPLE_INPUT = {
+    en: "Moreover, the new tool significantly reduces the time needed for reports. It is important to note that the team tested it for 6 weeks.",
+    de: "Dar\u00fcber hinaus verk\u00fcrzt das neue Tool die Zeit f\u00fcr Berichte erheblich. Es ist wichtig zu beachten, dass das Team es 6 Wochen lang getestet hat.",
+};
+
+const REWORD_TONES = {
+    keep: "",
+    casual: "- Make the tone a little more casual and conversational, as in a message to a colleague.",
+    formal: "- Make the tone a little more formal and precise.",
+    simple: "- Use simple words and short sentences, easy to read for anyone.",
+};
+
+// Stock phrases to replace, named in the passage's own language only: a prompt for an
+// English passage that mentions German pulls small models into German (Qwen3-1.7B
+// answered 18 % of one English sentence in German; bench/README.md).
+const STOCK_PHRASES = {
+    en: "\"delve\", \"moreover\", \"furthermore\", \"in conclusion\", \"it is important to note\"",
+    de: "\"dar\u00fcber hinaus\", \"zusammenfassend l\u00e4sst sich sagen\", \"es ist wichtig zu beachten\"",
+    fr: "\"par ailleurs\", \"en conclusion\", \"il est important de souligner\"",
+    es: "\"adem\u00e1s\", \"en conclusi\u00f3n\", \"es importante destacar\"",
+    it: "\"inoltre\", \"in conclusione\", \"\u00e8 importante sottolineare\"",
+    nl: "\"bovendien\", \"concluderend\", \"het is belangrijk op te merken\"",
+    pt: "\"al\u00e9m disso\", \"em conclus\u00e3o\", \"\u00e9 importante notar\"",
+};
+
+// Assemble the system prompt for a reword level (REWORD_LEVELS key), a tone
+// (REWORD_TONES key), an optional instruction from the user and the passage's
+// language (a LANGUAGE_NAMES code, or null when unknown).
+function buildRewriteSystem(level, tone, extra, lang) {
+    const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
+    const name = LANGUAGE_NAMES[lang];
+    const lines = [
+        "You edit one passage of text so it reads as if a person wrote it themselves.",
+        "Rules:",
+        ...lv.rules,
+        "- Keep the meaning and every fact, name, number and quote.",
+        name ? `- The passage is in ${name}. Write your rewrite in ${name}.` : "- Write your rewrite in the language of the passage.",
+        STOCK_PHRASES[lang] ? `- Replace stock phrases such as ${STOCK_PHRASES[lang]}.`
+            : `- Replace stock phrases such as ${STOCK_PHRASES.en}, and their equivalents in the passage's language.`,
+        "- Don't add or drop information. Keep Markdown that is there (lists, bold), but add none.",
+    ];
+    if (REWORD_TONES[tone]) lines.push(REWORD_TONES[tone]);
+    const own = String(extra || "").replace(/\s+/g, " ").trim().slice(0, 300);
+    if (own) lines.push("- " + own);
+    lines.push("- Reply with the edited passage only: no introduction, no comments, no quotation marks around it.");
+    return lines.join("\n");
+}
 
 // `lang` (a LANGUAGE_NAMES code) is spelled out in the prompt: "keep the language" alone
 // isn't enough for small models, which drift into English on German text. `context`
 // (the paragraph a sentence comes from) goes into the system message, so the user
-// message holds only what is to be rewritten.
-function buildRewriteMessages(passage, lang, context) {
-    const name = LANGUAGE_NAMES[lang];
-    let system = REWRITE_SYSTEM;
-    if (name) system += `\n- The passage is in ${name}. Write your rewrite in ${name}.`;
+// message holds only what is to be rewritten. `opts` holds level, tone and extra. For
+// English and German an example exchange at that level goes before the passage (the
+// example is in the passage's language, or it would pull the reply into English).
+function buildRewriteMessages(passage, lang, context, opts) {
+    const o = opts || {};
+    let system = buildRewriteSystem(o.level, o.tone, o.extra, lang);
     if (context) system += "\n- The passage is part of a longer text, shown below for context only. Rewrite just the passage, so that it still fits in its place: don't repeat or continue the text around it."
         + `\n\nThe longer text:\n${String(context).trim()}`;
+    const lv = REWORD_LEVELS[o.level] || REWORD_LEVELS.strong;
+    const example = REWORD_EXAMPLE_INPUT[lang] && lv.example[lang]
+        ? [{ role: "user", content: REWORD_EXAMPLE_INPUT[lang] }, { role: "assistant", content: lv.example[lang] }]
+        : [];
     return [
         { role: "system", content: system },
+        ...example,
         { role: "user", content: String(passage).trim() },
     ];
 }
@@ -533,15 +618,56 @@ function buildRewriteMessages(passage, lang, context) {
 // The chat request body for one passage (a paragraph, or one or a few sentences). Thinking is switched off where the chat
 // template supports it (a reasoning trace only costs time here); `noKwargs` drops that
 // for a strict server that refused it once.
-function buildRewriteBody(model, passage, noKwargs, lang, context) {
+function buildRewriteBody(model, passage, noKwargs, lang, context, opts) {
+    const o = opts || {};
     const body = {
         model: model || "local-model",
-        messages: buildRewriteMessages(passage, lang, context),
-        temperature: 0.9,
+        messages: buildRewriteMessages(passage, lang, context, o),
+        temperature: (REWORD_LEVELS[o.level] || REWORD_LEVELS.strong).temperature,
         stream: false,
     };
     if (!noKwargs) body.chat_template_kwargs = { enable_thinking: false };
     return body;
+}
+
+// Compare a rewrite `b` with its original `a` word by word (letters and digits; case
+// ignored). Returns `ratio`, the share of words changed (0 = same words, 1 = nothing
+// in common), and `changed`, the [start, end) ranges in `b` of words that are new,
+// with neighbouring ones merged, for the change view.
+function wordDiff(a, b) {
+    const words = s => Array.from(String(s || "").matchAll(/[\p{L}\p{N}]+/gu), m => ({ w: m[0].toLowerCase(), start: m.index, end: m.index + m[0].length }));
+    const x = words(a), y = words(b);
+    const n = x.length, m = y.length;
+    const kept = new Uint8Array(m);
+    let common = 0;
+    if (n && m && n * m <= 4e6) {
+        // Longest common subsequence, filled from the end so it can be walked forwards.
+        const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+        for (let i = n - 1; i >= 0; i--) {
+            for (let j = m - 1; j >= 0; j--) {
+                dp[i][j] = x[i].w === y[j].w ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+        }
+        let i = 0, j = 0;
+        while (i < n && j < m) {
+            if (x[i].w === y[j].w) { kept[j] = 1; common++; i++; j++; }
+            else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+            else j++;
+        }
+    } else if (n && m) {
+        // Too long to align: count shared words regardless of order.
+        const bag = new Map();
+        x.forEach(t => bag.set(t.w, (bag.get(t.w) || 0) + 1));
+        y.forEach((t, j) => { const c = bag.get(t.w); if (c) { bag.set(t.w, c - 1); kept[j] = 1; common++; } });
+    }
+    const changed = [];
+    y.forEach((t, j) => {
+        if (kept[j]) return;
+        const last = changed[changed.length - 1];
+        if (last && j > 0 && !kept[j - 1]) last[1] = t.end;
+        else changed.push([t.start, t.end]);
+    });
+    return { ratio: n || m ? 1 - common / Math.max(n, m) : 0, changed };
 }
 
 // The answer without any reasoning trace. A reply that is all trace (cut off before
@@ -560,9 +686,11 @@ function stripThinking(text) {
 
 const PREAMBLE_RE = /^(?:here(?:'s| is| are)\b|sure[,!.]|certainly[,!.]|of course[,!.]|okay[,!.]|ok[,!.]|hier ist\b|hier sind\b|gerne[,!.]|klar[,!.]|nat\u00fcrlich[,!.]|rewritten\b|umformuliert\b|voici\b|voil\u00e0\b|claro[,!.]|aqu\u00ed (?:est\u00e1|tienes)\b|ecco\b|certo[,!.])/i;
 
-// Is the model's reply a usable rewrite of `orig` (in language `lang`, if known)?
-// Returns the text to use, or why not.
-function acceptRewrite(orig, reply, lang) {
+// Is the model's reply a usable rewrite of `orig` (in language `lang`, if known, at
+// reword `level`)? Returns the text to use and the share of words changed, or why not.
+// `unchanged` marks a reply identical to the original: kept, but not an error.
+function acceptRewrite(orig, reply, lang, level) {
+    const lv = REWORD_LEVELS[level] || REWORD_LEVELS.strong;
     let t = stripThinking(reply);
     const o = String(orig || "").trim();
     // Quotes wrapped around the whole reply that the original didn't have.
@@ -570,13 +698,17 @@ function acceptRewrite(orig, reply, lang) {
     // A sentence comes back on one line, even if the model broke it.
     if (!o.includes("\n")) t = t.replace(/\s*\n\s*/g, " ");
     if (!t) return { ok: false, reason: "empty reply" };
+    // Same words (spacing, punctuation or case aside): nothing was reworded.
+    if (t === o || wordDiff(o, t).ratio === 0) return { ok: false, unchanged: true, reason: "the model changed nothing" };
     if (PREAMBLE_RE.test(t)) return { ok: false, reason: "the model added an introduction" };
     const ratio = t.length / Math.max(1, o.length);
-    if (ratio < 0.5) return { ok: false, reason: "reply much shorter than the original" };
-    if (ratio > 2) return { ok: false, reason: "reply much longer than the original" };
+    if (ratio < lv.minLength) return { ok: false, reason: "reply much shorter than the original" };
+    if (ratio > lv.maxLength) return { ok: false, reason: "reply much longer than the original" };
     const got = lang ? detectLanguage(t) : null;
     if (got && got !== lang) return { ok: false, reason: `the model answered in ${LANGUAGE_NAMES[got]} instead of ${LANGUAGE_NAMES[lang]}` };
-    return { ok: true, text: t };
+    const change = wordDiff(o, t).ratio;
+    if (change > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
+    return { ok: true, text: t, change };
 }
 
 // ========== Stage 3: typos ==========
@@ -893,6 +1025,39 @@ async function serverError(res) {
     return new Error(`Server Error ${res.status}: ${detail.slice(0, 300)}`);
 }
 
+// @wllama:start
+// Accept the three URL shapes people realistically paste and normalize them
+// to a direct, CORS-enabled download link. Throws with a human hint otherwise.
+function normalizeGgufUrl(raw) {
+    let url = (raw || "").trim();
+    if (!url) throw new Error("Enter a model URL first.");
+    const hf = url.match(/^hf:\/{0,2}([^\/\s]+)\/([^\/\s]+)\/(\S+\.gguf)$/i);
+    if (hf) url = `https://huggingface.co/${hf[1]}/${hf[2]}/resolve/main/${hf[3]}`;
+    if (!/^https?:\/\//i.test(url)) throw new Error("Not a URL. Use https://… or the hf:user/repo/file.gguf shorthand.");
+    // Hugging Face "blob" browser pages aren't downloadable; the same path under /resolve/ is.
+    if (/^https:\/\/huggingface\.co\//i.test(url)) url = url.replace(/\/blob\//, "/resolve/");
+    if (!/\.gguf(\?.*)?$/i.test(url)) throw new Error("URL must point directly to a single .gguf file.");
+    if (/-\d{5}-of-\d{5}\.gguf(\?.*)?$/i.test(url)) throw new Error("Split GGUFs (…-00001-of-000NN.gguf) aren't supported — pick a single-file quant.");
+    // Callers parse the result (new URL(url).host); reject what can't be parsed here.
+    try { new URL(url); } catch { throw new Error("Not a valid URL."); }
+    return url;
+}
+
+// The file name shown in labels. decodeURIComponent throws on a malformed escape
+// ("%E0"): fall back to the raw text.
+function ggufFileName(url) {
+    const seg = url.split("?")[0].split("/").pop();
+    try { return decodeURIComponent(seg); } catch { return seg; }
+}
+
+// The most tokens a rewrite of `passage` may take in the browser: about three times
+// its length, so a small model that rambles is cut off early (the reply would be
+// refused as too long anyway), plus room for an empty thinking block.
+function wllamaMaxTokens(passage) {
+    return Math.min(2048, 64 + Math.ceil(String(passage || "").length * 0.75));
+}
+// @wllama:end
+
 // ========== DOM ==========
 
 if (typeof document !== "undefined") {
@@ -903,6 +1068,11 @@ if (typeof document !== "undefined") {
     let MODEL_NAME = "";
     let API_KEY = "";
     let kwargsRejected = false;
+    // @wllama:start
+    // "api" (an OpenAI-compatible server) or "wllama" (a GGUF model in this tab).
+    let backendMode = "api";
+    let wllamaModelLabel = null;   // file name of the loaded GGUF
+    // @wllama:end
 
     // The last run, so Reroll typos needn't call the model again.
     let last = null;
@@ -952,6 +1122,15 @@ if (typeof document !== "undefined") {
 
     function updateEndpointBadge() {
         const badge = $("endpointBadge");
+        // @wllama:start
+        if (backendMode === "wllama") {
+            badge.textContent = "🧠 " + (wllamaModelLabel || "no model loaded") + " · in this tab";
+            badge.title = "In-browser model (wllama): the text never leaves this tab";
+            badge.classList.remove("remote");
+            $("remoteWarning").hidden = true;
+            return;
+        }
+        // @wllama:end
         badge.textContent = (MODEL_NAME ? MODEL_NAME + " @ " : "") + API_URL.replace(/^https?:\/\//, "");
         badge.title = API_URL;
         badge.classList.toggle("remote", !isLocalEndpoint(API_URL));
@@ -965,6 +1144,10 @@ if (typeof document !== "undefined") {
         $("settingUrl").value = API_URL;
         $("settingModel").value = MODEL_NAME;
         $("settingKey").value = API_KEY;
+        // @wllama:start
+        $("settingBackend").value = backendMode;
+        syncBackendGroups();
+        // @wllama:end
         modal.classList.add("active");
         $("settingUrl").focus();
     }
@@ -981,6 +1164,9 @@ if (typeof document !== "undefined") {
         API_URL = url;
         MODEL_NAME = $("settingModel").value.trim();
         API_KEY = $("settingKey").value.trim();
+        // @wllama:start
+        backendMode = $("settingBackend").value;
+        // @wllama:end
         updateEndpointBadge();
         closeSettings();
         showToast("Settings saved (for this tab only)");
@@ -1015,6 +1201,381 @@ if (typeof document !== "undefined") {
             btn.textContent = "Test Connection";
         }
     });
+
+    // @wllama:start
+    // ----- in-browser model (wllama), adapted from HermitUI's -wllama build -----
+    // The engine version is pinned here only. The -wllama build embeds it (gzip +
+    // base64, injected by build.py as window.__WLLAMA_INLINE__), so loading a model
+    // needs no network; the unbuilt source imports it from the CDN instead.
+    const WLLAMA_CDN_BASE = "https://cdn.jsdelivr.net/npm/@wllama/wllama@3.6.1/esm";
+    // Without JSPI (Firefox < 153, Safari) wllama copies the whole GGUF into its 4 GiB
+    // wasm heap, where oversized allocations fail unchecked.
+    const WLLAMA_HAS_JSPI = typeof WebAssembly !== "undefined" && !!WebAssembly.Suspending;
+    const WLLAMA_HAS_WEBGPU = !!navigator.gpu;
+    const WLLAMA_NO_JSPI_MAX_BYTES = 3 * 1024 * 1024 * 1024;
+    // Firefox polls WebGPU completions on a 100 ms timer, so decode drops below 1 tok/s
+    // there (bug 1870699): UA-sniffed on purpose, since it is a bug, not a capability.
+    const WLLAMA_SLOW_WEBGPU = WLLAMA_HAS_WEBGPU && /\bFirefox\//.test(navigator.userAgent);
+    let WllamaClass = null;
+    let wllamaInstance = null;
+    let wllamaEngineUrls = null;
+    let wllamaDownloadAbort = null;   // set while a model download runs; Load becomes Cancel
+    let ggufLinkPending = false;      // the load came from a #gguf= link: close Settings when ready
+
+    function syncBackendGroups() {
+        const local = $("settingBackend").value === "wllama";
+        $("wllamaGroup").hidden = !local;
+        $("apiGroup").hidden = local;
+        $("testConnectionBtn").hidden = local;
+    }
+    $("settingBackend").addEventListener("change", syncBackendGroups);
+
+    (function renderWllamaHints() {
+        const notes = [];
+        if (!WLLAMA_HAS_JSPI) notes.push("This browser can't stream-load models (no WebAssembly JSPI): GGUF files over ~3 GB will fail. Chrome, Edge and Firefox 153+ can.");
+        if (!WLLAMA_HAS_WEBGPU) notes.push("WebGPU is unavailable, so the model runs on the CPU (slower).");
+        if (WLLAMA_SLOW_WEBGPU) notes.push("WebGPU is off by default here: in Firefox it is currently slower than the CPU (Firefox bug 1870699).");
+        if (!globalThis.crossOriginIsolated) notes.push("Opened as a plain file, the model runs on one CPU thread. Served with cross-origin isolation (COOP/COEP headers) it uses all cores.");
+        $("wllamaHint").textContent = notes.join(" ");
+        $("wllamaHint").hidden = !notes.length;
+        $("wllamaWebGpu").checked = WLLAMA_HAS_WEBGPU && !WLLAMA_SLOW_WEBGPU;
+        $("wllamaWebGpu").disabled = !WLLAMA_HAS_WEBGPU;
+    })();
+
+    async function gunzipToBytes(b64) {
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+        return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    function bytesToBase64(bytes) {
+        let bin = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return btoa(bin);
+    }
+    async function resolveWllamaEngine() {
+        if (wllamaEngineUrls) return wllamaEngineUrls;
+        const inline = window.__WLLAMA_INLINE__;
+        if (inline) {
+            // The wasm must be a data: URI: Emscripten's loader decodes it in place,
+            // whereas a blob: URL from a file:// page (origin "null") can't be loaded
+            // inside wllama's worker. Never revoked: later loads reuse both URLs.
+            wllamaEngineUrls = {
+                js: URL.createObjectURL(new Blob([await gunzipToBytes(inline.js)], { type: "text/javascript" })),
+                wasm: "data:application/octet-stream;base64," + bytesToBase64(await gunzipToBytes(inline.wasm)),
+                source: "inline (offline)",
+            };
+        } else {
+            wllamaEngineUrls = { js: `${WLLAMA_CDN_BASE}/index.js`, wasm: `${WLLAMA_CDN_BASE}/wasm/wllama.wasm`, source: "CDN" };
+        }
+        return wllamaEngineUrls;
+    }
+
+    function wllamaPreflightSize(bytes) {
+        if (!WLLAMA_HAS_JSPI && bytes >= WLLAMA_NO_JSPI_MAX_BYTES) {
+            return `This model is ${(bytes / 1073741824).toFixed(1)} GB, but without WebAssembly JSPI this browser must fit it into a 4 GB heap. Use Chrome/Edge or Firefox 153+, or a smaller model.`;
+        }
+        return null;
+    }
+
+    function setWllamaStatus(text, progress) {
+        $("wllamaStatus").textContent = text;
+        const bar = $("wllamaProgress");
+        bar.hidden = progress === undefined;
+        if (progress === null) bar.removeAttribute("value");   // indeterminate
+        else if (progress !== undefined) bar.value = progress;
+    }
+
+    function setWllamaBusy(busy) {
+        $("wllamaFile").disabled = busy;
+        $("wllamaUrl").disabled = busy;
+        $("wllamaCtx").disabled = busy;
+        $("wllamaWebGpu").disabled = busy || !WLLAMA_HAS_WEBGPU;
+    }
+
+    // Load `blobs` (what wllama's loadModel takes) into a fresh engine. Reports in the
+    // status line instead of throwing. Adapted from HermitUI's loadWllamaModel: same
+    // Worker patch, the same check for a context that couldn't be created, and the
+    // same halve-the-context retry, down to 2048 tokens (passages are short).
+    async function loadWllamaModel(blobs, label) {
+        setWllamaStatus("Loading the engine…", null);
+        // Chrome blocks module workers made from cross-origin redirected scripts; the
+        // wllama worker doesn't need module features, so drop { type: "module" }.
+        const OriginalWorker = window.Worker;
+        window.Worker = function (url, options) {
+            if (options && options.type === "module") { options = { ...options }; delete options.type; }
+            return new OriginalWorker(url, options);
+        };
+        try {
+            const engine = await resolveWllamaEngine();
+            if (!WllamaClass) WllamaClass = (await import(engine.js)).Wllama;
+            if (wllamaInstance) {
+                try { await wllamaInstance.exit(); } catch { /* the old engine is gone either way */ }
+                wllamaInstance = null;
+                wllamaModelLabel = null;
+            }
+            const useWebGpu = $("wllamaWebGpu").checked;
+            const nCtx = parseInt($("wllamaCtx").value, 10);
+            const requestedCtx = Number.isFinite(nCtx) && nCtx > 0 ? nCtx : 4096;
+            let attemptCtx = requestedCtx;
+            const started = performance.now();
+            while (true) {
+                const inst = new WllamaClass({ "default": engine.wasm }, { suppressNativeLog: true, logger: { debug() {}, log() {}, warn: console.warn, error: console.error } });
+                const options = useWebGpu ? { n_ctx: attemptCtx } : { n_ctx: attemptCtx, n_gpu_layers: 0 };
+                // Reasoning stays inline in the content, where stripThinking finds it.
+                // llama.cpp's default moves it to a separate field the reply never reads.
+                options.reasoning_format = "none";
+                options.progressCallback = ({ loaded, total }) => {
+                    const pct = total ? Math.round(loaded / total * 100) : 0;
+                    setWllamaStatus(`Loading ${label}… ${pct} %`, pct < 100 ? pct : null);
+                };
+                setWllamaStatus(`Loading ${label}…`, null);
+                try {
+                    await inst.loadModel(blobs, options);
+                    // wllama resolves even when the context couldn't be created (the KV
+                    // cache didn't fit): treat that as the failure it is.
+                    if (inst.getLoadedContextInfo().success === false) {
+                        const err = new Error("not enough memory to create the model context");
+                        err.name = "ContextAllocError";
+                        throw err;
+                    }
+                    wllamaInstance = inst;
+                    break;
+                } catch (err) {
+                    try { await inst.exit(); } catch { /* already dead */ }
+                    if (attemptCtx <= 2048) {
+                        if (err.name === "ContextAllocError") err.message = "not enough memory for this model. Try a smaller model or quantization" + (useWebGpu || !WLLAMA_HAS_WEBGPU ? "." : ", or switch WebGPU on.");
+                        throw err;
+                    }
+                    attemptCtx = Math.max(2048, Math.floor(attemptCtx / 2));
+                    setWllamaStatus(`Not enough memory for that context: retrying with ${attemptCtx} tokens…`, null);
+                }
+            }
+            const meta = (() => { try { return wllamaInstance.getModelMetadata().meta || {}; } catch { return {}; } })();
+            wllamaModelLabel = label;
+            backendMode = "wllama";
+            $("settingBackend").value = "wllama";
+            updateEndpointBadge();
+            const secs = ((performance.now() - started) / 1000).toFixed(1);
+            const notes = [useWebGpu ? "WebGPU" : "CPU", `${attemptCtx}-token context${attemptCtx !== requestedCtx ? " (reduced)" : ""}`, `${secs} s`];
+            if (!meta["tokenizer.chat_template"]) notes.push("no chat template in the file: replies may be poor");
+            setWllamaStatus(`Ready 🟢 ${label} (${notes.join(", ")})`);
+            showToast(`🧠 ${label} loaded`);
+            if (ggufLinkPending && modal.classList.contains("active")) closeSettings();
+        } catch (err) {
+            let msg = err.message || String(err);
+            if (err instanceof RangeError || /source array is too long|is out of bounds/i.test(msg)) {
+                msg = "the model doesn't fit in browser memory." + (WLLAMA_HAS_JSPI ? "" : " Without WebAssembly JSPI this browser caps models at ~3 GB.") + " Try a smaller quantization.";
+            } else if (err.name === "NotReadableError" || /NotReadableError/.test(msg)) {
+                msg = "the browser lost access to the model data mid-load. Pick the file again; in a private window, try a normal one.";
+            }
+            setWllamaStatus("❌ Error: " + msg);
+            if (!wllamaInstance) { wllamaModelLabel = null; updateEndpointBadge(); }
+        } finally {
+            window.Worker = OriginalWorker;
+        }
+    }
+
+    // A Blob whose bytes live in JS memory. Large real Blobs break in private windows
+    // (blob data can't be paged to disk there); wllama only uses size, slice,
+    // arrayBuffer and stream, so those are overridden. Copied from HermitUI.
+    class MemBlob extends Blob {
+        constructor(parts, size, offset = 0) {
+            super([]);
+            this.memParts = parts;
+            this.memOffset = offset;
+            this.memSize = size;
+        }
+        get size() { return this.memSize; }
+        slice(start = 0, end = this.memSize) {
+            const clamp = v => Math.min(Math.max(v < 0 ? this.memSize + v : v, 0), this.memSize);
+            start = clamp(start);
+            end = clamp(end);
+            return new MemBlob(this.memParts, Math.max(end - start, 0), this.memOffset + start);
+        }
+        async arrayBuffer() {
+            const out = new Uint8Array(this.memSize);
+            let skip = this.memOffset, outPos = 0;
+            for (const part of this.memParts) {
+                if (outPos >= this.memSize) break;
+                if (skip >= part.byteLength) { skip -= part.byteLength; continue; }
+                const take = Math.min(part.byteLength - skip, this.memSize - outPos);
+                out.set(part.subarray(skip, skip + take), outPos);
+                outPos += take;
+                skip = 0;
+            }
+            return out.buffer;
+        }
+        stream() {
+            const CHUNK = 4 * 1024 * 1024;
+            let pos = 0;
+            return new ReadableStream({
+                pull: controller => {
+                    if (pos >= this.memSize) { controller.close(); return; }
+                    const view = this.slice(pos, pos + CHUNK);
+                    pos += view.size;
+                    return view.arrayBuffer().then(ab => controller.enqueue(new Uint8Array(ab)));
+                },
+            });
+        }
+    }
+
+    // Download a GGUF into memory, never into browser storage: wllama's own URL
+    // loader would keep it in OPFS, which the ephemerality rule forbids.
+    async function downloadGgufToBlob(url, onProgress, signal) {
+        const res = await fetch(url, { signal });
+        if (!res.ok) {
+            const why = res.status === 401 || res.status === 403 ? " — the file is gated or private. Download it on Hugging Face and pick the file instead."
+                : res.status === 404 ? " — no file at that URL (names are case-sensitive)."
+                : res.status === 429 ? " — rate-limited by the host. Wait a moment and retry." : "";
+            throw new Error(`Download failed: HTTP ${res.status}${why}`);
+        }
+        const total = parseInt(res.headers.get("content-length") || "0", 10);
+        const sizeErr = wllamaPreflightSize(total);
+        if (sizeErr) { try { await res.body.cancel(); } catch { /* closed */ } throw new Error(sizeErr); }
+        const reader = res.body.getReader();
+        // Compact network chunks into 64 MB parts: MemBlob scans the list linearly.
+        const PART_BYTES = 64 * 1024 * 1024;
+        const parts = [];
+        let pending = [], pendingBytes = 0, loaded = 0;
+        const flush = () => {
+            if (!pendingBytes) return;
+            const part = new Uint8Array(pendingBytes);
+            let o = 0;
+            for (const c of pending) { part.set(c, o); o += c.byteLength; }
+            parts.push(part);
+            pending = [];
+            pendingBytes = 0;
+        };
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            pending.push(value);
+            pendingBytes += value.byteLength;
+            if (pendingBytes >= PART_BYTES) flush();
+            loaded += value.byteLength;
+            if (!total) {
+                const runningErr = wllamaPreflightSize(loaded);
+                if (runningErr) { try { await reader.cancel(); } catch { /* closed */ } throw new Error(runningErr); }
+            }
+            onProgress(loaded, total);
+        }
+        flush();
+        return new MemBlob(parts, loaded);
+    }
+
+    $("wllamaFile").addEventListener("change", async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const sizeErr = wllamaPreflightSize(file.size);
+        if (sizeErr) { setWllamaStatus("❌ " + sizeErr); e.target.value = ""; return; }
+        setWllamaBusy(true);
+        $("wllamaUrlBtn").disabled = true;
+        try { await loadWllamaModel([file], file.name); }
+        finally {
+            setWllamaBusy(false);
+            $("wllamaUrlBtn").disabled = false;
+            e.target.value = "";   // so picking the same file again still loads it
+        }
+    });
+
+    $("wllamaUrlBtn").addEventListener("click", async () => {
+        const btn = $("wllamaUrlBtn");
+        if (wllamaDownloadAbort) { wllamaDownloadAbort.abort(); return; }
+        let url;
+        try { url = normalizeGgufUrl($("wllamaUrl").value); }
+        catch (e) { setWllamaStatus("❌ " + e.message); return; }
+        const label = ggufFileName(url);
+        wllamaDownloadAbort = new AbortController();
+        setWllamaBusy(true);
+        btn.textContent = "Cancel";
+        try {
+            setWllamaStatus(`Downloading ${label} from ${new URL(url).host}…`, null);
+            const blob = await downloadGgufToBlob(url, (loaded, total) => {
+                const mb = (loaded / 1048576).toFixed(0);
+                if (total) setWllamaStatus(`Downloading ${label}: ${mb} of ${(total / 1048576).toFixed(0)} MB`, Math.round(loaded / total * 100));
+                else setWllamaStatus(`Downloading ${label}: ${mb} MB`, null);
+            }, wllamaDownloadAbort.signal);
+            wllamaDownloadAbort = null;
+            btn.textContent = "Load";
+            btn.disabled = true;
+            await loadWllamaModel([blob], label);
+        } catch (e) {
+            if (e.name === "AbortError") setWllamaStatus("Download cancelled.");
+            else setWllamaStatus("❌ " + (/Failed to fetch|NetworkError|Load failed/i.test(e.message) ? `Couldn't download from ${new URL(url).host}: the host must allow browser downloads (CORS). Hugging Face does.` : e.message));
+        } finally {
+            ggufLinkPending = false;   // on an error, Settings stays open with the reason
+            wllamaDownloadAbort = null;
+            btn.textContent = "Load";
+            btn.disabled = false;
+            setWllamaBusy(false);
+        }
+    });
+
+    // One rewrite in the browser. Streams so that Stop takes effect between tokens
+    // (a non-streamed call only checks the signal between polls), and shows the
+    // speed after the status text.
+    async function wllamaReword(passage, signal, lang, context, ropts) {
+        if (!wllamaInstance) throw new Error("No in-browser model is loaded: pick a .gguf file in ⚙️ Settings.");
+        const body = buildRewriteBody("", passage, false, lang, context, ropts);
+        const base = $("status").textContent;
+        const started = performance.now();
+        let text = "", tokens = 0, shown = 0;
+        try {
+            await wllamaInstance.createChatCompletion({
+                messages: body.messages,
+                max_tokens: wllamaMaxTokens(passage),
+                temperature: body.temperature,
+                chat_template_kwargs: body.chat_template_kwargs,
+                stream: true,
+                abortSignal: signal,
+                onData: chunk => {
+                    if (signal.aborted) throw new DOMException("Stopped", "AbortError");
+                    const piece = (chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) || "";
+                    if (!piece) return;
+                    text += piece;
+                    tokens++;
+                    const now = performance.now();
+                    if (now - shown > 250) {
+                        shown = now;
+                        setStatus(`${base} ${tokens} tok · ${(tokens / ((now - started) / 1000)).toFixed(1)} tok/s`, "busy");
+                    }
+                },
+            });
+        } catch (e) {
+            // Our own throw from onData, or wllama's WllamaAbortError between polls.
+            if (signal.aborted || e.name === "AbortError" || e.message === "AbortError") throw new DOMException("Stopped", "AbortError");
+            throw e;
+        }
+        return text;
+    }
+
+    // A link can name a model: page.html#gguf=hf:user/repo/file.gguf (or a direct
+    // .gguf or Hugging Face URL), as in HermitUI. The fragment never leaves the browser
+    // and nothing is stored. A link alone never starts a download of gigabytes: a
+    // banner says what would be loaded from where, and only its button loads it.
+    function applyGgufLink() {
+        const raw = (new URLSearchParams(location.hash.slice(1)).get("gguf") || "").trim();
+        if (!raw) return;
+        let url;
+        try { url = normalizeGgufUrl(raw); }
+        catch (e) { showToast(`🔗 Model link ignored: ${e.message}`, { error: true }); return; }
+        $("wllamaUrl").value = url;
+        $("ggufBannerName").textContent = ggufFileName(url);
+        $("ggufBannerHost").textContent = new URL(url).host;
+        $("ggufBanner").hidden = false;
+    }
+    $("ggufBannerLoad").addEventListener("click", () => {
+        $("ggufBanner").hidden = true;
+        // Settings shows the download and load progress; it closes once the model is ready.
+        backendMode = "wllama";
+        updateEndpointBadge();
+        openSettings();
+        ggufLinkPending = true;
+        $("wllamaUrlBtn").click();
+    });
+    $("ggufBannerDismiss").addEventListener("click", () => { $("ggufBanner").hidden = true; });
+    applyGgufLink();
+    // @wllama:end
 
     // ----- input: paste, open, drop -----
     const input = $("inputText");
@@ -1053,16 +1614,19 @@ if (typeof document !== "undefined") {
         typos: () => $("optTypos").checked,
         share: () => Number($("optShare").value),
         unit: () => $("optUnit").value,
+        level: () => $("optLevel").value,
+        tone: () => $("optTone").value,
+        extra: () => $("optExtra").value,
         rate: () => Number($("optRate").value) / 100,
         layout: () => $("optLayout").value,
     };
     function syncOptions() {
-        $("optShare").disabled = $("optUnit").disabled = !opt.reword();
+        ["optShare", "optUnit", "optLevel", "optTone", "optExtra"].forEach(id => { $(id).disabled = !opt.reword(); });
         $("optRate").disabled = $("optLayout").disabled = !opt.typos();
         $("rateValue").textContent = Number($("optRate").value).toFixed(1) + " %";
         $("rerollBtn").disabled = !last || !opt.typos() || !!running;
     }
-    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
+    ["optClean", "optReword", "optTypos", "optShare", "optUnit", "optLevel", "optTone", "optRate", "optLayout"].forEach(id => $(id).addEventListener("input", syncOptions));
     syncOptions();
 
     function setStatus(text, kind) {
@@ -1072,7 +1636,10 @@ if (typeof document !== "undefined") {
     }
 
     // ----- the model call -----
-    async function rewordOne(passage, signal, lang, context) {
+    async function rewordOne(passage, signal, lang, context, ropts) {
+        // @wllama:start
+        if (backendMode === "wllama") return wllamaReword(passage, signal, lang, context, ropts);
+        // @wllama:end
         if (!MODEL_NAME) {
             // Ollama needs a real model name; llama.cpp takes any. Ask the server once.
             try {
@@ -1087,7 +1654,7 @@ if (typeof document !== "undefined") {
             const res = await fetch(apiEndpoint(API_URL, "/chat/completions"), {
                 method: "POST",
                 headers: authHeaders(),
-                body: JSON.stringify(buildRewriteBody(MODEL_NAME, passage, kwargsRejected, lang, context)),
+                body: JSON.stringify(buildRewriteBody(MODEL_NAME, passage, kwargsRejected, lang, context, ropts)),
                 signal,
             });
             if (res.ok) {
@@ -1117,7 +1684,8 @@ if (typeof document !== "undefined") {
         const empty = { counts: Object.fromEntries(CLEAN_CATEGORIES.map(c => [c, {}])), hiddenText: [] };
         let text = source, marks = [], clean1 = empty, clean2 = empty;
         const docLang = detectLanguage(source);
-        const reword = { unit: opt.unit(), attempted: 0, done: 0, eligible: 0, skipped: [], stopped: false, error: null };
+        const reword = { unit: opt.unit(), level: opt.level(), attempted: 0, done: 0, eligible: 0, unchanged: 0, changes: [], skipped: [], stopped: false, error: null };
+        const ropts = { level: opt.level(), tone: opt.tone(), extra: opt.extra() };
         try {
             if (opt.clean()) {
                 const r = cleanText(text);
@@ -1135,14 +1703,18 @@ if (typeof document !== "undefined") {
                     setStatus(`Rewording ${k + 1} of ${groups.length}…`, "busy");
                     try {
                         const lang = detectLanguage(g.context || g.text) || docLang;
-                        const reply = await rewordOne(g.text, signal, lang, g.context);
-                        const verdict = acceptRewrite(g.text, reply, lang);
+                        const reply = await rewordOne(g.text, signal, lang, g.context, ropts);
+                        const verdict = acceptRewrite(g.text, reply, lang, ropts.level);
                         const cleaned = !verdict.ok ? null : opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
                         const core = cleaned && cleaned.text.trim();
                         if (core) {
+                            const diff = wordDiff(g.text, core);
                             clean2 = mergeCleanReports(clean2, cleaned.report);
-                            reps.push({ start: g.start, end: g.end, text: core });
+                            reps.push({ start: g.start, end: g.end, text: core, changed: diff.changed });
                             reword.done += g.count;
+                            reword.changes.push(diff.ratio);
+                        } else if (verdict.unchanged) {
+                            reword.unchanged += g.count;
                         } else {
                             const t = g.text.length > 50 ? g.text.slice(0, 50).trimEnd() + "…" : g.text;
                             reword.skipped.push(`"${t}": ${verdict.ok ? "nothing left after cleanup" : verdict.reason} — kept the original.`);
@@ -1237,7 +1809,9 @@ if (typeof document !== "undefined") {
             if (m) {
                 const s = document.createElement("span");
                 s.className = "m-" + m.kind;
-                s.title = m.kind === "typo" ? `Typo, ${TYPO_NAMES[m.typo] || "typo"} (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
+                // A changed word keeps no title of its own: hovering it shows the
+                // reworded span's original.
+                if (m.kind !== "changed") s.title = m.kind === "typo" ? `Typo, ${TYPO_NAMES[m.typo] || "typo"} (was "${m.labels[0]}")` : `Was ${m.labels.join(", ")}`;
                 s.textContent = piece;
                 target().appendChild(s);
             } else {
@@ -1258,6 +1832,8 @@ if (typeof document !== "undefined") {
         transliterated: "Letters outside Latin-1",
         dropped: "Removed (no keyboard equivalent)",
     };
+
+    const LEVEL_TEXT = { light: "light edits", medium: "rephrased", strong: "rewritten freely" };
 
     function renderReport(typos) {
         const box = $("report");
@@ -1293,7 +1869,12 @@ if (typeof document !== "undefined") {
         }
         if (did.reword) {
             if (!reword.eligible) add("h4", `Rewording: no ${reword.unit} long enough to reword`);
-            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} ${reword.unit}${reword.eligible === 1 ? "" : "s"} reworded`);
+            else add("h4", `Rewording: ${reword.done} of ${reword.eligible} ${reword.unit}${reword.eligible === 1 ? "" : "s"} reworded (${LEVEL_TEXT[reword.level]})`);
+            if (reword.changes.length) {
+                const avg = reword.changes.reduce((s, r) => s + r, 0) / reword.changes.length;
+                add("p", `On average the model changed ${Math.round(avg * 100)} % of the words in what it reworded.`, "report-note");
+            }
+            if (reword.unchanged) add("p", `${reword.unchanged} ${reword.unit}${reword.unchanged === 1 ? "" : "s"} came back unchanged.`, "report-note");
             reword.skipped.forEach(s => add("p", s, "report-note"));
             const fixed = cleanTotal(clean2);
             if (fixed) add("p", `Cleaned ${fixed} character${fixed === 1 ? "" : "s"} out of the model's answers.`, "report-note");
