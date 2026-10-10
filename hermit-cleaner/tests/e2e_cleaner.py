@@ -149,12 +149,13 @@ def scenarios(page, port, state, browser_name):
     page.select_option("#optTone", "keep")
     page.fill("#optExtra", "")
 
-    print("\n-- Min. letters: a greeting is sent, a bare name is not")
+    print("\n-- Min. letters: a short line is sent, a bare name and a greeting are not")
     state.requests.clear()
-    set_input(page, "Hi Sarah,\n\n" + DE_PARA_1 + "\n\nTom\n")
+    set_input(page, "Hi Sarah,\n\nCall me later.\n\n" + DE_PARA_1 + "\n\nTom\n")
     run(page)
     sent = {r["messages"][-1]["content"] for r in state.requests}
-    check("default 6: the greeting goes, \"Tom\" doesn't", "Hi Sarah," in sent and "Tom" not in sent and len(sent) == 2, sent)
+    check("default 6: \"Call me later.\" goes, \"Tom\" and \"Hi Sarah,\" don't",
+          "Call me later." in sent and "Tom" not in sent and "Hi Sarah," not in sent and len(sent) == 2, sent)
     state.requests.clear()
     page.fill("#optMin", "40")
     run(page)

@@ -8,10 +8,11 @@ explicitly overrides it. If you are an AI agent, read the root file first.
 > `CLAUDE.md -> AGENTS.md` symlink can be created here; don't commit it.
 
 ## Status
-v0.3.0: cleanup; rewording by sentence or paragraph at three change levels (Light, the
+v0.3.2: cleanup; rewording by sentence or paragraph at three change levels (Light, the
 default, Medium, Strong), with a tone and an extra instruction, through an
 OpenAI-compatible server or, in the `-wllama` build, a GGUF model in the tab; AI stock
-phrases found per language, named in the prompt and reworded first; typos.
+phrases and set-up contrasts found per language, named in the prompt and reworded first;
+greetings and sign-offs left alone; typos.
 
 ## Build & test
 ```bash
@@ -115,6 +116,38 @@ poll with `page.evaluate` instead.
     Qwen3-1.7B at Strong once dropped a "40 %" and turned "Frau Weber" into "Herr Müller".
     Every build also switched a formal German e-mail to "du" now and then (mostly
     Gemma at Medium/Strong), hence the form-of-address rule.
+- **Set-up contrasts, greetings, form of address (v0.3.2).** Learned on 2026-10-10
+  with ChatGPT's AI detector run by hand on texts Qwen3.8-27B wrote (results in
+  `bench/results/20261010-detector/`), then judged by Claude side by side on the small
+  ladder (`bench/results/20261010-claude-judging/`, A = v0.3.1, B = v0.3.2):
+  - The detector is an LLM style review, not a statistic. Once phrases and contrasts
+    are gone it rates on structure, unsourced claims and missing personal detail, which
+    the Cleaner must not change; and it reads grammar errors as human, so a damaged
+    rewrite can score *better*. Never use its score as a quality signal on its own.
+  - Contrasts (`CONTRAST_PATTERNS`) need both halves, or ordinary text gets flagged.
+    Told to drop them, models dodge: "just" -> "only"/"simply", a full stop between
+    the halves ("isn't just a cost. It's ..."), no adverb at all ("isn't code; it's
+    people"). After a full stop, only a subject plus a non-negated verb counts, or "It
+    is not just me. It isn't late" matches. German: only the rhetorical "kein ...,
+    sondern" and "nicht nur ..., sondern"; "nicht am Montag, sondern am Dienstag" is
+    plain German. A rule naming the shapes (`CONTRAST_RULES`, per language) beat an
+    extra few-shot example (27B at Strong: 4/15 -> 1/15 kept vs 2/15).
+  - The contrast refusal is soft and the fallback is the *first* try: the second runs
+    hotter under the retry note and garbled German ("Man baut Vertrauen nicht einfach
+    so auf, sondern man legt es in den Alltag").
+  - Only Qwen3.5-4B of the small models drops contrasts; Qwen3 1.7B/4B and Gemma-4 E2B
+    keep "It's not just about X, it's about Y" through the retry. No time cost measured
+    (within +-15 %).
+  - Greetings and sign-offs are never sent (`SALUTATION_RE`, in `isRewritable` and by
+    sentence in `rewordUnits`): "Sehr geehrte Frau Weber," came back "Hallo"/"Liebe",
+    and "Mit freundlichen Grüßen" on the line above the name came back as the name
+    (Qwen3-4B, in v0.3.1 too).
+  - German form of address is checked in code (`addressForms`): Gemma-4 E2B switched
+    the Sie e-mail to "du" in every Medium/Strong run. A generic retry note didn't help
+    (0/4); naming the form to keep did (8/8).
+  - Qwen3.8-27B at Medium, German, by sentence turned "wir bedauern zutiefst" into "wir
+    sind froh" with no retry involved: German meaning errors are a model limit, not a
+    prompt one. Read German rewrites, don't count them.
 - **Tests:** pure logic goes in unit tests that slice the real functions out of
   `src/script.js` (`tests/extract.mjs`, the same approach as `../tests/`). Renaming a
   function fails the suite; update the lists there. DOM behaviour goes in

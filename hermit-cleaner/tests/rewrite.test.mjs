@@ -40,7 +40,14 @@ section("splitParagraphs");
     const rwDefault = splitParagraphs(text).filter(b => b.rewrite).map(b => b.text.trim());
     check("the default limit is low: \"short one\" is sent too, heading, table and URL still not", MIN_LETTERS === 6
         && rwDefault.length === 3 && rwDefault.includes("short one"), JSON.stringify(rwDefault));
-    check("greetings pass the default, a bare name doesn't", splitParagraphs("Hi Sarah,\n\nTom\n").filter(b => b.rewrite).map(b => b.text.trim()).join() === "Hi Sarah,");
+    check("a short line passes the default, a bare name doesn't", splitParagraphs("Call me later.\n\nTom\n").filter(b => b.rewrite).map(b => b.text.trim()).join() === "Call me later.");
+    const letter = "Sehr geehrter Herr Becker,\n\nDie Lieferung kommt am Donnerstag.\n\nMit freundlichen Gr\u00fc\u00dfen\n\nHi Sarah,\n\nBest regards,\n\nCheers!\n\nThanks again for your patience and hard work.";
+    const kept = splitParagraphs(letter).filter(b => b.rewrite).map(b => b.text.trim());
+    check("greetings and sign-offs are never reworded", kept.join(" | ") === "Die Lieferung kommt am Donnerstag. | Thanks again for your patience and hard work.", kept.join(" | "));
+    check("a sign-off with the name under it is not reworded", !splitParagraphs("Danke.\n\nMit freundlichen Gr\u00fc\u00dfen\nJonas Becker").filter(b => b.rewrite).some(b => /Gr\u00fc\u00dfen/.test(b.text)));
+    const units = rewordUnits("Hallo zusammen,\nich wollte fragen, ob das am Montag passt.\nViele Gr\u00fc\u00dfe", "sentence").map(u => u.text);
+    check("by sentence: greeting and sign-off lines inside a paragraph are left out", units.join(" | ") === "ich wollte fragen, ob das am Montag passt.", units.join(" | "));
+    check("...but a sentence that starts like one is", splitParagraphs("Hallo zusammen, die Lieferung kommt am Donnerstag.").some(b => b.rewrite));
     check("unclosed fence runs to the end", splitParagraphs("text\n```\ncode\n\nmore").filter(b => b.kind === "code").length === 1);
     check("empty input", splitParagraphs("").length === 0);
 }

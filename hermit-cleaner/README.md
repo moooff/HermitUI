@@ -3,7 +3,7 @@
 *Clean up text another model wrote: hidden characters out, typography plain, some
 sentences or paragraphs reworded by your own local model, and a few natural typos.*
 
-> **Status: v0.3.1.** One self-contained HTML file in two flavours:
+> **Status: v0.3.2.** One self-contained HTML file in two flavours:
 > [`dist/hermit-cleaner-standalone.html`](dist/hermit-cleaner-standalone.html) (≈ 290 KB)
 > rewords through a model server, and
 > [`dist/hermit-cleaner-wllama.html`](dist/hermit-cleaner-wllama.html) (≈ 3.6 MB) can also
@@ -60,6 +60,15 @@ Three steps, each one optional:
      sink in.") is removed outright, without the model, and the output marks where it
      was. The report counts them before and after rewording. Where the list comes from
      is below.
+   - **Set-up contrasts** ("training isn't just a cost - it's ...", "kein Titel, sondern
+     ein Dienst") are the tell current models lean on most, and the one they keep when
+     told to drop it: they swap "just" for "only", or put a full stop between the
+     halves. The app finds them in English and German with both halves, names them in
+     the prompt, and at Medium and Strong a reply that still has one gets a second try.
+     If that one keeps a contrast too, the first rewrite is used anyway, since the
+     original has the same contrast. A plain correction ("nicht am Montag, sondern am
+     Dienstag") is not flagged. Large models drop most of them (Qwen3.8-27B: 14 → 3 in
+     six texts); of the small ones only Qwen3.5-4B does, the others mostly keep them.
    - **Tone**: keep it, or make it a little more casual, more formal or simpler.
    - **Also**: one instruction of your own, such as "use du" or "British spelling".
    - The words the model changed are highlighted inside each reworded span, and the
@@ -71,7 +80,10 @@ Three steps, each one optional:
      under 20 letters that come back unchanged get no second try: those are mostly
      greetings and names the model rightly left as they were.
    - **Min. letters** (default 6): sentences and paragraphs with fewer letters are not
-     sent. 6 lets "Hi Sarah," and "Best regards," through but not a bare "Tom".
+     sent ("Tom", "OK.").
+   - **Greetings and sign-offs** ("Sehr geehrter Herr Becker,", "Hi Sarah,", "Mit
+     freundlichen Grüßen" with the name under it) are never sent: reworded, they came
+     back as "Hallo Herr Becker," or as the name itself.
 
    By sentence, each one is sent with its paragraph as context, so the rewrite still fits in, and picked sentences
    next to each other (up to three) go together in one request. Abbreviations like
@@ -81,8 +93,9 @@ Three steps, each one optional:
    much shorter or longer than the original, with an introduction ("Here is…"), in
    the wrong language, or with more stock phrases than it had ("Moreover, …") is
    discarded, and the original is kept. The prompt also asks the
-   model to keep the form of address (formal or informal). The model's answers go
-   through the cleanup again.
+   model to keep the form of address (formal or informal); in German a reply that
+   switches between "Sie", "du" and "ihr" is refused, and the second try is told which
+   one to keep. The model's answers go through the cleanup again.
 3. **Typos** (optional). A low rate of realistic mistakes:
    - **In every language:** a neighbouring key, two letters swapped, a letter dropped
      or doubled, a missing capital at a sentence start, Shift held too long ("DIese"),
@@ -126,6 +139,12 @@ The output shows every change: hover a highlight to see what was there before.
 - Markdown formatting (`**bold**`, `## headings`) is left in the text.
 - Small in-browser models write weaker German than English: past Light edits, a 1.7B
   model makes grammar mistakes. Check the highlighted changes before you use them.
+  Even a 27B model, rewording German sentence by sentence at Medium, now and then
+  turns a sentence's meaning around ("wir bedauern" → "wir sind froh").
+- Rewording removes phrases and framing; it doesn't change what a text says. An AI
+  detector that reads the whole text (ChatGPT's, for one) still points at a textbook
+  structure, claims without sources and missing personal detail, and fixing those
+  means adding content, which the Cleaner never does.
 
 ## Where the stock-phrase list comes from
 
@@ -152,6 +171,11 @@ nothing.
   [charismarcom.de](https://www.charismarcom.de/post/typische-ki-formulierungen-vermeiden/),
   [korrektur.de](https://korrektur.de/ki-texte-erkennen-merkmale-checkliste) and
   [urbanstudio.de](https://urbanstudio.de/blog/ki/die-sprache-der-ki/).
+- ChatGPT's [AI detector](https://chatgpt.com/writing/ai-detector/) (October 2026),
+  run by hand on texts a local model wrote, before and after rewording: the set-up
+  contrasts in both languages, business and letter phrases ("culture of vigilance",
+  "strategischer Hebel", "Ihr Vertrauen ist uns sehr wichtig") and essay formulas
+  ("This experience taught me that").
 - French, Spanish, Italian, Dutch and Portuguese: style guides and blog lists only (for
   example [gpt-watermark-remover.com/fr](https://gpt-watermark-remover.com/fr/blog/mots-typiques-ia-eviter)
   and [howmanywords.app](https://howmanywords.app/it/blog/chatgpt-stile-scrittura-indizi)).

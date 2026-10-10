@@ -726,7 +726,7 @@ body.is-running .options {
 // counting, so keep literal braces out of their regexes, strings and comments); the
 // DOM wiring is at the bottom.
 
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 
 // ========== Stage 1: character cleanup ==========
 
@@ -1096,8 +1096,22 @@ function isRewritable(para, minLetters = MIN_LETTERS) {
     if (lines.every(l => /^\s*\|/.test(l))) return false;               // a table
     if (lines.length === 1 && /^#{1,6}\s/.test(t)) return false;         // a heading
     if (/^(?:https?:\/\/|www\.)\S+$/i.test(t)) return false;            // a bare URL
+    // A greeting or sign-off, alone or with the name lines under it.
+    if (SALUTATION_RE.test(lines[0].trim()) && lines.slice(1).every(l => l.trim().split(/\s+/).length <= 4)) return false;
     return true;
 }
+
+// A greeting or sign-off line of a letter. Reworded, "Sehr geehrter Herr Becker," came
+// back as "Lieber" or "Hallo Herr Becker," (Qwen3.8-27B, Gemma-4 E2B, Qwen3.5-4B), and a
+// "Mit freundlichen Gr\u00fc\u00dfen" on the line above the name as the name (Qwen3-4B):
+// nothing to gain, and the form of address is lost. Not reworded in either unit.
+const SALUTATION_RE = new RegExp("^(?:" + [
+    "(?:(?:sehr )?geehrte[rs]?|liebe[rs]?|hallo|hi|hey|guten (?:tag|morgen|abend)|moin|servus|dear|hello|good (?:morning|afternoon|evening)"
+        + "|bonjour|bonsoir|ch\u00e8re?s?|madame|monsieur|estimad[oa]s?|querid[oa]s?|hola|buongiorno|gentil[ei]|car[oa]|geachte|beste)(?![\\p{L}])[^\\n.!?]{0,60}[,!]?",
+    "(?:mit |viele |beste |liebe |herzliche |freundliche )?(?:freundlichen |besten |herzlichen |lieben |sch\u00f6nen )?gr(?:\u00fc\u00df|\u00fcss|uess)e[^\\n.!?]{0,30}",
+    "(?:best|kind|warm|warmest|many) (?:regards|wishes)[,!]?", "(?:yours )?(?:sincerely|faithfully|truly)[,!]?", "cheers[,!]?",
+    "cordialement", "bien \u00e0 vous", "(?:cordiali )?saluti", "(?:un )?saludos?(?: cordiales)?", "atentamente", "met vriendelijke groet(?:en)?",
+].join("|") + ")$", "iu");
 
 // Abbreviations a full stop doesn't end a sentence after (lower case, without the dot).
 // Single letters ("z. B.", "J. Smith"), words with a dot inside ("e.g", "d.h") and
@@ -1157,7 +1171,7 @@ function rewordUnits(text, unit, minLetters = MIN_LETTERS) {
         const ranges = unit === "sentence" ? splitSentences(b.text) : [[lead, lead + context.length]];
         for (const [s, e] of ranges) {
             const t = b.text.slice(s, e);
-            if (unit === "sentence" && (t.match(/\p{L}/gu) || []).length < minLetters) continue;
+            if (unit === "sentence" && ((t.match(/\p{L}/gu) || []).length < minLetters || SALUTATION_RE.test(t.trim()))) continue;
             units.push({ start: b.start + s, end: b.start + e, text: t, block, context: t === context ? null : context });
         }
     });
@@ -1235,7 +1249,17 @@ function pickUnits(n, share, rng, first) {
     return idx.slice(0, k).sort((a, b) => a - b);
 }
 
-// How much the model may change. `rules` go into the prompt; `maxChange` is the largest
+// Added at Medium and Strong, in the passage's language (English when it has none, so no
+// other language is named): measured with Qwen3.8-27B on three English essays, this cut
+// the replies that kept a contrast at Strong from 4 of 15 to 1 of 15, more than an
+// example exchange did.
+const CONTRAST_RULES = {
+    en: "- Never build a sentence as a set-up contrast: \"X is not (just) A; it is B\", \"not A, but B\", \"doesn't just A, it B\". Say plainly what X is or does.",
+    de: "- Never build a sentence as a set-up contrast: \"X ist kein A, sondern B\", \"nicht nur A, sondern auch B\", \"Es geht nicht um A, sondern um B\". Say plainly what X is or does.",
+};
+
+// How much the model may change. `rules` go into the prompt (with CONTRAST_RULES where
+// `contrasts` is set); `maxChange` is the largest
 // share of words a rewrite may change before it is refused (see wordDiff), and
 // minLength/maxLength bound its length relative to the original. `example` is one
 // exchange shown before the passage, per language: small models copy an example far
@@ -1252,10 +1276,10 @@ const REWORD_LEVELS = {
         },
     },
     medium: {
-        temperature: 0.8, maxChange: 1, minLength: 0.5, maxLength: 2,
+        temperature: 0.8, maxChange: 1, minLength: 0.5, maxLength: 2, contrasts: true,
         rules: [
             "- Rephrase every sentence in your own words, with different wording and structure. Keep the order of the ideas.",
-            "- Prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no \"not just X, but Y\".",
+            "- Prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no dramatic words or slogan-like lines.",
         ],
         example: {
             en: "With the new tool, reports take a lot less time. The team spent 6 weeks testing it.",
@@ -1263,10 +1287,10 @@ const REWORD_LEVELS = {
         },
     },
     strong: {
-        temperature: 0.9, maxChange: 1, minLength: 0.5, maxLength: 2,
+        temperature: 0.9, maxChange: 1, minLength: 0.5, maxLength: 2, contrasts: true,
         rules: [
             "- Rewrite the passage freely in your own words: you may split, merge or reorder sentences.",
-            "- Vary the sentence length, prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no \"not just X, but Y\".",
+            "- Vary the sentence length, prefer plain everyday words over formal ones, and say things directly: no empty emphasis, no dramatic words or slogan-like lines.",
         ],
         example: {
             en: "Reports are done much faster now. That's thanks to the new tool, which the team tried out for 6 weeks first.",
@@ -1365,6 +1389,13 @@ const STOCK_PATTERNS = {
         "streamlin(?:e|es|ed|ing)", "enhanc(?:e|es|ed|ing|ement)", "comprehensive", "crucial", "endeavou?rs?", "commenc(?:e|es|ed|ing)",
         "facilitat(?:e|es|ed|ing)", "interplay", "garner(?:s|ed|ing)?", "elucidat(?:e|es|ed|ing)", "encompass(?:es|ed|ing)?", "burgeoning",
         "dependable", "meaningful", "tangible (?:results|benefits|value|impact|outcomes)",
+        "culture of (?:vigilance|innovation|excellence|accountability|continuous (?:learning|improvement))",
+        "(?:first|last|critical|crucial|strong|vital|key) line of defen[cs]e", "proactive(?:ly)?", "peace of mind",
+        "resilient (?:workforce|team|organi[sz]ation|business|future)",
+        "quiet (?:resilience|strength|dignity|grace|determination)", "(?:genuine|real|deep|meaningful) human connection",
+        "this (?:experience|journey|opportunity) (?:has )?(?:taught|showed|shown|made (?:it )?clear to) me(?: that)?",
+        "(?:get|getting) (?:our|the) momentum back", "regain(?:s|ed|ing)? (?:our|the|some) momentum",
+        "(?:meets?|meeting|exceeds?) our (?:high )?standards", "your input (?:is|would be) (?:crucial|invaluable|key|essential|vital)", "your input matters",
         // Letters, chat replies and posts.
         "i hope (?:this|my) (?:e-?mail|message|note|letter) finds you well", "(?:wanted|want|am writing) to reach out", "i['\u2019]m reaching out",
         "(?:please )?(?:do not|don['\u2019]t) hesitate to", "feel free to", "i hope this(?: information)? helps", "great question",
@@ -1372,11 +1403,12 @@ const STOCK_PATTERNS = {
         "(?:require|need) (?:any )?further clarification", "(?:productive|fruitful) (?:discussion|collaboration|conversation)",
         "whether you(?:['\u2019]re| are) an? [\\p{L}-]+(?: [\\p{L}-]+)? or an?",
         "anything else (?:i can|you(?:['\u2019]d| would) like)", "would you like me to", "you['\u2019]re (?:absolutely|completely|totally) right",
-        "taken the liberty", "as an ai(?: language model)?", "i(?:['\u2019]d| would) be (?:happy|glad) to help",
+        "taken the liberty", "your trust is (?:very |extremely )?important to us", "we value your (?:business|patience|trust|loyalty)",
+        "(?:we )?apologi[sz]e for any inconvenience(?: (?:this|that) (?:may have )?caused)?", "rest assured", "as an ai(?: language model)?", "i(?:['\u2019]d| would) be (?:happy|glad) to help",
     ],
     de: [
         // Filler transitions and wrap-ups.
-        "dar\u00fcber hinaus", "des weiteren", "ferner", "\u00fcberdies", "nichtsdestotrotz", "letztendlich", "im gro\u00dfen und ganzen",
+        "dar\u00fcber hinaus", "des weiteren", "ferner", "\u00fcberdies", "nichtsdestotrotz", "letztendlich", "letztlich", "im gro\u00dfen und ganzen",
         "vor diesem hintergrund", "in diesem zusammenhang",
         "zusammenfassend(?: (?:l\u00e4sst sich|kann man|kann) (?:sagen|festhalten|feststellen|gesagt werden))?",
         "(?:abschlie\u00dfend|insgesamt) (?:l\u00e4sst sich|kann man|sei) (?:sagen|festhalten|feststellen|angemerkt|gesagt)",
@@ -1389,11 +1421,12 @@ const STOCK_PATTERNS = {
         "eintauchen", "in die welt (?:der|des|von)", "lassen sie uns", "lass(?:t)? uns (?:gemeinsam )?(?:eintauchen|einen (?:genaueren |n\u00e4heren )?blick)", "in diesem (?:artikel|beitrag|blogbeitrag|leitfaden) (?:beleuchten|erfahren|werfen|zeigen) (?:wir|sie)",
         // Framing newer models favour.
         "es geht nicht (?:nur |blo\u00df |einfach )?(?:um|darum)", "mehr als nur (?:ein|eine)", "eine (?:weitere|neue) dimension", "die wahrheit ist",
-        "das ergebnis\\?", "eines ist sicher",
+        "das ergebnis\\?", "eines ist sicher", "(?:die|meine) (?:gr\u00f6\u00dfte|wichtigste) (?:lektion|erkenntnis)[^.?!]{0,40}\\?",
         // Inflated significance.
         "(?:eine )?(?:entscheidende|zentrale|wesentliche|ma\u00dfgebliche|tragende) rolle", "schl\u00fcsselrolle", "tr(?:\u00e4gt|agen|ug|ugen) ma\u00dfgeblich",
         "unterstreich\\p{L}* (?:die|seine|ihre|deren) (?:bedeutung|wichtigkeit|relevanz)", "markier\\p{L}* einen (?:entscheidenden |wichtigen )?(?:wendepunkt|meilenstein)",
-        "schl\u00fcssel zum erfolg", "entscheidenden? knackpunkt", "vor (?:erhebliche|enorme|gro\u00dfe|neue|vielf\u00e4ltige) herausforderungen", "absolut (?:unverzichtbar|entscheidend|essenziell|unerl\u00e4sslich)",
+        "schl\u00fcssel zum erfolg", "(?:der |ein )?schl\u00fcssel zu[mr] (?:\\p{L}+ )?(?:erfolg|wettbewerbsf\u00e4higkeit|zukunft)", "strategische[nmrs]? hebel",
+        "resiliente[nmrs]? (?:organisation|unternehmen|team|belegschaft|zukunft)", "entscheidenden? knackpunkt", "vor (?:erhebliche|enorme|gro\u00dfe|neue|vielf\u00e4ltige) herausforderungen", "absolut (?:unverzichtbar|entscheidend|essenziell|unerl\u00e4sslich)",
         "(?:ein )?(?:eindrucksvolles |lebendiges )?zeugnis (?:f\u00fcr|von|daf\u00fcr)",
         // Openers.
         "in der heutigen (?:schnelllebigen |digitalen |modernen |vernetzten )?(?:welt|zeit|gesellschaft)", "im digitalen zeitalter", "im zeitalter der digitalisierung",
@@ -1404,15 +1437,17 @@ const STOCK_PATTERNS = {
         "vision\u00e4r\\p{L}*", "disruptiv\\p{L}*", "beispiellos\\p{L}*", "hochmodern\\p{L}*", "innovativ\\p{L}*", "essenziell\\p{L}*", "umfassend\\p{L}*",
         "mehrwert", "synergie\\p{L}*", "potenzial\\p{L}* (?:voll(?:st\u00e4ndig)? )?(?:aussch\u00f6pf|auszusch\u00f6pf|entfalt)\\p{L}*", "entfessel\\p{L}*",
         "auf (?:ein|das) (?:neues|n\u00e4chste) (?:level|niveau)", "game[- ]?changer",
-        "(?:digitalen?|dynamischen?|sich (?:st\u00e4ndig |stetig )?wandelnden?) landschaft", "sich (?:st\u00e4ndig|stetig) (?:wandelnd|ver\u00e4ndernd)\\p{L}*",
+        "(?:digitalen?|dynamischen?|sich (?:st\u00e4ndig |stetig )?wandelnden?) landschaft", "sich (?:st\u00e4ndig|stetig|rasch|schnell) (?:wandelnd|ver\u00e4ndernd)\\p{L}*",
         "unerl\u00e4sslich\\p{L}*", "reibungslos\\p{L}*", "unglaublich (?:inspirierend|spannend|wertvoll)\\p{L}*", "inspirierend\\p{L}*", "herzst\u00fcck",
         "die zukunft (?:gemeinsam )?(?:zu )?gestalten", "den wandel (?:aktiv )?(?:voran(?:zu)?treiben|gestalten)",
         "spannende zeiten", "es bleibt (?:abzuwarten|spannend)", "gekommen, um zu bleiben", "ein wichtiger schritt in die richtige richtung",
-        "steht (?:deinem|ihrem|eurem) erfolg nichts",
+        "steht (?:deinem|ihrem|eurem) erfolg nichts", "(?:diese|die) erfahrung hat mir gezeigt(?:, dass)?",
         // Letters, chat replies and posts.
         "selbstverst\u00e4ndlich", "z\u00f6ger(?:n sie|e|t) nicht", "(?:gerne )?m\u00f6chte ich ihnen mitteilen", "ich hoffe, (?:diese|meine) (?:e-?mail|nachricht)",
         "ich hoffe, (?:das|dies|diese informationen?) (?:hilft|helfen)", "gute frage", "m\u00f6chtest du, dass ich", "hier ist (?:eine|die) \u00fcberarbeitete",
-        "als ki-sprachmodell", "(?:du hast|sie haben) (?:v\u00f6llig|absolut|vollkommen) recht", "gespannt auf (?:eure|ihre|deine) (?:gedanken|meinung)",
+        "als ki-sprachmodell", "ihr vertrauen ist (?:uns|mir) (?:sehr |besonders )?wichtig", "wir (?:tun|setzen) alles (?:daf\u00fcr|daran)",
+        "(?:es ist (?:uns|mir) (?:sehr )?wichtig|ich freue mich|wir freuen uns|es freut (?:mich|uns)),? sie (?:auch )?weiterhin als kund(?:e|in|en)",
+        "f\u00fcr (?:weitere |etwaige )?(?:r\u00fcck)?fragen stehe(?:n)? (?:ich|wir) ihnen (?:jederzeit |gerne |gern )*zur verf\u00fcgung", "wir sch\u00e4tzen es,? dass sie", "(?:du hast|sie haben) (?:v\u00f6llig|absolut|vollkommen) recht", "gespannt auf (?:eure|ihre|deine) (?:gedanken|meinung)",
     ],
     fr: [
         "par ailleurs", "de plus(?=\\s*,)", "en outre", "en conclusion", "en somme", "en r\u00e9sum\u00e9", "en d\u00e9finitive", "d\u00e8s lors", "n\u00e9anmoins",
@@ -1460,10 +1495,50 @@ const STOCK_PATTERNS = {
     ],
 };
 
-// One pattern for the stock phrases of `lang` (of every language when it is unknown).
-function stockPhraseRe(lang) {
-    const list = STOCK_PATTERNS[lang] || Object.values(STOCK_PATTERNS).flat();
+// Set-up contrasts, matched with both halves: "training is not just a cost - it ...",
+// "didn't only feed us; it ...", "the weak spot isn't code; it's people", "more than
+// just food; it was ...", "is not a piece of code, but a person", the reversed "...,
+// not just a cost". Current models write them everywhere, and when told not to, swap
+// "just" for "only" or "simply", or put a full stop between the halves ("isn't just a
+// cost. It's ..."). They count as stock phrases, and at Medium and Strong a reply that
+// still has one is refused (acceptRewrite). Same rules as STOCK_PATTERNS.
+const CONTRAST_PATTERNS = {
+    en: [
+        "(?:\\p{L}+n['\u2019]t|not) (?:just|only|simply|merely|about) [^.;:!?]{1,60}?(?:,|;|\u2014|\u2013|\\s-)\\s*(?:but|it|they|this|that|we|i|he|she|you)",
+        "(?:\\p{L}+n['\u2019]t|not) (?:just|only|simply|merely) [^.;:!?]{1,60}?[.!] (?:instead,? )?(?:it|they|this|that)(?:['\u2019](?:s|re)| \\p{L}+(?!['\u2019]t))",
+        "(?:\\p{L}+n['\u2019]t|not) about [^.;:!?]{1,60}?[.!] (?:instead,? )?(?:it|they|this|that)(?:['\u2019](?:s|re)| is| are| was| were)",
+        "(?:is|are|was|were)(?:n['\u2019]t| not) [^.;:!?]{1,40}?(?:,|;|\u2014|\u2013|\\s-)\\s*(?:it|they|this|that)(?:['\u2019](?:s|re)| is| are| was| were)",
+        "(?:is|are|was|were)(?:n['\u2019]t| not) [^.;:!?]{0,30}?(?:just|only|simply|merely) [^.;:!?]{1,40}?[.!] (?:it|they|this|that)(?:['\u2019](?:s|re)| is| are| was| were)",
+        "(?:more than|beyond) (?:just|simply|merely) [^.;:!?]{1,60}?(?:(?:;|\u2014|\u2013|\\s-)\\s*|[.!] )(?:it|they|this|that)(?:['\u2019](?:s|re)| \\p{L}+)",
+        "(?<=,\\s{0,3})not (?:just|only|simply|merely)",
+        "(?<=(?:is|are|was|were) )not (?:about )?(?:a |an |the )?[\\p{L}\\p{N}'\u2019-]+(?: [\\p{L}\\p{N}'\u2019-]+){0,5},? but",
+    ],
+    // Only the rhetorical forms: "kein Titel, sondern ein Dienst", "nicht nur X, sondern
+    // auch Y", the halves split by a full stop. A plain correction ("nicht am Montag,
+    // sondern am Dienstag") is ordinary German and stays unflagged.
+    de: [
+        "kein(?:e[nmrs]?)? [^.;:!?]{1,50}?(?:,? sondern|[.!] (?:sondern|vielmehr|es geht vielmehr))",
+        "nicht (?:nur|blo\u00df|einfach|allein|lediglich) [^.;:!?]{1,60}?(?:,? sondern|[.!] (?:sondern|vielmehr|es geht vielmehr))",
+    ],
+};
+
+// One pattern for a list of phrase patterns (see STOCK_PATTERNS for the rules).
+function phraseListRe(list) {
     return new RegExp("(?<![\\p{L}\\p{N}])(?:" + list.join("|").replace(/ /g, "\\s+") + ")(?![\\p{L}\\p{N}])", "giu");
+}
+
+// The set-up contrasts in `text` (`lang`, or every language when it is unknown), as
+// written there.
+function findContrasts(text, lang) {
+    const list = lang ? CONTRAST_PATTERNS[lang] : Object.values(CONTRAST_PATTERNS).flat();
+    return list ? Array.from(String(text || "").matchAll(phraseListRe(list)), m => m[0]) : [];
+}
+
+// One pattern for the stock phrases of `lang` (of every language when it has no list),
+// set-up contrasts included.
+function stockPhraseRe(lang) {
+    const all = t => Object.values(t).flat();
+    return phraseListRe(STOCK_PATTERNS[lang] ? STOCK_PATTERNS[lang].concat(CONTRAST_PATTERNS[lang] || []) : all(STOCK_PATTERNS).concat(all(CONTRAST_PATTERNS)));
 }
 
 // The stock phrases in `text`, as [start, end) ranges, in order.
@@ -1534,6 +1609,7 @@ function buildRewriteSystem(level, tone, extra, lang, retry, phrases, drop) {
         "You edit one passage of text so it reads as if a person wrote it themselves.",
         "Rules:",
         ...lv.rules,
+        lv.contrasts ? CONTRAST_RULES[lang] || CONTRAST_RULES.en : null,
         "- Keep the meaning and every fact, name, number and quote, and address the reader as the passage does (formal or informal).",
         name ? `- The passage is in ${name}. Write your rewrite in ${name}.` : "- Write your rewrite in the language of the passage.",
         drop && drop.length ? `- Leave these sentences out entirely, they say nothing: ${drop.map(t => `"${t}"`).join(", ")}` : null,
@@ -1681,6 +1757,12 @@ function acceptRewrite(orig, reply, lang, level) {
     if (t.length / Math.max(1, o.length) > lv.maxLength) return { ok: false, reason: "reply much longer than the original" };
     const got = lang ? detectLanguage(t) : null;
     if (got && got !== lang) return { ok: false, reason: `the model answered in ${LANGUAGE_NAMES[got]} instead of ${LANGUAGE_NAMES[lang]}` };
+    // German: the reader is addressed as in the original. Sentence by sentence, Qwen3.8-27B
+    // turned "Sie" into "du" now and then, and a group ("eure") into one reader ("dich").
+    if (lang === "de") {
+        const was = addressForms(o), switched = [...addressForms(t)].filter(f => !was.has(f));
+        if (was.size && switched.length) return { ok: false, address: [...was][0], reason: `the model switched the form of address to "${switched[0]}"` };
+    }
     // Removing stock phrases is the job, so a reply with more of them than the original
     // ("Moreover, ...") is refused, naming the ones it brought in.
     const had = findStockPhrases(o, lang).map(([a, b]) => o.slice(a, b).toLowerCase());
@@ -1697,7 +1779,23 @@ function acceptRewrite(orig, reply, lang, level) {
         rest = Math.min(change, words ? 1 - wordDiff(cut, t).common / words : 0);
     }
     if (rest > lv.maxChange) return { ok: false, reason: `the model changed ${Math.round(change * 100)} % of the words, more than a light edit` };
+    // Past Light, a set-up contrast left in is refused, but softly: if the second try
+    // fails too, this reply is still better than the original, which has one as well.
+    const contrast = level === "light" ? null : findContrasts(t, lang)[0];
+    if (contrast) return { ok: false, soft: true, contrast, text: t, change, reason: `the reply still sets up a contrast ("${contrast}")` };
     return { ok: true, text: t, change };
+}
+
+// How German `text` addresses its reader: "du" (one reader), "ihr" (a group, "euch",
+// "eure") and "Sie" (formal: "Sie", "Ihnen", "Ihr" capitalised inside a sentence; at its
+// start they may mean "they" or "her"). The plural "ihr" itself is left out, as it is
+// also "her".
+function addressForms(text) {
+    const t = String(text || ""), forms = new Set();
+    if (/(?<![\p{L}])(?:du|dich|dir|dein|deine[mnrs]?)(?![\p{L}])/iu.test(t)) forms.add("du");
+    if (/(?<![\p{L}])(?:euch|euer|eure[mnrs]?)(?![\p{L}])/iu.test(t)) forms.add("ihr");
+    if (/(?<!(?:^|[.!?:]|["\u201e\u201c])\s*)(?<![\p{L}])(?:Sie|Ihnen|Ihre?[mnrs]?)(?![\p{L}])/u.test(t)) forms.add("Sie");
+    return forms;
 }
 
 // A unit shorter than this that comes back unchanged gets no second try: it is likely a
@@ -1716,6 +1814,8 @@ function retryNote(verdict, passage) {
         return "Your first answer repeated the passage word for word. This time, change at least one or two words in every sentence.";
     }
     if (verdict.reason === "empty reply") return "Your first answer was empty. Reply with the edited passage.";
+    if (verdict.address) return `Your first answer changed how the reader is addressed. The passage says "${verdict.address}"; keep exactly that form in every sentence.`;
+    if (verdict.contrast) return `Your first answer still set up a contrast ("${verdict.contrast}"). Say the point directly this time, with no "not just", "not only" or "not ..., but".`;
     return `Your first answer was refused (${verdict.reason}). Avoid that this time.`;
 }
 
@@ -2303,8 +2403,13 @@ if (typeof document !== "undefined") {
                             reword.retried += g.count;
                             setStatus(`Rewording ${k + 1} of ${groups.length}, second try…`, "busy");
                             reply = await rewordOne(g.text, signal, lang, context, { ...ropts, retry: note });
+                            const first = verdict;
                             verdict = acceptRewrite(g.text, reply, lang, ropts.level);
                             if (verdict.ok) reword.rescued += g.count;
+                            // Refused only for a contrast left in: still better than the original. The
+                            // first try is preferred: the second, hotter and pushed by the note, garbled
+                            // German ("Man baut Vertrauen nicht einfach so auf, sondern man legt es in den Alltag").
+                            else if (verdict.soft || first.soft) verdict = { ...(first.soft ? first : verdict), ok: true };
                         }
                         const cleaned = !verdict.ok ? null : opt.clean() ? cleanText(verdict.text) : { text: verdict.text, report: empty };
                         const core = cleaned && cleaned.text.trim();

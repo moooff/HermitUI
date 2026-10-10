@@ -5,7 +5,7 @@ import m from "./extract.mjs";
 import { check, section, report } from "./check.mjs";
 
 const { STOCK_PATTERNS, stockPhraseRe, findStockPhrases, countStockPhrases, cutStockPhrases, isStockOnly, deletionRange, buildRewriteMessages,
-    pickUnits, mulberry32, acceptRewrite, wordDiff, applyRewrites } = m;
+    pickUnits, mulberry32, acceptRewrite, wordDiff, applyRewrites, findContrasts, retryNote, addressForms } = m;
 
 const found = (text, lang) => findStockPhrases(text, lang).map(([s, e]) => text.slice(s, e));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -42,6 +42,12 @@ section("English");
         ["leverage", "unlock the full potential", "seamless", "cutting-edge"]));
     check("framing current models overuse", same(found("It's not just a tool. The tool is not simply a gadget. This matters because time counts.", "en"),
         ["It's not just", "is not simply", "This matters"]));
+    check("set-up contrasts, both halves", same(found("Training is not just a cost - it saves money. It didn't just feed us; it taught us. "
+        + "The weak spot is not a piece of code, but a person.", "en"), ["not just a cost - it", "didn't just feed us; it", "not a piece of code, but"]));
+    check("essay and e-mail cliches", same(found("This experience taught me that quiet resilience matters. Your input matters here, so we can get our momentum back and meet our high standards.", "en"),
+        ["This experience taught me that", "quiet resilience", "Your input matters", "get our momentum back", "meet our high standards"]));
+    check("business hype", same(found("It builds a culture of vigilance, a first line of defense and peace of mind.", "en"),
+        ["culture of vigilance", "first line of defense", "peace of mind"]));
     check("inflated significance and trailing -ing", same(found("It plays a crucial role in shaping the market, ensuring growth.", "en"),
         ["plays a crucial role", "ensuring"]));
     check("letters and chat replies", same(found("I hope this email finds you well. Please do not hesitate to call. Certainly! I hope this helps.", "en"),
@@ -58,6 +64,15 @@ section("Other languages");
         ["Dar\u00fcber hinaus", "ist es wichtig zu beachten", "Es ist wichtig zu beachten"]));
     check("German vocabulary and frames", same(found("Die L\u00f6sung l\u00e4sst sich nahtlos integrieren und spielt eine entscheidende Rolle. Es geht nicht nur um Zeit.", "de"),
         ["nahtlos", "eine entscheidende Rolle", "Es geht nicht nur um"]));
+    check("German business hype", same(found("Weiterbildung ist ein strategischer Hebel und der Schl\u00fcssel zur Wettbewerbsf\u00e4higkeit einer resilienten Organisation. Letztlich z\u00e4hlt das. Die gr\u00f6\u00dfte Lektion meines ersten Jahres? Zuh\u00f6ren.", "de"),
+        ["strategischer Hebel", "der Schl\u00fcssel zur Wettbewerbsf\u00e4higkeit", "resilienten Organisation", "Letztlich", "Die gr\u00f6\u00dfte Lektion meines ersten Jahres?"]));
+    check("German set-up contrasts", same(findContrasts("F\u00fchrung ist f\u00fcr mich kein Titel, sondern ein Dienst. Es ist nicht nur ein Kostenfaktor, sondern ein Hebel. "
+        + "Es dreht sich nicht allein darum, Programme zu lernen. Sondern es ver\u00e4ndert die Kultur.", "de"),
+        ["kein Titel, sondern", "nicht nur ein Kostenfaktor, sondern", "nicht allein darum, Programme zu lernen. Sondern"]));
+    check("...but a plain correction is ordinary German", findContrasts("Das Treffen ist nicht am Montag, sondern am Dienstag. Kein Problem.", "de").length === 0);
+    check("the contrast rule is in the passage's language only", /sondern/.test(buildRewriteMessages("Es ist kein Sprint.", "de", null, { level: "strong" })[0].content)
+        && !/sondern/.test(buildRewriteMessages("It is a race.", "en", null, { level: "strong" })[0].content)
+        && !/set-up contrast/.test(buildRewriteMessages("It is a race.", "en", null, { level: "light" })[0].content));
     check("German letters", same(found("Z\u00f6gern Sie nicht, mich anzurufen. Ich hoffe, diese Informationen helfen dir weiter!", "de"),
         ["Z\u00f6gern Sie nicht", "Ich hoffe, diese Informationen helfen"]));
     check("French", same(found("Par ailleurs, il convient de noter que le projet joue un r\u00f4le cl\u00e9. De plus en plus de gens.", "fr"),
@@ -92,7 +107,8 @@ section("The prompt names what it finds");
     check("none found: the general line with examples", /Cut or replace stock phrases, filler and hype, such as "moreover"/.test(sys("The team tested it for 6 weeks.", "en")));
     const many = "Moreover, moreover, MOREOVER the team tested " + ["furthermore", "additionally", "in conclusion", "notably", "seamless", "robust", "pivotal", "crucial", "vibrant"].join(" plus ") + " for six weeks.";
     const line = sys(many, "en").split("\n").find(l => /machine-written/.test(l));
-    check("each named once, at most eight", (line.match(/"/g) || []).length === 16 && (line.match(/moreover/gi) || []).length === 1, line);
+    const named = line.split(". Cut each one")[0];
+    check("each named once, at most eight", (named.match(/"/g) || []).length === 16 && (named.match(/moreover/gi) || []).length === 1, line);
     const ctx = sys("Prices rose.", "en", "Moreover, it is important to note that sales fell. Prices rose.");
     check("phrases in the context aren't named", !/machine-written/.test(ctx) && /The longer text:/.test(ctx), ctx);
     const de = sys("Dar\u00fcber hinaus ist es wichtig zu beachten, dass das Team es 6 Wochen getestet hat.", "de");
@@ -163,6 +179,48 @@ section("acceptRewrite: cutting stock phrases is the job");
     check("swapping one for another is not more of them", acceptRewrite("It is important to note that prices rose in May.", "Notably, prices rose in May.", "en", "light").ok);
     check("...also when the original starts like one, but differently", !acceptRewrite("Here's the thing: AI is quietly reshaping how small agencies work.",
         "Here is the revised passage: AI is quietly changing how small agencies work.", "en", "strong").ok);
+}
+
+section("German form of address");
+{
+    const forms = t => [...addressForms(t)].sort().join();
+    check("du, ihr and Sie told apart", forms("Was war eure Lektion?") === "ihr" && forms("Was hat dich gepr\u00e4gt?") === "du"
+        && forms("Melden Sie sich, wenn Ihnen etwas fehlt.") === "Sie", [forms("Was war eure Lektion?"), forms("Was hat dich gepr\u00e4gt?")].join(" / "));
+    check("'Sie' at a sentence start may be 'they'", forms("Sie kamen gestern an. Ihr Auto war kaputt.") === "");
+    check("a group turned into one reader: refused", !acceptRewrite("Was war eure gr\u00f6\u00dfte Lektion in eurer ersten F\u00fchrungsrolle?",
+        "Welche Erfahrung hat dich in deiner ersten F\u00fchrungsrolle am meisten gepr\u00e4gt?", "de", "medium").ok);
+    check("...and the second try is told which form to keep", /says "Sie"; keep exactly that form/.test(retryNote(acceptRewrite("Melden Sie sich, wenn Ihnen noch etwas fehlt.", "Melde dich, wenn dir noch etwas fehlt.", "de", "medium"), "x".repeat(30))));
+    check("Sie turned into du: refused", /form of address/.test(acceptRewrite("Melden Sie sich, wenn Ihnen noch etwas fehlt.", "Melde dich, wenn dir noch etwas fehlt.", "de", "medium").reason || ""));
+    check("same form, other words: accepted", acceptRewrite("Melden Sie sich, wenn Ihnen noch etwas fehlt.", "Sagen Sie Bescheid, falls Ihnen noch etwas fehlt.", "de", "medium").ok);
+    check("German service phrases", same(found("Ihr Vertrauen ist uns sehr wichtig, und wir tun alles daf\u00fcr. Es ist mir wichtig, Sie weiterhin als Kunde zu haben.", "de"),
+        ["Ihr Vertrauen ist uns sehr wichtig", "wir tun alles daf\u00fcr", "Es ist mir wichtig, Sie weiterhin als Kunde"]));
+}
+
+section("Set-up contrasts");
+{
+    check("found with both halves, whatever the adverb", same(findContrasts("It wasn't only about food; it was dignity. Service is not about charity, but about solidarity.", "en"),
+        ["wasn't only about food; it", "not about charity, but"]));
+    check("...also split into two sentences", same(findContrasts("Training isn't just a cost. It's survival. It isn't about charity. Instead, it's about solidarity.", "en"),
+        ["isn't just a cost. It's", "isn't about charity. Instead, it's"]));
+    check("...and without an adverb", same(findContrasts("The weak spot isn't code; it's people. Growth was not the goal, it was a side effect.", "en"),
+        ["isn't code; it's", "was not the goal, it was"]));
+    check("...'more than just', 'just' after a full stop, and reversed", same(findContrasts("It was more than just food; it was dignity. "
+        + "Empathy isn't something you just feel. It is work. Training is needed, not just a cost.", "en"),
+        ["more than just food; it was", "isn't something you just feel. It is", "not just"]));
+    check("...with any verb in the second half", same(findContrasts("A meal is more than just calories; it offers stability. It went beyond just food. It was dignity.", "en"),
+        ["more than just calories; it offers", "beyond just food. It was"]));
+    check("...'just' with any verb after the full stop", same(findContrasts("The food bank didn't just feed the community. It helped me grow.", "en"),
+        ["didn't just feed the community. It helped"]));
+    check("an explanation after a full stop is not a contrast", findContrasts("The shop wasn't open. It was Sunday.", "en").length === 0);
+    check("one half alone is not a contrast", findContrasts("It is not just me. It isn't late, and we can still go. It's not about money. It rained. I said so.", "en").length === 0);
+    check("no list for the language: none", findContrasts("Ce n'est pas seulement le temps, mais l'argent.", "fr").length === 0);
+    const o = "Training is not just an expense; it is an investment in the business.";
+    const left = acceptRewrite(o, "Training isn't just a cost - it pays for itself in the business.", "en", "strong");
+    check("left in past Light: a soft refusal that keeps the reply", !left.ok && left.soft && left.text && left.contrast === "isn't just a cost - it", JSON.stringify(left));
+    check("...and the second try is told which one", /"isn't just a cost - it"/.test(retryNote(left, o)) && /directly/.test(retryNote(left, o)));
+    check("at Light it is only the usual count", acceptRewrite("It isn't just a cost; it pays off over time.", "It isn't just a cost; it pays back over time.", "en", "light").ok);
+    check("one brought into a plain original: refused outright", !acceptRewrite("Training costs money and it pays off.", "Training isn't just a cost - it pays off.", "en", "strong").soft);
+    check("said directly: accepted", acceptRewrite(o, "Training costs money, and it pays for itself.", "en", "strong").ok);
 }
 
 report();
