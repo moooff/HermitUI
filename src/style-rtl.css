@@ -1,0 +1,8 @@
+/* Keep code blocks LTR even inside RTL content */
+[dir="rtl"] pre,
+[dir="rtl"] code,
+[dir="rtl"] .code-block,
+[dir="rtl"] table {
+    direction: ltr !important;
+    text-align: left !important;
+}

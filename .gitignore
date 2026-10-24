@@ -10,3 +10,6 @@ __pycache__/
 benchmark/models/
 benchmark/results/
 benchmark/.venv/
+/.vs
+/.gitignore
+/.gitignore
