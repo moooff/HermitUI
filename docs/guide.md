@@ -191,6 +191,8 @@ If it doesn't fit, cut in this order:
 
 This is about 10× the ~8 t/s the same model reaches in the [in-browser build](#qwen38-27b-in-the-browser).
 
+For a ready-made Windows launcher of the same setup on the smaller IQ3_S file, see [start-qwen38.ps1](start-qwen38.ps1). It sizes the context from the free VRAM and checks after start that nothing spilled into shared memory; [reports/llama-server-16gb-tuning.md](../reports/llama-server-16gb-tuning.md) has the measurements behind it.
+
 ### Cloud models (OpenRouter, OpenAI, Groq and others)
 1. **API URL:** the provider's chat completions endpoint (e.g. `https://openrouter.ai/api/v1/chat/completions`).
 2. **Model Name:** the model you want (e.g. `anthropic/claude-opus-4.8`); check the provider's model list for the exact name.
