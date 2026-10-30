@@ -558,6 +558,9 @@ pre.diff { font-size: 0.8rem; line-height: 1.45; overflow: auto; max-height: 60v
 .edit-old { border-left: 3px solid var(--danger); background: var(--danger-bg); }
 .edit-new { border-left: 3px solid var(--ok); background: var(--ok-bg); }
 .file-result pre.output { margin-top: 6px; }
+/* ask_llm: the request, then the answer marked off like a quote. */
+.llm-request { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
+.llm-answer { display: flex; flex-direction: column; gap: 8px; border-left: 3px solid var(--primary); padding-left: 12px; }
 
 /* A tool call while the model writes it, and a running step's output: both grow live. */
 .tool-previews { display: flex; flex-direction: column; gap: 10px; font-size: 0.86rem; }

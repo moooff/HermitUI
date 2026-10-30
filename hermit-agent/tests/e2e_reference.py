@@ -698,7 +698,7 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
     if task.get("library"):
         base["library_used"] = any(w in agent_code(page) for w in task["library"])
     if task.get("tools"):
-        used = ev(page, "() => [...new Set(S.timeline.filter(t => t.type === 'step').flatMap(t => (t.fileActions || []).map(a => a.tool)))]")
+        used = ev(page, "() => [...new Set(S.timeline.filter(t => t.type === 'step').flatMap(t => t.kind === 'llm' ? ['ask_llm'] : (t.fileActions || []).map(a => a.tool)))]")
         base["tools_used"] = [t for t in task["tools"] if t in used]
     if task.get("code_never"):
         hits = [w for w in task["code_never"] if w in agent_code(page)]
@@ -773,7 +773,7 @@ def main(all_tasks=None, quick=None, label="success"):
                 r["run"] = run
                 lib = "" if "library_used" not in r else (" · library used" if r["library_used"] else " · built WITHOUT the library")
                 if "tools_used" in r:
-                    lib += f" · file tools used: {', '.join(r['tools_used']) or 'none of ' + ', '.join(task['tools'])}"
+                    lib += f" · tools used: {', '.join(r['tools_used']) or 'none of ' + ', '.join(task['tools'])}"
                 if r.get("plans"):
                     lib += f" · plan {' → '.join(r['plans'])}"
                 if r.get("compactions"):

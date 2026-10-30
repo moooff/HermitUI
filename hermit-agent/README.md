@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.28** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.29** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (about 11 MB,
 > Python included), developed in this folder apart from the main app in [`../src/`](../src/).
 
@@ -72,6 +72,8 @@ The model can also run on another computer, with the agent on a phone, for examp
 
 The agent uses native tool calls where the server supports them (llama.cpp with `--jinja`, Ollama models with tool support) and ```` ```python ```` blocks in its reply with any other model ([DESIGN §5.6](DESIGN.md#56-native-tool-calls-built-in-phase-3)).
 
+For work on long text, the agent can send the model a separate request with the files, or the parts of them, it chooses: summarise a document, translate it, pull facts out of it, or give a second opinion. The model answers without the conversation and without tools, and only its answer goes back into the agent's context ([DESIGN §5.9](DESIGN.md#59-asking-the-model-ask_llm-added-in-v0329)).
+
 ## What it can make
 
 numpy, pandas, matplotlib and other Pyodide packages load on demand from the pinned Pyodide CDN. The standard library works offline, except sqlite3, lzma and ssl, which come from the same CDN.
@@ -94,7 +96,7 @@ openpyxl, XlsxWriter, odfpy, Markdown, tabulate and xmltodict need no Pyodide pa
 
 There is no telemetry, and opening the file makes no network request. Using it sends this, and nothing else:
 
-- **To the API Base URL you set:** the conversation, including what the agent reads from your files and what its code prints, plus the API key. Before the first request, and when the URL or model changes, the app also asks the server what it supports (`/models`, `/props`, `/api/show`), as does **Test Connection**.
+- **To the API Base URL you set:** the conversation, including what the agent reads from your files and what its code prints, the files it attaches to a separate request, plus the API key. Before the first request, and when the URL or model changes, the app also asks the server what it supports (`/models`, `/props`, `/api/show`), as does **Test Connection**.
 - **To jsDelivr (`cdn.jsdelivr.net/pyodide/...`):** only when agent code needs a Pyodide package that isn't in the file, such as numpy or pandas. jsDelivr sees your IP address and the package name, never the task or your files.
 
 Blocking the network for agent code is best effort: 17 known paths are tested and closed ([DESIGN §10](DESIGN.md#10-security)), but it is a denylist, not a guarantee. Don't put secrets in the workspace that you couldn't afford to leak. (The unbuilt `src/index.html` also loads its libraries and font from CDNs; `dist/` has them inlined.)

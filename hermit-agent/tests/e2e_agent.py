@@ -22,7 +22,7 @@ from playwright.sync_api import sync_playwright
 
 sys.stdout.reconfigure(line_buffering=True)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from mock_openai import SUMMARISER_MARK, serve  # noqa: E402
+from mock_openai import LLM_ANSWER, LLM_MARK, SUMMARISER_MARK, serve  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APP_URL = (ROOT / "dist" / "hermit-agent-standalone.html").as_uri()
@@ -268,6 +268,17 @@ plt.figure(); plt.plot([1, 1])
             calls(("write_file", {"path": "s.py", "content": "x = (\n"})),
             calls(("ask_user", {"question": "Unit?", "options": ["euros", "dollars"]})),
             calls(("finish", {"answer": "Done in dollars."})),
+        ],
+        # ask_llm (DESIGN §5.9): natively next to a call it doesn't run with; as a tag under
+        # Approve each step, then with a file that isn't there.
+        "E2E-ASKLLM-N": [
+            calls(("ask_llm", {"prompt": "Summarise the notes.", "files": ["notes.txt"]}), ("read_file", {"path": "notes.txt"})),
+            calls(("finish", {"answer": "The notes say hello."})),
+        ],
+        "E2E-ASKLLM-T": [
+            final('Asking.\n<ask_llm files="notes.txt:1-1">\nTranslate the notes.\n```python\nprint("not code")\n```\n</ask_llm>'),
+            final('<ask_llm files="nope.txt">\nAnd this one?\n</ask_llm>'),
+            final("Done."),
         ],
         # edit_file: a miss shows the closest lines, the retry copies them; relaxed matching.
         "E2E-CLOSEST": [
@@ -1203,6 +1214,57 @@ def native_filetools_scenario(browser, port, state):
     check("a .py that doesn't compile is reported in the tool result", "s.py doesn't compile at line 1" in m2[-1]["content"], m2[-1])
     m3 = reqs[3]["messages"]
     check("the clicked option is ask_user's result", m3[-1]["role"] == "tool" and m3[-1]["content"] == "dollars", m3[-1])
+    page.context.close()
+
+
+def ask_llm_scenario(browser, port, state):
+    print("— ask_llm: native and as a tag, a file whole and in part, Approve each step, a missing file")
+    notes = {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"hello from the notes\n"}
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    page.set_input_files("#wsFileInput", files=[notes])
+    wait_until(page, "() => WS.files.has('notes.txt')", 10, "upload")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-ASKLLM-N: go")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "native finish")
+    reqs = state.requests[n0:]
+    check("ask_llm is offered as a tool", "ask_llm" in [t["function"]["name"] for t in reqs[0]["tools"]])
+    sub = reqs[1]
+    user = sub["messages"][-1]["content"]
+    check("the request goes out alone: system + user, no tools, no history", len(sub["messages"]) == 2 and LLM_MARK in sub["messages"][0]["content"]
+          and "tools" not in sub and "E2E-ASKLLM" not in json.dumps(sub), sub)
+    check("…the file attached whole, the prompt last", user.startswith("File notes.txt:\n```\nhello from the notes\n```") and user.endswith("Summarise the notes."), user)
+    m = reqs[2]["messages"]
+    check("the answer is ask_llm's tool result", m[-2]["role"] == "tool" and LLM_ANSWER in m[-2]["content"] and 'status="ok"' in m[-2]["content"], m[-2:])
+    check("the read_file next to it waits, saying why", m[-1]["role"] == "tool" and "doesn't run in the same reply as ask_llm" in m[-1]["content"], m[-1])
+    check("the card shows the request and the answer", page.locator(".step-card .llm-request").first.is_visible() and LLM_ANSWER in page.locator(".step-card .llm-answer").first.inner_text())
+    check("…and the answering model's reasoning, apart from the step's", page.evaluate("() => S.timeline.find(t => t.kind === 'llm').llmReasoning") == "mock sub-thinking")
+    page.context.close()
+
+    page = open_app(browser)
+    configure(page, port, 10)
+    page.select_option("#autonomySelect", "approve")
+    page.set_input_files("#wsFileInput", files=[notes])
+    wait_until(page, "() => WS.files.has('notes.txt')", 10, "upload")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-ASKLLM-T: go")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'awaiting-approval'", 60, "ask_llm held")
+    card = page.locator(".step-card.phase-pending-run")
+    check("held before it is sent, with a Send button", card.locator("[data-action=run]").inner_text().strip() == "▶ Send" and len(state.requests) == n0 + 1)
+    check("…the request shows as text, its fence included", 'print("not code")' in card.locator(".llm-request pre").inner_text())
+    card.locator("[data-action=run]").click()
+    wait_until(page, "() => S.status === 'done'", 60, "text finish")
+    reqs = state.requests[n0:]
+    check("…only the lines the tag names, said so in the heading", reqs[1]["messages"][1]["content"].startswith("File notes.txt, lines 1-1 of 1:\n```\nhello from the notes\n```"), reqs[1]["messages"][1]["content"])
+    check("the tag's request carries its prompt with the fence", LLM_MARK in reqs[1]["messages"][0]["content"] and reqs[1]["messages"][1]["content"].endswith('Translate the notes.\n```python\nprint("not code")\n```'), reqs[1]["messages"][1]["content"])
+    obs = reqs[2]["messages"][-1]["content"]
+    check("the answer comes back in an observation", obs.startswith('<observation step="1" status="ok">') and LLM_ANSWER in obs, obs)
+    obs = reqs[3]["messages"][-1]["content"]
+    check("a missing file fails before anything is sent", "nope.txt is not a file in /workspace" in obs and 'status="error"' in obs and len(reqs) == 4, obs)
+    st = steps(page)
+    check("steps: approved answer, then the error", st[0]["kind"] == "llm" and st[0]["status"] == "ok" and st[0]["decision"] == "approved" and st[1]["status"] == "error", st)
     page.context.close()
 
 
@@ -2230,6 +2292,8 @@ def main():
                     filetools_scenario(browser, port, state, downloads=not exe)
                 if want("native_filetools"):
                     native_filetools_scenario(browser, port, state)
+                if want("ask_llm"):
+                    ask_llm_scenario(browser, port, state)
             except AssertionError as e:
                 check(f"{name}: scenario completed", False, str(e))
             finally:

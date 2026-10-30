@@ -132,6 +132,18 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   survive an import); `planReminder` (from step 2 on, only without a
   plan, once, worded per protocol, the flag kept by an import).
 
+- **`askllm.test.mjs`** covers `ask_llm` (DESIGN §5.9): the tool definition and both
+  system prompts; native calls (files normalised and deduplicated, a comma-separated
+  string, unsafe paths, no prompt, too many files); line ranges (`parseLlmFileSpec`:
+  first-last, one line, to the end, bad ranges) and what runs next to `run_python`,
+  file tools, a second `ask_llm` and `update_plan`; the `<ask_llm>` tag (a fence inside it
+  isn't code, two tags, unclosed, next to code or file actions, inside a written file,
+  with a plan) and a tag in native text; the text form of a native call round-tripping;
+  `gatherLlmFiles` (missing, binary, over the size limit, only the named lines, an end
+  past the file, a start after it); `buildLlmMessages` (files first, a range named in the
+  heading, a longer fence when a file holds one); `clipLlmAnswer`; both guards; and
+  `validateSession` and the transcript.
+
 - **`guard.test.mjs`** covers the loop guard (DESIGN §5.8): `actionSignature` (code
   trimmed, file actions without call ids, nothing for a reply that runs nothing),
   `repeatsBefore` (a different action, a note or a compaction in between ends the
@@ -333,6 +345,15 @@ it stall, on cue; see its docstring):
     that writes and a `write_file` are rolled back or refused with the reason, nothing
     is written; a step with a plan pauses with 👍 Approve the plan; approving tells the
     model, and the next write is applied.
+28. **ask_llm** (`ask_llm`, DESIGN §5.9): natively, the request goes out on its own
+    (system prompt and one user message, no tools, nothing of the task), with the file
+    attached whole before the prompt; the answer is the call's tool result, and a
+    `read_file` in the same reply waits with a reason; the card shows the request, the
+    answer and the answering model's reasoning. As a tag under Approve each step, it is
+    held with ▶ Send before anything goes out, only the lines it names are sent and the
+    heading says which, a fence in the request is sent as text,
+    the answer comes back in an observation, and a missing file fails the step before
+    any request.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters

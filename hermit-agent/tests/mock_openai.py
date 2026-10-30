@@ -9,7 +9,8 @@ History compaction: the summariser's request (recognised by its system prompt) g
 SUMMARY back, and a compacted history's `<history_summary steps="1-K">` adds K to the
 turn count, since those K assistant messages are gone. A reply marked
 `overflow_unless_compacted` answers a 400 context-size error until the history has
-been compacted. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
+been compacted. An ask_llm request (also recognised by its system prompt) gets
+LLM_ANSWER back, after some reasoning. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
 (the mock's /props reports n_ctx 4096). Under /vllm/v1 it acts like vLLM: no /props,
 the context size (2048) only in the model list's `max_model_len`, models `owned_by`
 "vllm", and tool calling not enabled (any request with `tools` gets vLLM's 400).
@@ -41,6 +42,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SUMMARY = "## Task\nMock task.\n## Done so far\nMOCK-SUMMARY of the earlier steps."
 SUMMARISER_MARK = "You compress the history of an AI agent's session"
+LLM_ANSWER = "MOCK-LLM-ANSWER: the notes say hello."
+LLM_MARK = "You answer one request from an AI agent"
 
 
 class MockState:
@@ -172,6 +175,8 @@ def make_handler(state):
             first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
             if msgs and SUMMARISER_MARK in msgs[0]["content"]:
                 reply = {"content": SUMMARY}
+            elif msgs and LLM_MARK in msgs[0]["content"]:
+                reply = {"reasoning": "mock sub-thinking", "content": LLM_ANSWER}
             else:
                 compacted = re.search(r'<history_summary steps="1-(\d+)">', first_user)
                 turn = sum(1 for m in msgs if m["role"] == "assistant") + (int(compacted.group(1)) if compacted else 0)

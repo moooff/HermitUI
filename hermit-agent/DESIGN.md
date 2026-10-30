@@ -452,6 +452,8 @@ The model answers in one of three ways:
   of them; the card shows them as buttons, and one click answers with that text (the
   user can still type their own). More than 6, or a lone list line, stays plain text.
   Natively, `ask_user` takes `options`; both are shown as text, never HTML.
+- *v0.3.29:* an `<ask_llm>` request to a fresh instance of the model, alone in its reply
+  (§5.9).
 
 Why this is the baseline: it works with *any* chat model and any OpenAI-compatible
 endpoint, needs no tool-calling support, and small models handle it far better than
@@ -808,6 +810,7 @@ already emits the shape a tool call will produce, `{ tool, args }`, which
 | `move_file` *(3.6)* | `path`, `new_path` |
 | `ask_user` | `question`; *(3.6)* `options`: up to 6 strings |
 | `update_plan` *(3.7)* | `plan`: array of `{ step, status }`, status `pending` / `in_progress` / `completed` (§5.7) |
+| `ask_llm` *(v0.3.29)* | `prompt` (string), `files`: up to 20 paths, each optionally with a line range (`"report.txt:120-180"`), optional (§5.9) |
 
 *As built (Phase 3):*
 - **Setting:** Settings → *Actions*: **Auto** (default), *Native tool calls*, or *Code blocks
@@ -966,6 +969,62 @@ times with the same input). Small in-browser models (Phase 4) do it more.
     of the same kind are normal debugging; even Qwen3.8-27B fixed the app task's CLI after
     three failed tries.
   - Like `step.sig`, `step.errSig` isn't imported.
+- `ask_llm` steps (§5.9) count like any other: the same prompt and files three times in a
+  row isn't sent again, and a failed request's error is its first line.
+
+### 5.9 Asking the model: `ask_llm` *(added in v0.3.29)*
+One request to a fresh instance of the language model: the prompt plus the text files,
+or the lines of them, that the agent lists, without the history, the task or any tools.
+Nothing is attached that the agent didn't name. Only the answer comes
+back, as the step's observation. It is for work on text that would otherwise fill the
+agent's own context or that code can't do: summarising, translating or extracting from
+long documents, or a second opinion. Not a subagent: the answering model can't act, read
+more files or ask back, so there is no second loop to supervise. (Amp's "oracle" and
+Claude Code's WebFetch, which hands a page and a prompt to a model and keeps only its
+answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
+- **Both protocols.** Natively the tool `ask_llm(prompt, files)`; in code-as-action an
+  `<ask_llm files="a.txt, docs/b.md">` tag at the start of a line, the request up to
+  `</ask_llm>` (`extractLlmCall`). Each entry of `files` is a path (the whole file) or a
+  path with the lines to send (`parseLlmFileSpec`): `report.txt:120-180`,
+  `report.txt:120` for one line, `report.txt:400-` to the end, numbered as `read_file`
+  shows them. The prompts tell the model to send only what the request needs. The tag is read after the file actions and before the
+  code fences, so a fence in the request is part of it, and an `<ask_llm>` inside a
+  written file's content is content. Both end in `llmCallFromArgs`: the prompt trimmed,
+  the paths checked like file actions' (`normalizeActionPath`), the entries written back
+  normalised and deduplicated (two ranges of one file are two entries), at most
+  `LIMITS.llmMaxFiles` (20). A native call written out as text (`toolCallAsText`) is the
+  tag, so a protocol switch keeps it.
+- **One per reply, alone**, like `run_python`: next to code or file actions the tag makes
+  the reply `mixed` and nothing runs; natively the first action call decides (§5.6) and
+  the other calls get a reason. Only the first of several tags is sent, with a note. A
+  plan goes along with it.
+- **The request** (`buildLlmMessages`): a short system prompt (`LLM_SYSTEM_PROMPT`: one
+  request from an agent, answer it directly, no follow-up questions, no tools), then one
+  user message with each file as `File <path>:` (`File <path>, lines 120-180 of 600:` for
+  a range) and a fence longer than any inside it, the prompt last. Same endpoint, model, reasoning level and `max_tokens` as the agent's
+  own requests; no `tools`. It goes through `requestWithRetry`, so an outage is retried
+  the same way, and Stop aborts it.
+- **The files** (`gatherLlmFiles`) come from the canonical workspace, whole or the lines
+  named (an end past the last line stops there): a path that isn't a file, a binary file
+  (with advice to extract its text with Python first), a range that starts after the
+  file's end, or more than `LIMITS.llmMaxChars` (200,000) characters sent with the
+  prompt fails the step before anything is sent. A context overflow from the server comes back as an error
+  that says to attach less or split the work.
+- **The answer** goes back whole up to `LIMITS.llmMaxAnswerChars` (16,000 characters),
+  then cut with a note (`clipLlmAnswer`); `truncateOutput`'s head-and-tail would cut it
+  in the middle. One cut by the token limit is kept with a note; an empty one (all
+  reasoning, say) is an error. The answering model's reasoning stays out of the history.
+- **Supervision.** It changes nothing in the workspace, so there is no effect to gate:
+  Auto, Autopilot and Plan first send it straight away. Approve each step holds it before
+  it is sent (`pending-run`, ▶ Send or Reject). Its data only goes to the endpoint the
+  agent already talks to. The answer is model output like any other: the card renders it
+  through `renderMarkdown` (DOMPurify), the request as text.
+- **Timeline and export.** The card shows the files and the request (collapsed once
+  answered), the answer while it streams (as a running step's live output) and when
+  done, and the answering model's reasoning and stats collapsed. The step keeps
+  `llmPrompt`, `llmFiles`, `llmReasoning`, `llmStats` and the answer as `output`; the
+  session format stays 2 (the fields are optional), and the transcript shows the request
+  and the answer. The tokens count toward the session's totals.
 
 ---
 

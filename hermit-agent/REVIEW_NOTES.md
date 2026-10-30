@@ -476,6 +476,25 @@ From comparing pi, opencode and Claude Code (opencode's `doom_loop`).
 - **A step that sends a plan pauses the run**, even a plan sent alongside code that only
   read. A model that answers without a plan (a plain question) just finishes.
 
+## ask_llm (v0.3.29, 2026-10-30), decided while building it
+
+- ⭐ **The same endpoint and model answer.** The point is a fresh context, not a
+  stronger model. Alternative: an optional "model for ask_llm" setting (Amp's oracle
+  asks a stronger reasoning model), which works on OpenRouter or a router-mode
+  llama-server but not on a server with one model loaded.
+- ⭐ **No approval outside Approve each step.** It changes no file, and the data only
+  goes to the endpoint the agent already sends everything to. Alternative: hold it in
+  Auto too, since a cloud endpoint bills each request.
+- **One request per reply, run alone**, like `run_python`. Alternative: let it run in a
+  batch with file tools, or several requests in parallel (a map over many files),
+  which a single-slot llama.cpp server would queue anyway.
+- **Files as `path` or `path:first-last` strings**, text only, 200,000 characters sent
+  with the prompt. A string works the same in the tag and the tool, and llama.cpp's
+  grammar needs no `anyOf`. Alternative: objects `{path, start_line, end_line}` like
+  `read_file`'s arguments in the native tool.
+- **The answer is cut at 16,000 characters**, not head plus tail. Alternative: save a
+  long answer to a file and return its path.
+
 ## Text encodings (v0.3.12, 2026-10-23), decided while building it
 
 - ⭐ **A Windows-1252 file keeps its encoding** (option (b) of 2026-10-09). Before, a

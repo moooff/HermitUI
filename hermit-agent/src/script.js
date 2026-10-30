@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.28";
+const APP_VERSION = "0.3.29";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -59,7 +59,7 @@ const BUNDLED_LIBRARIES = {
 const SESSION_FORMAT = "hermit-agent-session";
 // 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
 const SESSION_FORMAT_VERSION = 2;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxScanChars: 65536, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200, planMaxItems: 12, planMaxStepChars: 200, planReminderStep: 2, repeatLimit: 3, errorRepeatWarn: 3, errorRepeatPause: 5, compactFocusChars: 300, thrashCompactions: 3, thrashSteps: 4 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxScanChars: 65536, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200, planMaxItems: 12, planMaxStepChars: 200, planReminderStep: 2, repeatLimit: 3, errorRepeatWarn: 3, errorRepeatPause: 5, compactFocusChars: 300, thrashCompactions: 3, thrashSteps: 4, llmMaxFiles: 20, llmMaxChars: 200000, llmMaxAnswerChars: 16000 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -372,8 +372,9 @@ function buildSystemPrompt(instructions, packages, protocol, timeoutSec) {
 Every reply must be exactly ONE of:
 1. Short reasoning, then exactly ONE \`\`\`python code block. It is executed and you get its output back in an <observation> message. Write nothing after the code block. Only \`\`\`python blocks are executed. To show output, data or other non-Python text, use a \`\`\`text block.
 2. Short reasoning, then one or more file actions (see below). They are applied in order and you get the results back in an <observation> message. Never put file actions and a \`\`\`python block in the same reply.
-3. The final answer for the user, with NO python code block and no file actions, once the task is complete. Mention the files you created.
-4. A line starting with "ask:" followed by your question, if you cannot continue without information from the user. To offer choices, put each one on its own line after the question, starting with "- " (at most 6); the user can still answer in their own words.
+3. Short reasoning, then one <ask_llm> request (see below). You get the answer back in an <observation> message.
+4. The final answer for the user, with NO python code block and no file actions, once the task is complete. Mention the files you created.
+5. A line starting with "ask:" followed by your question, if you cannot continue without information from the user. To offer choices, put each one on its own line after the question, starting with "- " (at most 6); the user can still answer in their own words.
 Any of these may also carry your plan (see <update_plan> below).
 
 File actions read, search and change files in /workspace directly. Prefer them over Python for finding text, and for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. Start each tag on its own line:
@@ -400,6 +401,12 @@ the replacement text
   Moves or renames a file or a folder, binary files too. Nothing may exist at new_path yet: to replace a file, delete it first, in the same reply.
 Paths are relative to /workspace. If any write, edit, delete or move in a reply fails, none of that reply's changes are applied. A .py file you write or edit is checked for syntax errors, and you are told if it doesn't compile.
 
+A request to a fresh instance of the language model, for work on text: summarising, translating or extracting from long documents without reading them yourself, or a second opinion:
+<ask_llm files="report.md:120-180, notes/meeting.txt">
+the complete request
+</ask_llm>
+  It sees only the request and what you list in files (optional): a text file in full, or with :first-last only those lines (numbered as <read_file> shows them). Send only what the request needs. It doesn't see this conversation or the task, and it has no tools. Its answer comes back to you, not to the user. Use Python for anything code can compute.
+
 Your plan, which the user sees above your steps:
 <update_plan>
 - [x] a step that is done
@@ -421,11 +428,12 @@ You act only through tool calls. Your message text is never executed: a \`\`\`py
 The tools (you get each call's result back in an <observation>):
 - run_python: runs Python code. Code you run is not saved: to create a file, use write_file (or write it from your code).
 - read_file, search_files, write_file, edit_file, delete_file, move_file: read, search and change files in /workspace directly. Prefer them over Python for finding text, and for reading, creating and editing source code, documents and other text files. Use Python to run code, process data and handle binary files. read_file shows at most 400 lines at a time: ask for more with start_line. Each old_text of edit_file must match the file exactly, indentation included, and occur exactly once. A .py file you write or edit is checked for syntax errors, and you are told if it doesn't compile.
+- ask_llm: sends one request to a fresh instance of the language model and gives you its answer, for work on text: summarising, translating or extracting from long documents without reading them yourself, or a second opinion. It sees only the prompt and the files you attach, whole or only the lines you name ("report.txt:120-180"): not this conversation, not the task, and it has no tools. Send only what the request needs. Use run_python for anything code can compute.
 - finish: ends the task with your final answer for the user, once the task is complete. Mention the files you created. Answers to questions go here too, code examples included.
 - ask_user: asks the user a question, if you cannot continue without information from them. Offer options when the answer is one of a few choices.
 - update_plan: keeps your plan, which the user sees above your steps. For a task of more than three or four steps, send it at the start, and again (the whole list, updated) whenever a step is done or the plan changes. Skip it for short tasks.
 
-Each reply is ONE step: one run_python call, OR one or more file tool calls (applied in order; if any write, edit, delete or move fails, none of that reply's changes are applied), OR finish, OR ask_user. Don't combine run_python with other tools in one reply: only the first action runs. An update_plan call can go along with any of them.
+Each reply is ONE step: one run_python call, OR one ask_llm call, OR one or more file tool calls (applied in order; if any write, edit, delete or move fails, none of that reply's changes are applied), OR finish, OR ask_user. Don't combine run_python or ask_llm with other tools in one reply: only the first action runs. An update_plan call can go along with any of them.
 
 Rules:
 - Inspect files before you modify them.
@@ -489,22 +497,26 @@ function splitReply(raw, isFinal) {
 // Next to file actions such a tag runs nothing either: the actions apply, and strayTag
 // names it so the step can say so. File actions and a python block in one reply are
 // "mixed": nothing runs.
+// An <ask_llm> request (kind "llm") runs alone: next to code or file actions it is "mixed".
 // An <update_plan> block goes along with any of these (plan, planError, planWarning);
 // alone, or with prose while steps are still open, it is kind "plan".
-// Returns { kind: code|files|mixed|ask|final|plan|broken|cutoff|empty|toolcall|fakeobs, ... }.
+// Returns { kind: code|files|llm|mixed|ask|final|plan|broken|cutoff|empty|toolcall|fakeobs, ... }.
 function parseReply(text, finishReason) {
     // File-action tags come out first, so fences inside a file's content aren't code.
     const fa = extractFileActions(text);
+    // Then <ask_llm>, so a fence in its request isn't code either (DESIGN §5.9).
+    const lc = extractLlmCall(fa.rest);
     // The plan rides along with any kind of reply (DESIGN §5.7).
-    const pl = extractPlan(fa.rest);
+    const pl = extractPlan(lc.rest);
     const t = pl.rest;
-    const parsed = parseReplyText(t, fa, pl, finishReason);
+    const parsed = parseReplyText(t, fa, pl, finishReason, lc);
     return pl.found ? { ...parsed, plan: pl.plan, planError: pl.error, planWarning: pl.warning } : parsed;
 }
 
-function parseReplyText(t, fa, pl, finishReason) {
+function parseReplyText(t, fa, pl, finishReason, lc) {
     if (pl.unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim(), unclosed: "update_plan" };
     if (fa.unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim(), unclosed: fa.unclosed };
+    if (lc && lc.unclosed) return { kind: finishReason === "length" ? "cutoff" : "broken", prose: t.trim(), unclosed: "ask_llm" };
     const fences = [...t.matchAll(/```(?:python3?|py)[ \t]*\r?\n([\s\S]*?)```/g)];
     const tags = [...t.matchAll(/^[ \t]*<python>[ \t]*(?:\r?\n)?([\s\S]*?)<\/python>/gm)];
     const inTag = (m) => tags.some(g => m.index > g.index && m.index < g.index + g[0].length);
@@ -517,6 +529,11 @@ function parseReplyText(t, fa, pl, finishReason) {
     // A tool call in the model's own spelling, at the start of a line.
     // ("<run script=…>" names a "run" tag: a space before "script" starts an attribute.)
     const toolTag = /^[ \t]*<(tool_call|function_call|function=|(?:run|exec(?:ute)?)(?:[ _-]?(?:python|code)|[_-]?script)?|code_(?:interpreter|execution)|bash|shell|terminal)\b/im;
+    // An <ask_llm> request runs alone.
+    if (lc && lc.found) {
+        if (fa.actions.length || blocks.length || unclosed) return { kind: "mixed", prose: t.trim(), with: "ask_llm" };
+        return { kind: "llm", prompt: lc.prompt, files: lc.files, count: lc.count, prose: t.trim(), ...(lc.error ? { error: lc.error } : {}) };
+    }
     if (fa.actions.length) {
         if (blocks.length || unclosed) return { kind: "mixed", prose: t.trim(), actionCount: fa.actions.length };
         const stray = t.match(toolTag);
@@ -642,9 +659,9 @@ function copyMessage(m) {
 
 // ---------- Native tool calls (DESIGN §5.6) ----------
 // The tools offered when the endpoint supports OpenAI `tools`. The file tools take the
-// argument shapes applyFileActions consumes; run_python, ask_user and finish are the
-// code block, the ask: line and the final answer of code-as-action.
-const AGENT_TOOL_NAMES = ["run_python", "read_file", "search_files", "write_file", "edit_file", "delete_file", "move_file", "update_plan", "ask_user", "finish"];
+// argument shapes applyFileActions consumes; run_python, ask_llm, ask_user and finish are
+// the code block, the <ask_llm> tag, the ask: line and the final answer of code-as-action.
+const AGENT_TOOL_NAMES = ["run_python", "read_file", "search_files", "write_file", "edit_file", "delete_file", "move_file", "ask_llm", "update_plan", "ask_user", "finish"];
 function agentToolDefs() {
     const fn = (name, description, properties, required) => ({ type: "function", function: { name, description, parameters: { type: "object", properties, required } } });
     const path = { type: "string", description: "Path relative to /workspace, e.g. \"data/report.md\"" };
@@ -665,6 +682,9 @@ function agentToolDefs() {
         fn("delete_file", "Delete a file, or a folder with everything in it.", { path }, ["path"]),
         fn("move_file", "Move or rename a file or a folder (binary files too). Nothing may exist at new_path yet: to replace a file, delete it first, in the same reply.",
             { path, new_path: { type: "string", description: "The new path, relative to /workspace" } }, ["path", "new_path"]),
+        fn("ask_llm", "Send one request to a fresh instance of the language model and get its answer back. It sees only the prompt and the files you attach: not this conversation, not the task, and it has no tools. For work on text: summarise, translate or extract from long documents without reading them yourself, or get a second opinion. Send only what the request needs. Use run_python for anything code can compute.",
+            { prompt: { type: "string", description: "The complete request, with everything the model needs to know" },
+                files: { type: "array", maxItems: LIMITS.llmMaxFiles, items: { type: "string" }, description: "Optional: text files in /workspace to attach. A path sends the whole file; a path with a line range sends only those lines: \"report.txt:120-180\", \"report.txt:120\" (one line), \"report.txt:400-\" (to the end)" } }, ["prompt"]),
         fn("update_plan", "Keep a short plan of the task, which the user sees above the steps. Send the whole list each time, with each step's status: at the start of a task of more than three or four steps, and again when a step is done or the plan changes. It can go along with any other call in the same reply and runs nothing by itself.",
             { plan: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", properties: { step: { type: "string", description: "One short line" }, status: { type: "string", enum: ["pending", "in_progress", "completed"] } }, required: ["step", "status"] } } }, ["plan"]),
         fn("ask_user", "Ask the user a question when you cannot continue without their input. The task pauses until they answer.",
@@ -884,6 +904,7 @@ function actionSignature(parsed) {
     if (!parsed) return "";
     if (parsed.kind === "code" && typeof parsed.code === "string") return "code:" + parsed.code.trim();
     if (parsed.kind === "files" && Array.isArray(parsed.actions)) return "files:" + JSON.stringify(parsed.actions.map(a => [a.tool, a.args]));
+    if (parsed.kind === "llm") return "llm:" + JSON.stringify([parsed.prompt, parsed.files]);
     return "";
 }
 
@@ -901,15 +922,17 @@ function repeatsBefore(timeline, sig) {
 
 // What the model is told when its action repeats the last `reps` steps and isn't run.
 function repeatAdvice(kind, reps, native) {
-    return `This is the same ${kind === "files" ? "set of file actions" : "code"} as your last ${reps} steps, so it was not run again: it would give the same result. Read that result, then try a different approach, or ${native ? "call ask_user" : "ask the user (ask:)"} if you are stuck.`;
+    return `This is the same ${kind === "files" ? "set of file actions" : kind === "llm" ? "ask_llm request" : "code"} as your last ${reps} steps, so it was not run again: it would give the same result. Read that result, then try a different approach, or ${native ? "call ask_user" : "ask the user (ask:)"} if you are stuck.`;
 }
 
 // The error-repeat guard: a stuck model more often resends a small variation that fails
 // the same way than the identical action. A failed step's error as a string: its failing
-// file actions (tool and path; the messages vary with the closest text they show), or
-// the last line its code printed (the exception). "" for a step that didn't fail.
+// file actions (tool and path; the messages vary with the closest text they show), the
+// first line of a failed ask_llm, or the last line its code printed (the exception). ""
+// for a step that didn't fail.
 function errorSignature(step) {
     if (!step || step.status !== "error") return "";
+    if (step.kind === "llm") return "llm:" + String(step.output || "").split("\n")[0].slice(0, 300);
     if (Array.isArray(step.fileActions)) {
         const failed = step.fileActions.filter(a => !a.ok).map(a => a.tool + " " + (a.path || ""));
         return failed.length ? "files:" + failed.join(", ") : "";
@@ -939,6 +962,7 @@ function errorRepeatAdvice(sig, count, native) {
         const edit = /(^|, )edit_file /.test(what) ? " For edit_file, read the file again with read_file and copy the text to replace exactly from what it shows, or rewrite the whole file with write_file." : "";
         return `Your file actions (${what}) have now failed ${count} times in a row. Sending small variations of the same action won't fix it.${edit} Otherwise try a different approach, or ${ask} if you are stuck.`;
     }
+    if (sig.startsWith("llm:")) return `Your ask_llm requests have now failed ${count} times in a row (${sig.slice(4)}). Sending small variations of the same request won't fix it: try a different approach, or ${ask} if you are stuck.`;
     const err = sig.slice(5);
     return `Your code has now failed ${count} times in a row with the same error${err ? ` (${err})` : ""}. Another small variation of the same fix won't help: check your assumptions (print the data or object you are working with), try a different approach, or ${ask} if you are stuck.`;
 }
@@ -989,10 +1013,105 @@ function currentPlan(timeline) {
     return null;
 }
 
+// ---------- ask_llm (DESIGN §5.9) ----------
+// A request to a fresh instance of the model: the prompt plus whole text files from the
+// workspace, no history, no tools. Only the answer goes back to the agent.
+
+// One entry of files: a path, or a path with the lines to send ("report.txt:120-180",
+// "report.txt:120" for one line, "report.txt:120-" to the end). Returns { path, start,
+// end (0: to the end), spec: the entry written back normalised } or { error }.
+function parseLlmFileSpec(raw) {
+    const m = String(raw).trim().match(/^(.*?)(?::(\d+)(?:-(\d*))?)?$/);
+    const path = normalizeActionPath(m[1]);
+    if (!path) return { error: `Unsafe path ${JSON.stringify(String(raw).slice(0, 100))} in files: use a relative path inside /workspace.` };
+    if (m[2] === undefined) return { path, start: 1, end: 0, spec: path };
+    const start = Number(m[2]), end = m[3] === undefined ? start : m[3] === "" ? 0 : Number(m[3]);
+    if (start < 1 || (end && end < start)) return { error: `${JSON.stringify(String(raw).slice(0, 100))} is not a line range: write path:first-last, with lines counted from 1 (e.g. "report.txt:120-180").` };
+    return { path, start, end, spec: `${path}:${start}` + (end === start ? "" : "-" + (end || "")) };
+}
+
+// The request's checked arguments, from either protocol: { prompt, files (specs), error? }.
+// files: a list of entries, or (as a tag attribute writes it) a comma-separated string.
+function llmCallFromArgs(prompt, files) {
+    const out = { prompt: typeof prompt === "string" ? prompt.trim() : "", files: [] };
+    const list = Array.isArray(files) ? files : typeof files === "string" ? files.split(",") : [];
+    if (files !== undefined && files !== null && !Array.isArray(files) && typeof files !== "string") out.error = "files must be a list of paths, e.g. [\"notes.txt\", \"report.txt:120-180\"].";
+    for (const raw of list) {
+        if (typeof raw !== "string" || !raw.trim()) continue;
+        const f = parseLlmFileSpec(raw);
+        if (f.error) { out.error = out.error || f.error; continue; }
+        if (!out.files.includes(f.spec)) out.files.push(f.spec);
+    }
+    if (out.files.length > LIMITS.llmMaxFiles) out.error = out.error || `${out.files.length} files are more than the ${LIMITS.llmMaxFiles} one request can attach: split the work into several requests.`;
+    if (!out.prompt) out.error = "ask_llm needs a prompt: the complete request, with everything the model needs to know.";
+    return out;
+}
+
+// The <ask_llm> requests of a code-as-action reply, each starting a line; the first one
+// counts and count says how many there were. One newline after the opening tag is dropped.
+// Returns { rest, found, unclosed, prompt?, files?, count?, error? }.
+function extractLlmCall(text) {
+    const calls = [];
+    const rest = String(text || "").replace(/^[ \t]*<ask_llm\b((?:[^>\n"']|"[^"\n]*"|'[^'\n]*')*)>[ \t]*(?:\r?\n)?([\s\S]*?)<\/ask_llm>[ \t]*(?:\r?\n)?/gm, (m, attrs, body) => { calls.push({ attrs: parseTagAttrs(attrs), body }); return ""; });
+    const unclosed = /^[ \t]*<ask_llm\b/m.test(rest);
+    if (!calls.length) return { rest, found: false, unclosed };
+    return { rest, found: true, unclosed, count: calls.length, ...llmCallFromArgs(calls[0].body, calls[0].attrs.files) };
+}
+
+// What a request attaches: each file whole, or the lines its entry names. read(path)
+// gives a file's bytes or null; promptChars counts toward maxChars. Returns
+// { files: [{ path, text, start?, end?, total? }], chars } or { error }.
+function gatherLlmFiles(specs, read, maxChars, promptChars) {
+    const files = [];
+    let chars = promptChars || 0;
+    for (const spec of specs || []) {
+        const f = parseLlmFileSpec(spec);
+        if (f.error) return { error: f.error };
+        const p = f.path;
+        const bytes = read(p);
+        if (!bytes) return { error: `${p} is not a file in /workspace (a folder can't be attached: list its files).` };
+        const text = decodeTextFile(bytes);
+        if (text === null) return { error: `${p} is a binary file, and only text files can be attached. Extract its text with Python first, save it as a .txt file and attach that.` };
+        if (f.spec === p) {
+            files.push({ path: p, text });
+            chars += text.length;
+            continue;
+        }
+        const lines = text.split("\n");
+        if (text.endsWith("\n")) lines.pop();
+        if (f.start > lines.length) return { error: `${p} has ${lines.length} line${lines.length === 1 ? "" : "s"}, so ${spec} starts after its end.` };
+        const end = f.end ? Math.min(f.end, lines.length) : lines.length;
+        const part = lines.slice(f.start - 1, end).join("\n") + "\n";
+        files.push({ path: p, text: part, start: f.start, end, total: lines.length });
+        chars += part.length;
+    }
+    if (chars > maxChars) return { error: `The request with its files has ${chars.toLocaleString("en-US")} characters, more than the ${maxChars.toLocaleString("en-US")} one ask_llm request may send. Attach fewer or smaller files, or split the work into several requests.` };
+    return { files, chars };
+}
+
+// The messages of the request: the attached files (or their lines) first, the prompt last.
+const LLM_SYSTEM_PROMPT = "You answer one request from an AI agent that works on a task for a user. Answer it directly and completely: your answer goes back to the agent as text, and it can't ask you follow-up questions. You have no tools and see no files except the ones included in the request.";
+function buildLlmMessages(prompt, files) {
+    const parts = (files || []).map(f => {
+        const fence = makeFence(f.text);
+        const which = f.start ? `, lines ${f.start}-${f.end} of ${f.total}` : "";
+        return `File ${f.path}${which}:\n${fence}\n${String(f.text).replace(/\n$/, "")}\n${fence}`;
+    });
+    parts.push(String(prompt || "").trim());
+    return [{ role: "system", content: LLM_SYSTEM_PROMPT }, { role: "user", content: parts.join("\n\n") }];
+}
+
+// What the agent gets back: the answer, cut at max characters.
+function clipLlmAnswer(answer, max) {
+    const a = String(answer || "");
+    if (a.length <= max) return a;
+    return a.slice(0, max) + `\n[… ${(a.length - max).toLocaleString("en-US")} more characters of the answer cut off here: ask for a shorter answer, or for one part at a time …]`;
+}
+
 // DESIGN §5.6: what one native reply does. calls: [{ id, name, arguments }] as streamed
 // (arguments a JSON string, or an object from servers that send one). The first action
-// call decides: a run_python runs alone; a file tool runs together with the file calls
-// right after it, as one batch. finish and ask_user count only without action calls.
+// call decides: a run_python or an ask_llm runs alone; a file tool runs together with the
+// file calls right after it, as one batch. finish and ask_user count only without action calls.
 // update_plan goes along with any of them (plan, planError, planWarning, planResults:
 // [[id, result]]); alone it is kind "plan".
 // Every call that doesn't run gets a reason. A reply without calls is read like a
@@ -1031,7 +1150,7 @@ function parseToolCalls(calls, text, finishReason, step) {
     for (const c of bad) out.notes.push(`Your ${c.name || "unnamed"} call was ignored: its arguments were not a valid JSON object.`);
     if (!list.length) {
         const p = parseReply(text, finishReason);
-        if (["code", "files", "mixed", "broken", "toolcall"].includes(p.kind)) return { ...out, kind: "textaction", tag: p.kind === "toolcall" ? p.tag : "", what: p.kind === "files" ? "files" : p.kind === "toolcall" ? "toolcall" : "code" };
+        if (["code", "files", "llm", "mixed", "broken", "toolcall"].includes(p.kind)) return { ...out, kind: "textaction", tag: p.kind === "toolcall" ? p.tag : "", what: p.kind === "files" || p.kind === "llm" || p.kind === "toolcall" ? p.kind : "code" };
         return { ...p, prose: p.prose !== undefined ? p.prose : prose, stored: [], skipped: [], notes: [] };
     }
     // update_plan rides along with any reply (DESIGN §5.7): the last call counts, and the
@@ -1046,7 +1165,9 @@ function parseToolCalls(calls, text, finishReason, step) {
         out.planResults.push([c.id, p.plan ? `Plan updated (${planProgress(p.plan)}).${p.warning ? " " + p.warning : ""}` : `ERROR: ${p.error} The plan was not changed.`]);
     });
     const acts = ok.filter(c => c.name !== "update_plan");
-    const isAction = (c) => c.name === "run_python" || FILE_TOOLS.includes(c.name);
+    // run_python and ask_llm run alone; file tools run together.
+    const alone = (c) => c.name === "run_python" || c.name === "ask_llm";
+    const isAction = (c) => alone(c) || FILE_TOOLS.includes(c.name);
     const known = (c) => AGENT_TOOL_NAMES.includes(c.name);
     const unknownReason = (c) => `There is no tool ${JSON.stringify(c.name)}. The tools are ${AGENT_TOOL_NAMES.join(", ")}` + (/bash|shell|terminal|exec|command/i.test(c.name) ? " (no shell: run Python, e.g. runpy.run_path(\"script.py\", run_name=\"__main__\"))." : /grep|glob|find|search|list|ls$/i.test(c.name) ? " (to find files or text in them, use search_files)." : ".");
     const first = acts.findIndex(c => known(c) && isAction(c));
@@ -1079,7 +1200,7 @@ function parseToolCalls(calls, text, finishReason, step) {
         return { ...out, kind: "badcall" };
     }
     let ran = [lead];
-    if (lead.name !== "run_python") {
+    if (!alone(lead)) {
         for (let i = first + 1; i < acts.length && FILE_TOOLS.includes(acts[i].name); i++) ran.push(acts[i]);
     }
     const ranIds = new Set(ran.map(c => c.id));
@@ -1088,15 +1209,19 @@ function parseToolCalls(calls, text, finishReason, step) {
         let why;
         if (!known(c)) why = unknownReason(c);
         else if (c.name === "finish" || c.name === "ask_user") why = `Not processed: ${c.name} only counts in a reply without other tool calls. Call it again on its own once you have seen these results.`;
-        else if (c.name === "run_python" && lead.name === "run_python") why = "Not run: only the first run_python call of a reply runs. Send this one again if you still need it.";
-        else if (c.name === "run_python") why = "Not run: run_python doesn't run in the same reply as file tools. Call it again now that the file tools have run.";
-        else if (lead.name === "run_python") why = `Not run: ${c.name} doesn't run in the same reply as run_python. Call it again now that the code has run.`;
+        else if (c.name === lead.name && alone(c)) why = `Not run: only the first ${c.name} call of a reply runs. Send this one again if you still need it.`;
+        else if (alone(c) && !alone(lead)) why = `Not run: ${c.name} doesn't run in the same reply as file tools. Call it again now that the file tools have run.`;
+        else if (alone(lead)) why = `Not run: ${c.name} doesn't run in the same reply as ${lead.name}. Call it again now that ${lead.name === "run_python" ? "the code has run" : "the answer is back"}.`;
         else why = `Not run: only the file tools at the start of a reply run together, and a call to another tool came first. Call ${c.name} again now.`;
         out.skipped.push([c.id, why]);
     }
     if (lead.name === "run_python") {
         const code = lead.args.code;
         return { ...out, kind: "code", code: code.endsWith("\n") ? code : code + "\n", blockCount: 1, runId: lead.id };
+    }
+    if (lead.name === "ask_llm") {
+        const r = llmCallFromArgs(lead.args.prompt, lead.args.files);
+        return { ...out, kind: "llm", prompt: r.prompt, files: r.files, count: 1, runId: lead.id, ...(r.error ? { error: r.error } : {}) };
     }
     return { ...out, kind: "files", actions: ran.map(c => ({ ...toolCallToFileAction(c.name, c.args), id: c.id })) };
 }
@@ -1121,6 +1246,7 @@ function toolCallAsText(call) {
         }
         case "delete_file": return `<delete_file path=${attr(a.path)}/>`;
         case "move_file": return `<move_file path=${attr(a.path)} new_path=${attr(a.new_path)}/>`;
+        case "ask_llm": { const files = (Array.isArray(a.files) ? a.files : [a.files]).filter(f => typeof f === "string" && f); return `<ask_llm${files.length ? ` files=${attr(files.join(", "))}` : ""}>\n${s(a.prompt)}\n</ask_llm>`; }
         case "update_plan": return `<update_plan>\n${formatPlan(cleanPlan(a.plan).plan)}\n</update_plan>`;
         case "finish": return s(a.answer);
         case "ask_user": return "ask: " + s(a.question) + cleanAskOptions(a.options).map(o => "\n- " + o).join("");
@@ -1252,13 +1378,16 @@ function noActionAdvice(parsed, native, ctxCut) {
         case "broken": return parsed.unclosed
             ? `Your reply had a <${parsed.unclosed}> tag without its closing </${parsed.unclosed}>, so nothing ran. Send the action again, closed.`
             : "Your reply had an unclosed ```python block, so nothing ran. Reply with ONE complete ```python block.";
-        case "mixed": return "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.";
+        case "mixed": return parsed.with === "ask_llm"
+            ? "Your reply had an <ask_llm> request together with a ```python block or file actions, so nothing ran. Send <ask_llm> alone in a reply."
+            : "Your reply had both file actions and a ```python block, so nothing ran. Send file actions and code in separate replies: first the file actions, then the code once you have their results.";
         case "toolcall": return `Your reply had a <${parsed.tag || "tool_call"}> tag, but there are no tool calls here, so nothing ran. To run code, reply with ONE \`\`\`python block of Python (no shell commands: to run a script, use runpy.run_path("script.py", run_name="__main__")); to read, search or change files, use the file-action tags (<read_file>, <search_files>, <write_file>, <edit_file>, <delete_file>, <move_file>).`;
         case "fakeobs": return native
             ? "Your reply contained an <observation> tag, but observations only come back after a tool call ran, so nothing ran. Call a tool."
             : "Your reply contained an <observation> tag, but observations only come back from the harness after your action ran, so nothing ran. Reply with ONE ```python block, file actions, or the final answer.";
         case "textaction": return parsed.what === "toolcall"
             ? `Your reply contained a tool call written as text (<${parsed.tag || "tool_call"}>) that wasn't received as a tool call, so nothing ran. Make the call again through the tools interface.`
+            : parsed.what === "llm" ? "Your reply had an <ask_llm> tag in its text, but here requests only run as tool calls, so nothing ran. Call ask_llm instead."
             : `Your reply had ${parsed.what === "files" ? "file-action tags" : "a ```python block"} in its text, but here code and file changes only run as tool calls, so nothing ran. Call ${parsed.what === "files" ? "the file tools (read_file, search_files, write_file, edit_file, delete_file, move_file)" : "run_python"} instead, or call finish if that was your final answer.`;
         case "badcall": return "None of your tool calls could run; each one's result says why.";
         case "plan": return native
@@ -2975,13 +3104,15 @@ function transcriptMarkdown(session) {
             else {
                 if (item.prose) md.push(item.prose, ``);
                 if (item.proposedCode) md.push(block("python", item.proposedCode), ``);
+                if (item.llmPrompt) md.push(`Asked the model (ask_llm)${(item.llmFiles || []).length ? ", attaching " + item.llmFiles.join(", ") : ""}:`, ``, block("text", item.llmPrompt), ``);
+                if (item.llmReasoning) md.push(`<details><summary>Its reasoning</summary>`, ``, block("text", item.llmReasoning), ``, `</details>`, ``);
                 for (const a of item.fileActions || []) {
                     md.push(`- \`${a.tool}\` ${a.query ? a.query + " in " : ""}${a.path}${a.newPath ? " → " + a.newPath : ""}: ${a.ok ? "" : "failed: "}${a.message}`);
                     for (const e of a.edits || []) md.push(``, block("text", e.old), ``, `replaced by`, ``, block("text", e.new));
                 }
                 if ((item.fileActions || []).length) md.push(``);
                 if (item.edited && item.ranCode) md.push(`Edited by the user before it ran:`, ``, block("python", item.ranCode), ``);
-                if (item.output) md.push(`Output:`, ``, block("text", item.output), ``);
+                if (item.output) md.push(item.kind === "llm" && item.status === "ok" ? `Answer:` : `Output:`, ``, block("text", item.output), ``);
                 if (item.changes) md.push(`Files changed: ${formatChanges(item.changes)}`, ``);
                 if ((item.figures || []).length) md.push(`Figures shown: ${item.figures.map(f => `${f.path} (${f.width}×${f.height} px)`).join(", ")}`, ``);
                 if (item.fileListSent) md.push(`The current file list (${item.fileListSent} files) was sent with this step.`, ``);
@@ -3094,7 +3225,7 @@ function validateSession(raw) {
         if (withPrev) r.prevHash = /^[0-9a-f]{64}$/.test(x.prevHash) ? x.prevHash : "";
         return r;
     });
-    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt", "retryNote", "protocol"];
+    const STEP_STRINGS = ["kind", "phase", "reasoning", "content", "prose", "question", "proposedCode", "ranCode", "output", "status", "decision", "decidedBy", "rejectReason", "finishReason", "startedAt", "endedAt", "retryNote", "protocol", "llmPrompt", "llmReasoning"];
     const timeline = raw.timeline.map((it, i) => {
         if (!it || typeof it !== "object") throw new Error(`session.json: timeline item ${i} is malformed.`);
         const ts = str(it.ts);
@@ -3123,6 +3254,8 @@ function validateSession(raw) {
                     : null;
                 s.risk = it.risk && typeof it.risk === "object" ? { verdict: str(it.risk.verdict), reasons: strArr(it.risk.reasons) } : null;
                 s.stats = cleanStepStats(it.stats);
+                if (Array.isArray(it.llmFiles)) s.llmFiles = strArr(it.llmFiles).filter(f => !parseLlmFileSpec(f).error).slice(0, LIMITS.llmMaxFiles);
+                if (it.llmStats) s.llmStats = cleanStepStats(it.llmStats);
                 const dim = (v) => (Number.isInteger(v) && v > 0 && v <= 100000 ? v : 0);
                 s.figures = (Array.isArray(it.figures) ? it.figures : []).filter(f => f && typeof f === "object" && isSafeRelPath(f.path)).slice(0, 500)
                     .map(f => ({ path: f.path, width: dim(f.width), height: dim(f.height), how: f.how === "show" ? "show" : "end" }));
@@ -4390,7 +4523,7 @@ async function runLoop() {
             // for Retry.
             restartInterpreter();
             const lastMsg = S.messages[S.messages.length - 1];
-            if (lastMsg && lastMsg.role === "assistant" && (last.kind === "code" || last.kind === "files")) {
+            if (lastMsg && lastMsg.role === "assistant" && (last.kind === "code" || last.kind === "files" || last.kind === "llm")) {
                 pushStepResult(buildObservation({ step: last.n, status: "error", notes: ["The harness failed while handling this step (" + (e.message || e) + "). Nothing was committed, and the interpreter was restarted: variables are lost, files are as they were before this step."] }));
             }
         }
@@ -4610,7 +4743,7 @@ async function agentTurn() {
         setStatus("awaiting-user");
         return "ask";
     }
-    if (parsed.kind !== "code" && parsed.kind !== "files") {
+    if (parsed.kind !== "code" && parsed.kind !== "files" && parsed.kind !== "llm") {
         // Cut off, empty, an unclosed block or tag, file actions mixed with code, a
         // <tool_call> in text, a made-up <observation>, or (native) no call that could
         // run: nothing ran. Tell the model why.
@@ -4648,7 +4781,7 @@ async function agentTurn() {
         step.checkpoint = takeCheckpoint("step " + n);
         renderTimelineItem(idx);
         if (reps < LIMITS.repeatLimit) return "continue";
-        addNote(`🔁 The agent tried the same ${parsed.kind === "files" ? "file actions" : "code"} ${reps + 1} times in a row, so the run is paused. Send a note to steer it, then Continue.`, "warn");
+        addNote(`🔁 The agent tried the same ${parsed.kind === "files" ? "file actions" : parsed.kind === "llm" ? "ask_llm request" : "code"} ${reps + 1} times in a row, so the run is paused. Send a note to steer it, then Continue.`, "warn");
         setStatus("paused");
         return "error";
     }
@@ -4662,6 +4795,9 @@ async function agentTurn() {
         if (result.finishReason === "length") notes.push(`Your reply was cut off at ${ctxCut ? "the end of the context window" : "the token limit"} after these file actions; anything after them was lost.`);
         if (parsed.strayTag) notes.push(strayTagNote(parsed.strayTag));
         outcome = await executeFileStep(step, idx, parsed.actions, notes);
+    } else if (parsed.kind === "llm") {
+        if (parsed.count > 1) notes.push(`Only the first of your ${parsed.count} <ask_llm> requests was sent.`);
+        outcome = await executeLlmStep(step, idx, parsed, notes);
     } else {
         step.proposedCode = parsed.code;
         step.blockCount = parsed.blockCount;
@@ -5023,6 +5159,100 @@ async function executeFileStep(step, idx, actions, notes) {
     return { observation: buildObservation({ step: step.n, status: "rejected", reason: decision.reason, notes: [...notes, nothing] }), stop: !!decision.stop };
 }
 
+// An ask_llm step (DESIGN §5.9): one request to the same endpoint and model, with the
+// attached files read from the canonical workspace. It changes nothing, so there is no
+// effect to gate; Approve each step holds it before it is sent. Returns { observation, stop }.
+async function executeLlmStep(step, idx, call, notes) {
+    step.llmPrompt = call.prompt;
+    step.llmFiles = call.files;
+    step.notes = [...notes];
+    const fail = (msg) => {
+        step.status = "error";
+        step.output = msg;
+        debugLog("error", "ask_llm → failed: " + msg);
+        return { observation: buildObservation({ step: step.n, status: "error", output: "ERROR: " + msg, notes: step.notes, truncate: false }), stop: false };
+    };
+    if (call.error) return fail(call.error);
+    const read = (p) => { const f = WS.files.get(p); return f ? WS.blobs.get(f.hash) || null : null; };
+    const att = gatherLlmFiles(call.files, read, LIMITS.llmMaxChars, call.prompt.length);
+    if (att.error) return fail(att.error);
+    if (effectiveAutonomy(SETTINGS.autonomy, S.timeline) === "approve") {
+        step.phase = "pending-run";
+        renderTimelineItem(idx);
+        setStatus("awaiting-approval");
+        const d = await waitForDecision(idx);
+        setStatus("running");
+        step.decidedBy = "user";
+        if (d.action === "reject") {
+            step.decision = "rejected"; step.rejectReason = d.reason || ""; step.status = "rejected";
+            return { observation: buildObservation({ step: step.n, status: "rejected", reason: d.reason, notes: [...notes, "Your request was not sent."] }), stop: !!d.stop };
+        }
+        step.decision = "approved";
+    }
+    const payload = {
+        model: SETTINGS.model || "local-model",
+        messages: buildLlmMessages(call.prompt, att.files),
+        stream: true,
+        stream_options: { include_usage: true },
+        ...currentReasoningParams(),
+    };
+    if (SETTINGS.maxTokens > 0) payload.max_tokens = SETTINGS.maxTokens;
+    debugLog("tool", `ask_llm · ${att.chars.toLocaleString("en-US")} characters` + (call.files.length ? " · files: " + call.files.join(", ") : ""), clipForDebug(call.prompt, 4000));
+    step.phase = "running";
+    // The answer shows in the card while it streams, like a running step's output.
+    step._live = "(waiting for the answer…)";
+    setActivity("llm");
+    renderTimelineItem(idx);
+    const live = createThrottle(THROTTLE_MS);
+    let text = "", reasoning = "", result;
+    try {
+        result = await requestWithRetry((signal) => {
+            text = ""; reasoning = "";
+            setActivity("llm");
+            return streamChat(payload, signal, (r, c) => {
+                reasoning += r;
+                text += c;
+                const split = splitReply(text, false);
+                const thought = reasoning.length + split.reasoning.length;
+                step._live = split.text || (thought ? `🧠 thinking… (${thought.toLocaleString("en-US")} characters)` : step._live);
+                live(() => renderTimelineItem(idx));
+            });
+        }, () => {
+            live.cancel();
+            step._live = "🔌 No answer from the endpoint: retrying…";
+            setActivity("retrying");
+            renderTimelineItem(idx);
+        });
+    } catch (e) {
+        if (e.name === "AbortError") {
+            step.status = "interrupted";
+            step.output = "Stopped by the user before the answer came back.";
+            debugLog("tool", "ask_llm aborted");
+            return { observation: buildObservation({ step: step.n, status: "error", notes: [...notes, "The user stopped your request before the answer came back."] }), stop: true };
+        }
+        const msg = e.message || String(e);
+        const hint = isContextOverflowError(msg) ? " The request is too long for the model's context: attach fewer or smaller files, or split the work into several requests." : "";
+        return fail(`The request failed (${msg}).${hint}`);
+    } finally {
+        live.cancel();
+        step._live = null;
+        RUN.abort = null;
+    }
+    S.tokens.prompt += result.usage.prompt;
+    S.tokens.completion += result.usage.completion;
+    const split = splitReply(text, true);
+    step.llmReasoning = [reasoning, split.reasoning].filter(Boolean).join("\n\n");
+    step.llmStats = buildStepStats(result.rawUsage, result.timings, result.clock, REASONING.nCtx);
+    const answer = split.text.trim();
+    const cut = result.finishReason === "length";
+    debugLog("result", `ask_llm → ${answer ? answer.length.toLocaleString("en-US") + " characters" : "empty"} · finish ${result.finishReason || "?"} · ${result.usage.completion} tok`, clipForDebug(answer, 4000));
+    if (!answer) return fail(cut ? "The answer was cut off at the token limit before any of it was written: the model spent the budget reasoning. Ask for something smaller." : "The model returned an empty answer.");
+    step.status = "ok";
+    step.output = answer;
+    if (cut) step.notes.push("The answer was cut off at the token limit, so it is incomplete. Ask for a shorter answer, or for one part at a time.");
+    return { observation: buildObservation({ step: step.n, status: "ok", output: clipLlmAnswer(answer, LIMITS.llmMaxAnswerChars), notes: step.notes, truncate: false }), stop: false };
+}
+
 // Compile Python sources in the worker without running them (DESIGN §5.1). sources:
 // { path: text }. Returns { path: null | { line, col, error, text } }; {} when the
 // interpreter isn't available, since a syntax check must never fail a step.
@@ -5310,8 +5540,8 @@ function renderFileActions(actions) {
     return ul;
 }
 
-const TOOL_PREVIEW_ICONS = { ...FILE_ACTION_ICONS, run_python: "🐍", update_plan: "📋", ask_user: "❓", finish: "✅" };
-const TOOL_PREVIEW_VERBS = { ...FILE_ACTION_VERBS, run_python: "run Python", update_plan: "plan", ask_user: "ask", finish: "finish" };
+const TOOL_PREVIEW_ICONS = { ...FILE_ACTION_ICONS, run_python: "🐍", ask_llm: "💬", update_plan: "📋", ask_user: "❓", finish: "✅" };
+const TOOL_PREVIEW_VERBS = { ...FILE_ACTION_VERBS, run_python: "run Python", ask_llm: "ask the model", update_plan: "plan", ask_user: "ask", finish: "finish" };
 
 // A native tool call while the model is still writing it: its arguments so far, read
 // from the partial JSON, so the code or file can be watched taking shape line by line.
@@ -5353,6 +5583,10 @@ function renderToolPreview(call) {
         if (p) { meta.push(`${p.length} step${p.length === 1 ? "" : "s"} so far`); body = renderPlanList(p); }
     } else if (call.name === "ask_user" && s(args.question)) {
         body = el("p", "task-text", args.question);
+    } else if (call.name === "ask_llm" && (s(args.prompt) || Array.isArray(args.files))) {
+        const files = (Array.isArray(args.files) ? args.files : []).filter(f => typeof f === "string" && f);
+        if (files.length) meta.push("with " + files.join(", "));
+        if (s(args.prompt)) body = el("pre", "output", args.prompt);
     } else if (call.name === "finish" && s(args.answer)) {
         body = renderMarkdown(args.answer);
     }
@@ -5573,6 +5807,7 @@ function buildStepCard(item, idx, old) {
     }
     if (item.prose) card.appendChild(renderMarkdown(item.prose));
     if (item.kind === "files") card.appendChild(renderFileActions(item.fileActions));
+    if (item.kind === "llm" && item.llmPrompt) card.appendChild(renderLlmRequest(item));
     if (item.proposedCode !== undefined && item.proposedCode !== "") {
         if (item.phase === "pending-run") {
             card.appendChild(el("label", "field-label", "Proposed code — edit it before running if you like (Tab indents, Ctrl+Enter runs):"));
@@ -5594,6 +5829,8 @@ function buildStepCard(item, idx, old) {
         const pre = el("pre", "output" + (item.status === "error" ? " is-error" : ""));
         pre.textContent = out.length > 200000 ? out.slice(0, 200000) + "\n[… display truncated; the full output is in the session export …]" : (out || "(no output)");
         card.appendChild(pre);
+    } else if (item.kind === "llm") {
+        if (item.output) card.appendChild(renderLlmAnswer(item));
     } else if (item.kind === "files") {
         // The model's view of the step: read contents and messages, collapsed.
         if (item.output) {
@@ -5627,6 +5864,8 @@ function buildStepCard(item, idx, old) {
         if (item.phase === "pending-approval" && item.kind === "files") {
             const reasons = item.risk && item.risk.reasons.length ? item.risk.reasons : null;
             box.appendChild(el("p", "decision-why", (reasons ? "⚠️ Held for your approval: this step " + reasons.join("; ") + "." : "⏸ Approve each step is on.") + " Nothing is applied or sent to the agent until you approve; rejecting discards it."));
+        } else if (item.kind === "llm") {
+            box.appendChild(el("p", "decision-why", "⏸ Approve each step is on. Nothing is sent until you choose Send; rejecting tells the agent so."));
         } else if (item.phase === "pending-approval") {
             box.appendChild(el("p", "decision-why", "⚠️ Held for your approval: this step " + (item.risk ? item.risk.reasons.join("; ") : "needs review") + ". Its effects are applied only if you approve; rejecting rolls them back."));
         }
@@ -5635,7 +5874,7 @@ function buildStepCard(item, idx, old) {
         reason.placeholder = "Reason (optional, sent to the agent)";
         const row = el("div", "decision-row");
         if (item.phase === "pending-run") {
-            row.appendChild(button("▶ Run", "run", idx, "primary"));
+            row.appendChild(button(item.kind === "llm" ? "▶ Send" : "▶ Run", "run", idx, "primary"));
             if (item._draft !== undefined && item._draft !== item.proposedCode) row.appendChild(button("↺ Reset", "reset-code", idx, "", "Discard your edits and go back to the agent's code"));
         } else {
             row.appendChild(button("✅ Approve", "approve", idx, "primary"));
@@ -5655,6 +5894,37 @@ function buildStepCard(item, idx, old) {
         card.appendChild(box);
     }
     return finishCard(card, item, idx);
+}
+
+// An ask_llm step's request (DESIGN §5.9): the files it attached and its prompt, as text.
+// Collapsed once the answer is there.
+function renderLlmRequest(item) {
+    const box = el("div", "llm-request");
+    const head = box.appendChild(el("div", "file-action"));
+    head.appendChild(el("span", "file-action-icon", "💬"));
+    head.appendChild(el("span", "file-action-verb", "Asked the model"));
+    for (const p of item.llmFiles || []) head.appendChild(el("code", "file-action-path", p));
+    const d = box.appendChild(el("details", "file-result"));
+    d.open = !item.output;
+    d.appendChild(el("summary", "", `The request (${item.llmPrompt.length.toLocaleString("en-US")} characters${(item.llmFiles || []).length ? ", plus the files" : ""})`));
+    d.appendChild(el("pre", "output", item.llmPrompt));
+    return box;
+}
+
+// Its answer: Markdown when it came back, the error when it didn't; the answering model's
+// reasoning and stats collapsed below.
+function renderLlmAnswer(item) {
+    if (item.status !== "ok") return el("pre", "output is-error", item.output);
+    const box = el("div", "llm-answer");
+    box.appendChild(renderMarkdown(item.output));
+    if (item.llmReasoning) {
+        const d = box.appendChild(el("details", "file-result"));
+        d.appendChild(el("summary", "", `🧠 Its reasoning (${item.llmReasoning.length.toLocaleString("en-US")} chars)`));
+        d.appendChild(el("pre", "output", item.llmReasoning));
+    }
+    const stats = renderStepStats(item.llmStats);
+    if (stats) box.appendChild(stats);
+    return box;
 }
 
 // The editable code of a step waiting for you: your draft survives re-renders.
@@ -6291,7 +6561,7 @@ function formatDuration(ms) {
     return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-const ACTIVITY_LABELS = { thinking: "model thinking…", writing: "model writing…", python: "running Python", files: "file actions", compacting: "compacting history…", packages: "loading packages…", retrying: "endpoint unreachable, retrying…" };
+const ACTIVITY_LABELS = { thinking: "model thinking…", writing: "model writing…", python: "running Python", files: "file actions", llm: "ask_llm: waiting for the answer…", compacting: "compacting history…", packages: "loading packages…", retrying: "endpoint unreachable, retrying…" };
 
 // The session lives only in this tab (DESIGN §3). A fingerprint of what an export holds:
 // it changes with every step, note, file change, rewind and dropped checkpoint, and an
@@ -6401,7 +6671,7 @@ function renderHeader() {
     badge.dataset.protocol = protocol;
     badge.textContent = { tools: "🔧 native", text: "📝 text", auto: "🔧 auto" }[protocol];
     badge.title = {
-        tools: "Native tool calls: the agent acts through the endpoint's OpenAI tools support (run_python, read_file, write_file, edit_file, ask_user, finish).",
+        tools: "Native tool calls: the agent acts through the endpoint's OpenAI tools support (run_python, read_file, write_file, edit_file, ask_llm, ask_user, finish).",
         text: "Code blocks and tags: the agent acts by writing ```python blocks and file tags in its replies. Works with any chat model."
             + (probed && REASONING.toolsRejected ? " This endpoint refused native tool calls." : SETTINGS.toolMode === "text" ? " Chosen in Settings → Actions." : " The endpoint doesn't report tool-call support; choose Native in Settings → Actions to use it anyway."),
         auto: "Settings → Actions is Auto: native tool calls if the endpoint reports support, else code blocks and tags. Decided before the first request, or by Test Connection.",

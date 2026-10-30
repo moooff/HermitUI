@@ -531,7 +531,15 @@ From the same comparison; none is scheduled.
   - *Shell / background processes*: Pyodide has no subprocesses; `run_python` is the
     shell.
   - *Subagents*: context isolation would help small models, but at a large cost in
-    complexity. Revisit after Phase 4.
+    complexity. Revisit after Phase 4. The cheap half of it is built: `ask_llm`
+    (v0.3.29, DESIGN §5.9) sends one request with files attached to a fresh instance of
+    the model, without tools, and only the answer comes back. First check (2026-10-30,
+    Qwen3.8-27B IQ3_S, 37k context, an ad hoc probe outside the suite, 2 runs per
+    protocol): on its own the agent never used it, neither to translate a short German
+    note nor to find three decisions in a 48 KB report; it translated itself and searched
+    with Python, and all 8 runs passed. Asked to use it, it did in both protocols, and
+    all 4 runs passed. Open: tasks where it pays off without being asked (a document
+    larger than the context, a small model).
   - *A persistent memory tool*: against ephemerality; within a session, `AGENTS.md`
     and a plan cover it.
   - *An MCP client*: possible over Streamable HTTP, but it widens the sandbox
