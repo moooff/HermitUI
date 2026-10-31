@@ -972,7 +972,7 @@ times with the same input). Small in-browser models (Phase 4) do it more.
 - `ask_llm` steps (§5.9) count like any other: the same prompt and files three times in a
   row isn't sent again, and a failed request's error is its first line.
 
-### 5.9 Asking the model: `ask_llm` *(added in v0.3.29)*
+### 5.9 Asking the model: `ask_llm` *(added in v0.3.29; reasoning level and budget in v0.3.30)*
 One request to a fresh instance of the language model: the prompt plus the text files,
 or the lines of them, that the agent lists, without the history, the task or any tools.
 Nothing is attached that the agent didn't name. Only the answer comes
@@ -982,9 +982,12 @@ long documents, or a second opinion. Not a subagent: the answering model can't a
 more files or ask back, so there is no second loop to supervise. (Amp's "oracle" and
 Claude Code's WebFetch, which hands a page and a prompt to a model and keeps only its
 answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
-- **Both protocols.** Natively the tool `ask_llm(prompt, files)`; in code-as-action an
-  `<ask_llm files="a.txt, docs/b.md">` tag at the start of a line, the request up to
-  `</ask_llm>` (`extractLlmCall`). Each entry of `files` is a path (the whole file) or a
+- **Both protocols.** Natively the tool `ask_llm(prompt, files, effort)`; in
+  code-as-action an `<ask_llm files="a.txt, docs/b.md" effort="off">` tag at the start of
+  a line, the request up to `</ask_llm>` (`extractLlmCall`). `effort` is optional, one of
+  `LLM_EFFORTS` (off, low, medium, high, case ignored; anything else is an error that
+  lists them); the prompts suggest off for extracting, translating and summarising, high
+  for a judgement or a second opinion. Each entry of `files` is a path (the whole file) or a
   path with the lines to send (`parseLlmFileSpec`): `report.txt:120-180`,
   `report.txt:120` for one line, `report.txt:400-` to the end, numbered as `read_file`
   shows them. The prompts tell the model to send only what the request needs. The tag is read after the file actions and before the
@@ -1001,9 +1004,16 @@ answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
 - **The request** (`buildLlmMessages`): a short system prompt (`LLM_SYSTEM_PROMPT`: one
   request from an agent, answer it directly, no follow-up questions, no tools), then one
   user message with each file as `File <path>:` (`File <path>, lines 120-180 of 600:` for
-  a range) and a fence longer than any inside it, the prompt last. Same endpoint, model, reasoning level and `max_tokens` as the agent's
-  own requests; no `tools`. It goes through `requestWithRetry`, so an outage is retried
-  the same way, and Stop aborts it.
+  a range) and a fence longer than any inside it, the prompt last. Same endpoint and
+  model as the agent's own requests; no `tools`. The reasoning level is the one the
+  request asks for, never above the session's, which applies when it asks for none
+  (`llmReasoningLevel`; a session at the model's default sets no upper limit). The reply
+  budget is its own (`llmMaxTokens`): `LIMITS.llmTokenFactor` (2) times Max tokens, no
+  more than the context leaves after the request (estimated tokens plus a tenth, plus
+  256), none when Max tokens is 0. Reasoning over a large part of a document used up the
+  agent's 8,192 before any answer was written, in 3 of 12 requests of the 2026-10-31
+  recall probe. It goes through `requestWithRetry`, so an outage is retried the same way,
+  and Stop aborts it.
 - **The files** (`gatherLlmFiles`) come from the canonical workspace, whole or the lines
   named (an end past the last line stops there): a path that isn't a file, a binary file
   (with advice to extract its text with Python first), a range that starts after the
@@ -1012,8 +1022,11 @@ answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
   that says to attach less or split the work.
 - **The answer** goes back whole up to `LIMITS.llmMaxAnswerChars` (16,000 characters),
   then cut with a note (`clipLlmAnswer`); `truncateOutput`'s head-and-tail would cut it
-  in the middle. One cut by the token limit is kept with a note; an empty one (all
-  reasoning, say) is an error. The answering model's reasoning stays out of the history.
+  in the middle. One cut by the token limit is kept with a note. A reply with no answer
+  but reasoning, cut off at the token limit or ended inside the reasoning (Qwen sometimes
+  never closes its think block), is sent once more with reasoning off when the endpoint
+  takes a level at all (`llmRetryReason`), with a note that says why; both requests count
+  toward the tokens. An empty answer after that is an error. The answering model's reasoning stays out of the history.
 - **Supervision.** It changes nothing in the workspace, so there is no effect to gate:
   Auto, Autopilot and Plan first send it straight away. Approve each step holds it before
   it is sent (`pending-run`, ▶ Send or Reject). Its data only goes to the endpoint the
@@ -1021,8 +1034,10 @@ answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
   through `renderMarkdown` (DOMPurify), the request as text.
 - **Timeline and export.** The card shows the files and the request (collapsed once
   answered), the answer while it streams (as a running step's live output) and when
-  done, and the answering model's reasoning and stats collapsed. The step keeps
-  `llmPrompt`, `llmFiles`, `llmReasoning`, `llmStats` and the answer as `output`; the
+  done, and the answering model's reasoning and stats collapsed; the heading names the
+  reasoning level unless it was the model's default. The step keeps `llmPrompt`,
+  `llmFiles`, `llmReasoning`, `llmEffort` (the level it ran at, `off` after the retry),
+  `llmStats` and the answer as `output`; the
   session format stays 2 (the fields are optional), and the transcript shows the request
   and the answer. The tokens count toward the session's totals.
 

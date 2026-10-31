@@ -275,6 +275,12 @@ plt.figure(); plt.plot([1, 1])
             calls(("ask_llm", {"prompt": "Summarise the notes.", "files": ["notes.txt"]}), ("read_file", {"path": "notes.txt"})),
             calls(("finish", {"answer": "The notes say hello."})),
         ],
+        # …asking for more reasoning than the session allows, then cut off while reasoning.
+        "E2E-ASKLLM-EFF": [
+            calls(("ask_llm", {"prompt": "MOCK-CUT-WHILE-REASONING: list the people.", "files": ["notes.txt"], "effort": "high"})),
+            calls(("ask_llm", {"prompt": "MOCK-ANSWER-IN-REASONING: and the places?"})),
+            calls(("finish", {"answer": "Listed."})),
+        ],
         "E2E-ASKLLM-T": [
             final('Asking.\n<ask_llm files="notes.txt:1-1">\nTranslate the notes.\n```python\nprint("not code")\n```\n</ask_llm>'),
             final('<ask_llm files="nope.txt">\nAnd this one?\n</ask_llm>'),
@@ -1240,6 +1246,30 @@ def ask_llm_scenario(browser, port, state):
     check("the read_file next to it waits, saying why", m[-1]["role"] == "tool" and "doesn't run in the same reply as ask_llm" in m[-1]["content"], m[-1])
     check("the card shows the request and the answer", page.locator(".step-card .llm-request").first.is_visible() and LLM_ANSWER in page.locator(".step-card .llm-answer").first.inner_text())
     check("…and the answering model's reasoning, apart from the step's", page.evaluate("() => S.timeline.find(t => t.kind === 'llm').llmReasoning") == "mock sub-thinking")
+    page.context.close()
+
+    page = open_app(browser)
+    configure_at(page, f"http://127.0.0.1:{port}/tools/v1", 10)
+    page.set_input_files("#wsFileInput", files=[notes])
+    wait_until(page, "() => WS.files.has('notes.txt')", 10, "upload")
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-ASKLLM-EFF: go")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "effort finish")
+    reqs = state.requests[n0:]
+    first, again = reqs[1], reqs[2]
+    check("asking for high in a Low session sends low", first.get("reasoning_effort") == "low" and LLM_MARK in first["messages"][0]["content"], {k: v for k, v in first.items() if k != "messages"})
+    check("…its budget sized to what the 4096-token context leaves", 3000 < first.get("max_tokens", 0) <= 4096 - 256, first.get("max_tokens"))
+    check("cut off while reasoning: sent once more with reasoning off", "reasoning_effort" not in again and (again.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+          and again["messages"] == first["messages"] and len(reqs) == 7, {k: v for k, v in again.items() if k != "messages"})
+    obs = reqs[3]["messages"][-1]["content"]
+    check("…the answer comes back, with a note that says so", 'status="ok"' in obs and LLM_ANSWER in obs and "cut off at the token limit" in obs and "sent again with reasoning off" in obs, obs)
+    check("a reply that ends inside its reasoning is sent again with reasoning off too", (reqs[5].get("chat_template_kwargs") or {}).get("enable_thinking") is False
+          and "MOCK-ANSWER-IN-REASONING" in reqs[5]["messages"][-1]["content"], {k: v for k, v in reqs[5].items() if k != "messages"})
+    obs = reqs[6]["messages"][-1]["content"]
+    check("…and says why", 'status="ok"' in obs and LLM_ANSWER in obs and "ended inside the model's reasoning" in obs, obs)
+    st = page.evaluate("() => { const t = S.timeline.find(t => t.kind === 'llm'); return { effort: t.llmEffort, verb: document.querySelector('.llm-request .file-action-verb').textContent }; }")
+    check("…the step and its card say reasoning off", st["effort"] == "off" and st["verb"] == "Asked the model (reasoning off)", st)
     page.context.close()
 
     page = open_app(browser)

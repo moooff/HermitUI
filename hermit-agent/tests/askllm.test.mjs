@@ -11,11 +11,13 @@ const call = (name, args, id) => ({ id: id === undefined ? "id_" + name : id, na
 section("1. The tool and the system prompt");
 {
     const def = X.agentToolDefs().find(d => d.function.name === "ask_llm");
-    check("ask_llm(prompt, files), prompt required", def && Object.keys(def.function.parameters.properties).join() === "prompt,files" && def.function.parameters.required.join() === "prompt");
+    check("ask_llm(prompt, files, effort), prompt required", def && Object.keys(def.function.parameters.properties).join() === "prompt,files,effort" && def.function.parameters.required.join() === "prompt");
+    check("effort is one of off, low, medium, high", JSON.stringify(def.function.parameters.properties.effort.enum) === '["off","low","medium","high"]');
     check("files is a list of at most llmMaxFiles strings", def.function.parameters.properties.files.type === "array" && def.function.parameters.properties.files.maxItems === X.LIMITS.llmMaxFiles);
     const tools = X.buildSystemPrompt("", [], "tools", 60), text = X.buildSystemPrompt("", [], "text", 60);
     check("the tools prompt describes ask_llm and that it runs alone", /- ask_llm: /.test(tools) && /one ask_llm call/.test(tools));
     check("both say that a file can go in part", /"report\.txt:120-180"/.test(tools) && /with :first-last only those lines/.test(text));
+    check("both say when to reason less or more", /Set effort to "off" for extracting/.test(tools) && /effort \(optional\) sets how much it reasons: "off" for extracting/.test(text) && /<ask_llm files="[^"]*" effort="off">/.test(text));
     check("the text prompt shows the tag and lists it among the reply kinds", /<ask_llm files="/.test(text) && /3\. Short reasoning, then one <ask_llm> request/.test(text));
 }
 
@@ -53,6 +55,15 @@ section("2. parseToolCalls — native calls");
     check("…and the advice says to call the tool", /Call ask_llm instead/.test(X.noActionAdvice(r, true)));
 }
 
+{
+    let r = X.parseToolCalls([call("ask_llm", { prompt: "x", effort: "OFF" })], "", "tool_calls", 1);
+    check("effort comes along, lower-cased", r.kind === "llm" && r.effort === "off" && !r.error, JSON.stringify(r));
+    r = X.parseToolCalls([call("ask_llm", { prompt: "x" })], "", "tool_calls", 1);
+    check("…left out: no effort", r.kind === "llm" && !("effort" in r) && !r.error);
+    r = X.parseToolCalls([call("ask_llm", { prompt: "x", effort: "max" })], "", "tool_calls", 1);
+    check("…an unknown level is an error that lists the valid ones", r.kind === "llm" && /effort must be one of off, low, medium, high/.test(r.error), r.error);
+}
+
 section("3. parseReply — the <ask_llm> tag");
 {
     let r = X.parseReply(`I'll ask for a summary.\n<ask_llm files="notes.txt, docs/a.md">\nSummarise these.\n${F}python\nprint("not run")\n${F}\n</ask_llm>`, "stop");
@@ -81,6 +92,8 @@ section("3. parseReply — the <ask_llm> tag");
     check("an unsafe path in files is an error", r.kind === "llm" && /Unsafe path/.test(r.error));
     r = X.parseReply("<ask_llm>\n</ask_llm>", "stop");
     check("an empty request is an error", r.kind === "llm" && /needs a prompt/.test(r.error));
+    r = X.parseReply('<ask_llm files="a.txt" effort="high">\nJudge it.\n</ask_llm>', "stop");
+    check("the tag's effort attribute", r.kind === "llm" && r.effort === "high" && JSON.stringify(r.files) === '["a.txt"]' && !r.error, JSON.stringify(r));
 }
 
 section("4. Both protocols carry the same request");
@@ -90,6 +103,8 @@ section("4. Both protocols carry the same request");
     const back = X.parseReply(text, "stop");
     check("a native call written as a tag parses back the same", back.kind === "llm" && back.prompt === "Compare \"x\" & y.\nTwo lines." && JSON.stringify(back.files) === '["a b.txt","docs/c.md"]', text);
     check("…without files, no attribute", X.toolCallAsText({ function: { name: "ask_llm", arguments: '{"prompt":"x"}' } }) === "<ask_llm>\nx\n</ask_llm>");
+    const e = X.toolCallAsText({ function: { name: "ask_llm", arguments: '{"prompt":"x","files":["a.txt"],"effort":"off"}' } });
+    check("…effort becomes an attribute and parses back", e === '<ask_llm files="a.txt" effort="off">\nx\n</ask_llm>' && X.parseReply(e, "stop").effort === "off", e);
 }
 
 section("5. The attached files");
@@ -141,6 +156,28 @@ section("6. The request and its answer");
     check("a long one is cut, saying how much is missing", long.startsWith("x".repeat(10) + "\n[… 15 more characters") && /ask for a shorter answer/.test(long));
 }
 
+section("6b. Reasoning level and reply budget");
+{
+    const L = X.llmReasoningLevel;
+    check("no level asked for: the session's", L(undefined, "low") === "low" && L(undefined, "default") === "default");
+    check("a lower one than the session's: as asked", L("off", "low") === "off" && L("low", "high") === "low");
+    check("a higher one: capped at the session's", L("high", "low") === "low" && L("medium", "off") === "off");
+    check("a session at the model's default sets no cap", L("high", "default") === "high" && L("off", "default") === "off");
+    const B = X.llmMaxTokens;
+    check("twice the agent's budget", B(8192, 2, 0, 1000) === 16384);
+    check("…but no more than the context leaves", B(8192, 2, 12000, 1000) === 12000 - 1100 - 256);
+    check("…and never below what fits", B(8192, 2, 70144, 30000) === 16384);
+    check("Max tokens 0 (none): none here either", B(0, 2, 70144, 1000) === 0);
+    check("a request that leaves no room keeps the agent's budget", B(8192, 2, 4096, 5000) === 8192);
+    check("the factor is a LIMITS entry", X.LIMITS.llmTokenFactor === 2);
+    const R = X.llmRetryReason;
+    check("cut off while reasoning → retry", /cut off at the token limit/.test(R("", "long thought", "length", "low", true)));
+    check("ended inside the reasoning → retry", /ended inside the model's reasoning/.test(R("  ", "thought", "stop", "default", true)));
+    check("an answer, even a cut one → no retry", R("partial", "t", "length", "low", true) === "");
+    check("already off, or the endpoint can't turn it off → no retry", R("", "t", "length", "off", true) === "" && R("", "t", "length", "low", false) === "");
+    check("empty with no reasoning at all → no retry (nothing to save)", R("", "", "stop", "low", true) === "");
+}
+
 section("7. The guards");
 {
     const a = { kind: "llm", prompt: "x", files: ["a.txt"] };
@@ -154,13 +191,13 @@ section("7. The guards");
 
 section("8. Session file and transcript");
 {
-    const step = { type: "step", n: 2, kind: "llm", status: "ok", phase: "done", llmPrompt: "Summarise.", llmFiles: ["a.txt", "../x", 3, "b.txt:5-9"], llmReasoning: "hm", output: "Short.", llmStats: { prompt: 120, completion: 8, bogus: 1 } };
+    const step = { type: "step", n: 2, kind: "llm", status: "ok", phase: "done", llmPrompt: "Summarise.", llmFiles: ["a.txt", "../x", 3, "b.txt:5-9"], llmReasoning: "hm", llmEffort: "off", output: "Short.", llmStats: { prompt: 120, completion: 8, bogus: 1 } };
     const v = X.validateSession({ task: "t", messages: [], timeline: [step] }).timeline[0];
-    check("the request, files, reasoning and stats survive an import", v.llmPrompt === "Summarise." && JSON.stringify(v.llmFiles) === '["a.txt","b.txt:5-9"]' && v.llmReasoning === "hm" && v.llmStats.prompt === 120 && !("bogus" in v.llmStats));
+    check("the request, files, reasoning, level and stats survive an import", v.llmPrompt === "Summarise." && JSON.stringify(v.llmFiles) === '["a.txt","b.txt:5-9"]' && v.llmReasoning === "hm" && v.llmEffort === "off" && v.llmStats.prompt === 120 && !("bogus" in v.llmStats));
     const plain = X.validateSession({ task: "t", messages: [], timeline: [{ type: "step", n: 1, kind: "code" }] }).timeline[0];
     check("…other steps get no llmFiles or llmStats", !("llmFiles" in plain) && !("llmStats" in plain));
     const md = X.transcriptMarkdown({ timeline: [v] });
-    check("the transcript shows the request, its files and the answer", md.includes("Asked the model (ask_llm), attaching a.txt, b.txt:5-9:") && md.includes("Summarise.") && md.includes("Answer:\n\n```text\nShort."), md);
+    check("the transcript shows the request, its files and the answer", md.includes("Asked the model (ask_llm, reasoning off), attaching a.txt, b.txt:5-9:") && md.includes("Summarise.") && md.includes("Answer:\n\n```text\nShort."), md);
 }
 
 report();

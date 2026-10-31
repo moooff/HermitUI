@@ -495,6 +495,25 @@ From comparing pi, opencode and Claude Code (opencode's `doom_loop`).
 - **The answer is cut at 16,000 characters**, not head plus tail. Alternative: save a
   long answer to a file and return its path.
 
+## ask_llm reasoning level and budget (v0.3.30, 2026-10-31)
+
+From the long-context recall probe (`~/ws/hermit-agent-lab/2026-10-31-recall/`): 3 of 12
+requests on parts of a 277k-character book came back empty, the whole 8,192-token budget
+spent on reasoning at session level Low.
+
+- ⭐ **The agent picks the level, the session caps it.** A request can't reason more than
+  the user set; "Model default" sets no cap. Alternative: the request's level wins, so
+  "high" works in a Low session (more surprise, and cost on a cloud endpoint).
+- ⭐ **The budget is not a parameter.** Models guess token counts badly, and a budget set
+  too small fails the same way. The app gives `ask_llm` twice Max tokens instead, capped
+  by the context. Alternative: a `max_tokens` argument.
+- ⭐ **One automatic retry with reasoning off** when a reply has no answer but reasoning:
+  cut off at the token limit, or ended inside the reasoning (seen once in the v0.3.30
+  rerun as "The model returned an empty answer"). Alternative: the error alone, as before, which the agent answered by sending
+  smaller parts, each failure costing a full request.
+- **Levels off, low, medium, high**, the session's own set, not `xhigh` or a token
+  count. "high" still maps to the template's maximum (`buildReasoningParams`).
+
 ## Text encodings (v0.3.12, 2026-10-23), decided while building it
 
 - ⭐ **A Windows-1252 file keeps its encoding** (option (b) of 2026-10-09). Before, a

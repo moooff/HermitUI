@@ -678,7 +678,10 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
     plans = ev(page, "() => S.timeline.filter(t => t.type === 'step' && (t.plan || []).length).map(t => t.plan.filter(p => p.status === 'completed').length + '/' + t.plan.length)")
     base = {"name": task["name"], "steps": steps, "secs": round(elapsed), "tokens": tokens, "approvals": approvals, "answer": answer[-400:],
             "protocols": {p: protocols.count(p) for p in set(protocols)}, "plans": plans,
-            "compactions": ev(page, "() => S.timeline.filter(t => t.type === 'compaction').length")}
+            "compactions": ev(page, "() => S.timeline.filter(t => t.type === 'compaction').length"),
+            # Each ask_llm request: the level it ran at, how it ended, and whether it went out
+            # again with reasoning off (DESIGN §5.9), kept for passed runs too.
+            "llm_calls": ev(page, "() => S.timeline.filter(t => t.type === 'step' && t.kind === 'llm').map(t => ({ n: t.n, effort: t.llmEffort || '', status: t.status || '', retried: (t.notes || []).some(x => x.includes('sent again with reasoning off')), files: t.llmFiles || [] }))")}
     if status != "done":
         return {**base, "passed": False, "detail": f"ended in state {status}" + ("" if time.time() - t0 < deadline_s else " (deadline)")}
     problems = []
@@ -778,6 +781,8 @@ def main(all_tasks=None, quick=None, label="success"):
                     lib += f" · plan {' → '.join(r['plans'])}"
                 if r.get("compactions"):
                     lib += f" · compacted ×{r['compactions']}"
+                if r.get("llm_calls"):
+                    lib += " · ask_llm: " + ", ".join(c["effort"] + ("↻" if c["retried"] else "") + ("" if c["status"] == "ok" else f" ({c['status']})") for c in r["llm_calls"])
                 print(f"  {'✅' if r['passed'] else '❌'} {task['name']}: {r['steps']} steps, {r['secs']} s{lib} {r.get('detail', '')}")
                 results.append(r)
                 out.write_text(json.dumps({"base_url": args.base_url, "model": args.model, "effort": args.effort, "tool_mode": args.tool_mode, "results": results}, indent=1))

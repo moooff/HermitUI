@@ -10,7 +10,9 @@ SUMMARY back, and a compacted history's `<history_summary steps="1-K">` adds K t
 turn count, since those K assistant messages are gone. A reply marked
 `overflow_unless_compacted` answers a 400 context-size error until the history has
 been compacted. An ask_llm request (also recognised by its system prompt) gets
-LLM_ANSWER back, after some reasoning. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
+LLM_ANSWER back, after some reasoning; one with LLM_CUT in it only reasons and is cut at the token
+limit, and one with LLM_EMPTY ends inside its reasoning with no answer, each unless sent with
+reasoning off. A reply's `usage` replaces the default 100 prompt + 20 completion tokens
 (the mock's /props reports n_ctx 4096). Under /vllm/v1 it acts like vLLM: no /props,
 the context size (2048) only in the model list's `max_model_len`, models `owned_by`
 "vllm", and tool calling not enabled (any request with `tools` gets vLLM's 400).
@@ -44,6 +46,8 @@ SUMMARY = "## Task\nMock task.\n## Done so far\nMOCK-SUMMARY of the earlier step
 SUMMARISER_MARK = "You compress the history of an AI agent's session"
 LLM_ANSWER = "MOCK-LLM-ANSWER: the notes say hello."
 LLM_MARK = "You answer one request from an AI agent"
+LLM_CUT = "MOCK-CUT-WHILE-REASONING"
+LLM_EMPTY = "MOCK-ANSWER-IN-REASONING"
 
 
 class MockState:
@@ -176,7 +180,15 @@ def make_handler(state):
             if msgs and SUMMARISER_MARK in msgs[0]["content"]:
                 reply = {"content": SUMMARY}
             elif msgs and LLM_MARK in msgs[0]["content"]:
-                reply = {"reasoning": "mock sub-thinking", "content": LLM_ANSWER}
+                # LLM_CUT in the request: reasoning only, cut at the token limit, unless it
+                # comes with reasoning off.
+                thinking_off = (body.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+                if LLM_CUT in msgs[-1]["content"] and not thinking_off:
+                    reply = {"reasoning": "mock sub-thinking that goes on and on " * 4, "content": "", "finish": "length"}
+                elif LLM_EMPTY in msgs[-1]["content"] and not thinking_off:
+                    reply = {"reasoning": "mock sub-thinking with the answer inside it", "content": ""}
+                else:
+                    reply = {"reasoning": "" if thinking_off else "mock sub-thinking", "content": LLM_ANSWER}
             else:
                 compacted = re.search(r'<history_summary steps="1-(\d+)">', first_user)
                 turn = sum(1 for m in msgs if m["role"] == "assistant") + (int(compacted.group(1)) if compacted else 0)

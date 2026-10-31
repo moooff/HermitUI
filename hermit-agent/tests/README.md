@@ -141,8 +141,11 @@ the `FUNCS` list with the rename. Only DOM-free code can be covered this way.
   with a plan) and a tag in native text; the text form of a native call round-tripping;
   `gatherLlmFiles` (missing, binary, over the size limit, only the named lines, an end
   past the file, a start after it); `buildLlmMessages` (files first, a range named in the
-  heading, a longer fence when a file holds one); `clipLlmAnswer`; both guards; and
-  `validateSession` and the transcript.
+  heading, a longer fence when a file holds one); `clipLlmAnswer`; the `effort` argument
+  (lower-cased, unknown levels, the tag attribute and its round trip), the level cap
+  (`llmReasoningLevel`), the reply budget (`llmMaxTokens`) and when a reply with no answer is
+  sent again (`llmRetryReason`); both guards; and
+  `validateSession` and the transcript, the level included.
 
 - **`guard.test.mjs`** covers the loop guard (DESIGN §5.8): `actionSignature` (code
   trimmed, file actions without call ids, nothing for a reply that runs nothing),
@@ -353,7 +356,11 @@ it stall, on cue; see its docstring):
     held with ▶ Send before anything goes out, only the lines it names are sent and the
     heading says which, a fence in the request is sent as text,
     the answer comes back in an observation, and a missing file fails the step before
-    any request.
+    any request. Asking for `high` in a Low session sends `low`, with a reply budget
+    sized to the mock's 4096-token context; a reply cut off while reasoning
+    (`LLM_CUT` in the request) is sent once more with reasoning off, the answer comes
+    back with a note, and the card says "reasoning off"; so is one that ends inside its
+    reasoning without an answer (`LLM_EMPTY`), with a note that says why.
 
 Stock Firefox (`firefox=<binary>`, driven over WebDriver BiDi) runs everything except
 the download-based checks, which Playwright can't capture over BiDi. It matters
@@ -390,7 +397,9 @@ used a bundled library is recorded (`library_used`) but doesn't decide the pass.
 (CSVs into `data/`, a PNG into `assets/` byte for byte, the `.tmp` files deleted); which
 file tools the agent used is recorded (`tools_used`), not required. Since Phase 3.7 every
 run also records the plans the agent sent (`plans`, each as "done/steps"), and the
-summary counts the runs that kept one; a plan is never required. `--runs N` repeats the suite; the result is one pass rate, plus a
+summary counts the runs that kept one; a plan is never required. Each `ask_llm` request is
+recorded too (`llm_calls`: the level it ran at, its status, whether it was sent again with
+reasoning off, its files), shown in the task's line as e.g. `ask_llm: off, low↻`. `--runs N` repeats the suite; the result is one pass rate, plus a
 per-task table and a JSON file in `tests/results/` (gitignored). The script approves
 held steps, logging their reasons, and answers `ask:` questions generically. It checks
 the results inside the same interpreter, or against the final answer. The four tasks
