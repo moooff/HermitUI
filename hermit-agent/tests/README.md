@@ -6,6 +6,7 @@ dependencies to install for the unit half.
 ```bash
 node tests/run.mjs                                              # unit tests (all *.test.mjs)
 python3 build.py && ../benchmark/.venv/bin/python tests/e2e_agent.py [chromium] [firefox] [firefox=/path/to/stock/firefox]
+../benchmark/.venv/bin/python tests/e2e_network.py                 # network audit, every change, ~10 s
 ../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text]
 ../benchmark/.venv/bin/python tests/e2e_coding.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text]
 ../benchmark/.venv/bin/python tests/e2e_app.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text] [--context-size 20000] [--step-limit 40]
@@ -372,6 +373,27 @@ two expected things as page errors; the test ignores exactly those two:
 
 The page's CSP blocks `eval`, so Playwright's `wait_for_function` can't run in it.
 Waits poll `page.evaluate()` instead, which goes through the browser protocol.
+
+## Network audit — `e2e_network.py`
+
+Runs on every change, before every commit. It takes about 10 s and needs
+`cdn.jsdelivr.net`. The measured findings are in DESIGN §10.
+
+One short agent run of the built file in headless Chromium against `mock_openai.py`,
+in Autopilot. The task loads numpy, pandas and matplotlib from the Pyodide CDN and
+tabulate from the bundle. The traffic is watched two ways: a logging proxy that
+Chromium is forced through, loopback included (every connection from the page, the
+worker and the browser itself), and Playwright's request events (URL, headers, body).
+A canary sits in the task, an uploaded file and the API key. Checks:
+
+- Booting the app makes no request.
+- The only third-party host is `cdn.jsdelivr.net`, and every request to it is a GET of
+  a wheel under the pinned Pyodide path, with no query, cookie or Referer.
+- The canary reaches only the endpoint; the API key only in its `Authorization`
+  header, never in a body; no hits on `/exfil`.
+
+`--log out.json` saves every request for a closer look. A failure from an unreachable
+CDN shows as the first step failing to load numpy; rerun once it answers.
 
 ## Real model — `e2e_reference.py`
 

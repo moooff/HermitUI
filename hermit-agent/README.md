@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.30** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.31** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (about 11 MB,
 > Python included), developed in this folder apart from the main app in [`../src/`](../src/).
 
@@ -98,6 +98,8 @@ There is no telemetry, and opening the file makes no network request. Using it s
 
 - **To the API Base URL you set:** the conversation, including what the agent reads from your files and what its code prints, the files it attaches to a separate request, plus the API key. Before the first request, and when the URL or model changes, the app also asks the server what it supports (`/models`, `/props`, `/api/show`), as does **Test Connection**.
 - **To jsDelivr (`cdn.jsdelivr.net/pyodide/...`):** only when agent code needs a Pyodide package that isn't in the file, such as numpy or pandas. jsDelivr sees your IP address and the package name, never the task or your files.
+
+A network audit (`tests/e2e_network.py`) checks this on every change: one agent run through a logging proxy, with a marker in the task, a file and the API key. The results are in [DESIGN §10](DESIGN.md#10-security).
 
 Blocking the network for agent code is best effort: 17 known paths are tested and closed ([DESIGN §10](DESIGN.md#10-security)), but it is a denylist, not a guarantee. Don't put secrets in the workspace that you couldn't afford to leak. (The unbuilt `src/index.html` also loads its libraries and font from CDNs; `dist/` has them inlined.)
 
