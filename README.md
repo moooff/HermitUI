@@ -18,7 +18,7 @@
   <a href="https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf">
     <img src="https://img.shields.io/badge/🧠_Try_the_In--Browser_AI_Demo-8A2BE2?style=for-the-badge" alt="Try the In-Browser AI Demo" />
   </a>
-  <a href="https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-standalone.html">
+  <a href="https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-offline.html">
     <img src="https://img.shields.io/badge/🤖_Try_HermitUI_Agent-1f6feb?style=for-the-badge" alt="Try HermitUI Agent" />
   </a>
   <a href="https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-standalone.html">
@@ -38,7 +38,7 @@ Each one is a single HTML file that you can open from GitHub Pages or download a
 |---|---|---|---|
 | **HermitUI** | Chat client for your own model server | [Open](https://moooff.github.io/HermitUI) | [`dist/hermit-ui-standalone.html`](dist/hermit-ui-standalone.html) (3 MB) |
 | **HermitUI in-browser** | The same chat, plus a model that runs in the tab: no server at all | [Open with Qwen3-0.6B](https://moooff.github.io/HermitUI/dist/hermit-ui-wllama.html#gguf=hf:unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf) | [`dist/hermit-ui-wllama.html`](dist/hermit-ui-wllama.html) (6.5 MB) |
-| **[HermitUI Agent](#hermitui-agent)** | Hands a task to your model, which writes and runs Python in the tab while you watch and approve | [Open](https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-standalone.html) | [`hermit-agent/dist/hermit-agent-standalone.html`](hermit-agent/dist/hermit-agent-standalone.html) (11 MB) |
+| **[HermitUI Agent](#hermitui-agent)** | Hands a task to your model, which writes and runs Python in the tab while you watch and approve | [Open](https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-offline.html) | [`hermit-agent/dist/hermit-agent-offline.html`](hermit-agent/dist/hermit-agent-offline.html) (38 MB, numpy, pandas and matplotlib included), or [`hermit-agent-standalone.html`](hermit-agent/dist/hermit-agent-standalone.html) (11 MB, packages from a CDN) |
 | **[HermitUI Cleaner](#hermitui-cleaner)** | Cleans AI-written text: hidden characters, typography, rewording with your model | [Open](https://moooff.github.io/HermitUI/hermit-cleaner/dist/hermit-cleaner-standalone.html) | [`hermit-cleaner/dist/`](hermit-cleaner/dist/) (0.4 MB, or 3.7 MB with an in-tab model) |
 
 GitHub shows raw `.html` files as text, so to download one, right-click the link and choose *Save link as…*.

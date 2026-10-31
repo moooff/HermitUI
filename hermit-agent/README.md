@@ -23,7 +23,7 @@
 </div>
 
 <div align="center">
-  <a href="https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-standalone.html">
+  <a href="https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-offline.html">
     <img src="https://img.shields.io/badge/Open_HermitUI_Agent-1f6feb?style=for-the-badge" alt="Open HermitUI Agent" />
   </a>
   <a href="https://moooff.github.io/HermitUI/hermit-agent/">
@@ -31,9 +31,12 @@
   </a>
 </div>
 
-> **Status: v0.3.32** (Phase 3.7, a plan you can see). One self-contained HTML file,
-> [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (about 11 MB,
-> Python included), developed in this folder apart from the main app in [`../src/`](../src/).
+> **Status: v0.3.33** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) (about 38 MB,
+> Python, numpy, pandas and matplotlib included), developed in this folder apart from the
+> main app in [`../src/`](../src/). The smaller
+> [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (about 11 MB)
+> loads those packages from a CDN instead.
 
 Give it a task, like "clean up these CSVs and chart the monthly totals" or "write and test a parser for this log format". The agent writes Python, runs it on the files in its workspace, reads the output and picks the next step until the task is done. It can also read, write, edit, move and delete files without Python, and a CSV that Excel saved as Windows-1252 stays Windows-1252.
 
@@ -42,7 +45,7 @@ It works with llama.cpp, Ollama, LM Studio, vLLM or a cloud API. There is nothin
 ## Try it
 
 1. Start an OpenAI-compatible server that allows browser requests (CORS), e.g. `llama-server -m model.gguf --jinja --port 9931`. A cloud API works too, but then the task and what the agent prints go to that provider.
-2. Open [`dist/hermit-agent-standalone.html`](https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-standalone.html), or download it and double-click the file. Python starts offline in about a second.
+2. Open [`dist/hermit-agent-offline.html`](https://moooff.github.io/HermitUI/hermit-agent/dist/hermit-agent-offline.html), or download it and double-click the file. Python starts offline in a few seconds.
 3. In Settings, set the API Base URL (default `http://localhost:9931/v1`), the model and, if needed, the key. **Test Connection** checks them.
 4. Drop files into the workspace, describe the task, and press **Start**.
 
