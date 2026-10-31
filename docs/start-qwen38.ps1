@@ -136,16 +136,20 @@ try {
         Start-Sleep -Seconds 1
     }
     if ($ready) {
-        $body = '{"prompt":"Write a long Python module with several classes and docstrings:\n","n_predict":256,"temperature":0}'
+        # A ~2,000-token prompt as well: a spilled compute buffer can leave decode at full
+        # speed while prompt processing drops from ~1,500 to ~100 tok/s (seen 2026-10-31).
+        $filler = "The crew checked the ropes, counted the barrels and wrote everything in the log. " * 120
+        $body = @{ prompt = $filler + "`nWrite a long Python module with several classes and docstrings:`n"; n_predict = 256; temperature = 0; cache_prompt = $false } | ConvertTo-Json
         try {
             $r = Invoke-RestMethod -Uri "http://127.0.0.1:$port/completion" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 600
             $tps = [math]::Round($r.timings.predicted_per_second, 1)
+            $pps = [math]::Round($r.timings.prompt_per_second)
             Write-Host ""
-            if ($tps -lt 40) {
-                Write-Host ("SPEED CHECK: {0} tok/s - part of the model spilled into shared GPU memory." -f $tps) -ForegroundColor Red
+            if ($tps -lt 40 -or $pps -lt 400) {
+                Write-Host ("SPEED CHECK: decode {0} tok/s, prompt {1} tok/s - part of the model spilled into shared GPU memory." -f $tps, $pps) -ForegroundColor Red
                 Write-Host "Close GPU programs, or set `$ctxOverride lower (e.g. 4000 below the context above), and restart." -ForegroundColor Red
             } else {
-                Write-Host ("SPEED CHECK: {0} tok/s - everything is in VRAM." -f $tps) -ForegroundColor Green
+                Write-Host ("SPEED CHECK: decode {0} tok/s, prompt {1} tok/s - everything is in VRAM." -f $tps, $pps) -ForegroundColor Green
             }
             Write-Host ""
         } catch {
