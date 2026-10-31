@@ -7,6 +7,8 @@ dependencies to install for the unit half.
 node tests/run.mjs                                              # unit tests (all *.test.mjs)
 python3 build.py && ../benchmark/.venv/bin/python tests/e2e_agent.py [chromium] [firefox] [firefox=/path/to/stock/firefox]
 ../benchmark/.venv/bin/python tests/e2e_network.py                 # network audit, every change, ~10 s
+../benchmark/.venv/bin/python tests/e2e_network.py --offline       # the same against the offline build
+../benchmark/.venv/bin/python tests/e2e_network.py --offline-full  # …and the full offline build
 ../benchmark/.venv/bin/python tests/e2e_reference.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text]
 ../benchmark/.venv/bin/python tests/e2e_coding.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text]
 ../benchmark/.venv/bin/python tests/e2e_app.py --base-url http://localhost:9931/v1 [--runs 3] [--tool-mode native|text] [--context-size 20000] [--step-limit 40]
@@ -391,6 +393,11 @@ A canary sits in the task, an uploaded file and the API key. Checks:
   a wheel under the pinned Pyodide path, with no query, cookie or Referer.
 - The canary reaches only the endpoint; the API key only in its `Authorization`
   header, never in a body; no hits on `/exfil`.
+
+`--offline` audits `dist/hermit-agent-offline.html` instead, `--offline-full` the full
+offline build: no third-party host at all, and the packages' notes say "from this file".
+A fourth step uses `scipy.stats` (runs in the full build, fails with the offline note in
+the medium one), and a fifth imports sympy (in neither) and must fail before it runs.
 
 `--log out.json` saves every request for a closer look. A failure from an unreachable
 CDN shows as the first step failing to load numpy; rerun once it answers.

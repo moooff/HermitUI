@@ -12,17 +12,19 @@ HermitUI Agent (`hermit-agent/`) is a supervised agent that writes and runs Pyth
 - **Copy, don't import:** code from `../src/` is copied and adapted, and each copied function has a row in DESIGN §9 with its source commit, so fixes can be ported both ways.
 
 ## Build & test
-`python3 build.py` writes `dist/hermit-agent-standalone.html` (plus its `libs/` cache) and nothing outside this folder. The output is committed and linked from the project page, so build before every commit. Details on every test: [tests/README.md](tests/README.md).
+`python3 build.py` writes `dist/hermit-agent-standalone.html` and the offline builds in `OFFLINE_BUILDS` (DESIGN §8): `dist/hermit-agent-offline.html` (numpy, pandas, matplotlib inlined, ~38 MB, must stay under 50 MB) and `dist/hermit-agent-offline-full.html` (plus scipy, ~59 MB, gitignored, a release download), plus its `libs/` cache, and nothing outside this folder. The output is committed and linked from the project page, so build before every commit. Details on every test: [tests/README.md](tests/README.md).
 ```bash
 node tests/run.mjs                                    # unit tests (pure logic)
 ../benchmark/.venv/bin/python tests/e2e_agent.py      # mock endpoint, Chromium + Firefox; E2E_ONLY=a,b runs named scenarios
 ../benchmark/.venv/bin/python tests/e2e_reference.py --quick --tool-mode native   # real model on :9931: 5 tasks, ~1 min
 ../benchmark/.venv/bin/python tests/e2e_network.py    # network audit, ~10 s: every change
+../benchmark/.venv/bin/python tests/e2e_network.py --offline        # the offline build: no third-party host at all
+../benchmark/.venv/bin/python tests/e2e_network.py --offline-full   # the full offline build
 ```
 - Bundled libraries live in one manifest, `BUNDLED_LIBRARIES` in `src/script.js` (strict JSON between the `@bundled` markers; `build.py` and the unit tests parse it). A new one brings a pinned wheel (URL + sha256) and its Pyodide packages; the build checks the rest against the wheel's metadata (DESIGN §8). With no wheel on PyPI, pin its source archive under `sdist` and `build.py` builds the wheel; pin that wheel's sha256 from the first failed build's message.
 - Unit tests slice real functions out of `src/script.js` by name (`FUNCS`/`CONSTS` in `tests/extract.mjs`): parsers, the risk classifier, zip and the session schema are tested there; DOM and worker behaviour goes into `e2e_agent.py`. Renaming a listed function fails the suite; update the list with it. The slicer counts raw braces: an unbalanced `{` or `}` in a sliced function's string, regex or comment breaks the suite (every test file fails with "Identifier … has already been declared"), so write `\x7b`/`\x7d`.
 - Mock scripts in `e2e_agent.py` are picked by the first key that occurs in the task text, so a new `E2E-…` key must not contain an existing one (`E2E-PLAN` answered `E2E-PLANFIRST`), and a repeated key silently replaces the first.
-- The network audit (`e2e_network.py`: only `cdn.jsdelivr.net` is contacted, nothing private reaches it) runs on every change, before every commit; a new host or request the check rejects is a finding to report, not a check to loosen without the owner's say. Findings live in DESIGN §10.
+- The network audit (`e2e_network.py`: only `cdn.jsdelivr.net` is contacted, nothing private reaches it; with `--offline`/`--offline-full`, no third-party host) runs for all three builds on every change, before every commit; a new host or request the check rejects is a finding to report, not a check to loosen without the owner's say. Findings live in DESIGN §10.
 - The page's CSP blocks `eval`, so Playwright's `wait_for_function` can't run in it: poll with `page.evaluate`.
 - Real-model runs scale with the change. None when no agent behaviour changes. After a small change, the quick run above (and `--tool-mode text` if the change touches that protocol). After a bigger one (a phase, the agent loop, the system prompt's structure, packaging), the full suite: `e2e_reference.py --runs 3`, 27 tasks, 21 to 26 min per protocol on Qwen3.8-27B. `e2e_coding.py` (six coding tasks, hidden tests) and `e2e_app.py` (one long multi-file app) use the same runner and flags; `e2e_longrun.py` runs 20+ steps through outages. Start long runs detached, with `--app` on a copy of the build.
 

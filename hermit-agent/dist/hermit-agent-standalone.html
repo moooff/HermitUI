@@ -2451,7 +2451,7 @@ pre.live-output { border-color: var(--primary); }
     </div>
     <header class="app-header">
         <div class="brand">
-            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.31</span></h1>
+            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.32</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
             <span class="local-badge" id="localBadge" hidden>🏠 local</span>
             <span class="protocol-badge" id="protocolBadge">🔧 auto</span>
@@ -3049,7 +3049,9 @@ def hermit_clear_workspace():
             const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
             try { realImportScripts(url); } finally { URL.revokeObjectURL(url); }
         }
-        py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl, stdin: undefined });
+        // No package URL (the offline build): packages are virtual files too, handed over
+        // per load, and the harness reaches no host at all.
+        py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl: packageBase || VIRT, stdin: undefined });
         py.setStdin({ error: true });   // input() raises instead of hanging
         harness = py.globals.get("dict")();
         harness.set("INLINE_BACKEND_PY", INLINE_BACKEND_PY);
@@ -3119,7 +3121,9 @@ def hermit_clear_workspace():
     // it reports "Loaded …" / "Failed to load …" and the reasons through the callbacks.
     // packages: Pyodide packages by name (what bundled libraries import); wheels: the
     // bundled libraries to install, [{ name, files: [{ file, bytes }] }], after those.
-    async function load({ code, packages, wheels }) {
+    // files: the offline build's Pyodide wheels, [{ file, bytes }], served as virtual files
+    // for this load only.
+    async function load({ code, packages, wheels, files }) {
         const t0 = performance.now();
         const loaded = [], failed = [], errors = [], done = [];
         netAttempts = [];
@@ -3131,6 +3135,13 @@ def hermit_clear_workspace():
             },
             errorCallback: (m) => { if (errors.length < 20) errors.push(String(m).slice(0, 500)); },
         };
+        const served = [];
+        for (const f of Array.isArray(files) ? files : []) {
+            const name = String(f && f.file);
+            if (!/^[\w.+-]+\.(whl|zip)$/.test(name) || virtualFiles[name] || !(f.bytes instanceof Uint8Array)) continue;
+            virtualFiles[name] = [f.bytes, "application/octet-stream"];
+            served.push(name);
+        }
         netMode = "cdn";
         try {
             if (code) await py.loadPackagesFromImports(code, options);
@@ -3140,6 +3151,7 @@ def hermit_clear_workspace():
             if (!failed.length) failed.push("(packages)");
         } finally {
             netMode = "closed";
+            for (const name of served) delete virtualFiles[name];
         }
         // No network needed: the bytes came with the request. Not after a failed package:
         // a library counted as installed would never get its packages loaded again.
@@ -3243,7 +3255,7 @@ def hermit_clear_workspace():
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.31";
+const APP_VERSION = "0.3.32";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -5803,6 +5815,37 @@ function importPackageIndex(lock) {
     return map;
 }
 
+// The lock-file keys of the Pyodide packages `names` need, their dependencies included
+// (the lock's "depends", transitively). Names compare normalized ("Pillow" is "pillow");
+// a name the lock doesn't know comes back as given, so the caller can report it.
+function packageClosure(lock, names) {
+    const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
+    const keys = new Map(Object.keys(pk).map(k => [normalizePackageName(k), k]));
+    const out = [], todo = [...(Array.isArray(names) ? names : [])];
+    while (todo.length && out.length < 1000) {
+        const n = String(todo.shift());
+        const k = keys.get(normalizePackageName(n)) || n;
+        if (out.includes(k)) continue;
+        out.push(k);
+        const p = pk[k];
+        for (const d of p && Array.isArray(p.depends) ? p.depends : []) todo.push(d);
+    }
+    return out;
+}
+
+// The offline build (DESIGN §8): the lock-file keys of the packages that load from the
+// file alone, i.e. every package of their closure has its wheel inlined. inlined: the
+// file names build.py inlined (keys of window.__PYODIDE_PACKAGES__).
+function offlinePackages(lock, inlined) {
+    const pk = lock && typeof lock === "object" && lock.packages && typeof lock.packages === "object" ? lock.packages : {};
+    const have = new Set(Array.isArray(inlined) ? inlined : []);
+    const ok = new Set();
+    for (const k of Object.keys(pk)) {
+        if (packageClosure(lock, [k]).every(n => pk[n] && have.has(pk[n].file_name))) ok.add(k);
+    }
+    return ok;
+}
+
 // ---------- Bundled libraries (Phase 3.5) ----------
 // Package names compare normalized, the way pip does: Pyodide reports "Pillow" for the
 // lock entry "pillow", and "typing-extensions" is "typing_extensions" elsewhere.
@@ -5860,26 +5903,29 @@ function planBundledLoad(imports, texts, libs, loaded) {
     return { bundles, pyodide };
 }
 
-// The note a step gets after its packages loaded. r: the validated load result.
-function packageLoadNote(r) {
+// The note a step gets after its packages loaded. r: the validated load result; offline:
+// the offline build, whose Pyodide packages come from the file.
+function packageLoadNote(r, offline) {
     const loaded = (r && r.loaded) || [], installed = (r && r.installed) || [];
     if (!loaded.length && !installed.length) return "";
     const parts = [];
-    if (loaded.length) parts.push(`${loaded.join(", ")} from the Pyodide CDN`);
+    if (loaded.length) parts.push(`${loaded.join(", ")} from ${offline ? "this file" : "the Pyodide CDN"}`);
     if (installed.length) parts.push(`${installed.join(", ")} from the libraries bundled with HermitUI Agent`);
     return `Loaded ${parts.join(" and ")} (${((r.ms || 0) / 1000).toFixed(1)} s).`;
 }
 
 // Why a step's packages didn't load, for the step and the model. r: the worker's load
 // result { failed, errors, netAttempts }; online: navigator.onLine; cdn: the pinned
-// package URL. A blocked download outside the CDN means the registry was tampered with.
+// package URL, or "" in the offline build, which downloads nothing. A blocked download
+// outside the CDN means the registry was tampered with.
 function packageFailureMessage(r, online, cdn) {
     const failed = (r && r.failed || []).filter(n => n !== "(packages)");
     const what = failed.length ? failed.join(", ") : "the packages this code imports";
-    const outside = (r && r.netAttempts || []).find(a => !String(a).includes(cdn));
+    const outside = (r && r.netAttempts || []).find(a => !cdn || !String(a).includes(cdn));
     const first = (r && r.errors || []).find(e => !/^The following error occurred/.test(e)) || "";
     const still = " The standard library and packages that loaded earlier still work.";
-    if (outside) return `Couldn't load ${what}: the download was redirected outside the pinned package CDN (${outside}), so it was blocked. Nothing ran.${still}`;
+    if (outside) return `Couldn't load ${what}: the download was redirected ${cdn ? "outside the pinned package CDN" : "to the network, which this offline build never uses"} (${outside}), so it was blocked. Nothing ran.${still}`;
+    if (!cdn) return `Couldn't load ${what}${first ? ": " + first : "."} Nothing ran.${still}`;
     if (online === false) return `Couldn't load ${what}: this browser is offline, and packages are downloaded from the Pyodide CDN the first time they are imported. Nothing ran.${still}`;
     if (!first || /request failed|Failed to fetch|NetworkError|network error|Load failed/i.test(first)) {
         return `Couldn't load ${what}: the Pyodide package CDN (${cdn.replace(/^https?:\/\//, "").split("/")[0]}) couldn't be reached. Nothing ran.${still}`;
@@ -6671,7 +6717,28 @@ const PY = {
 };
 // What Pyodide can load (from its lock file): import names for the system prompt, and
 // import name -> package for the "loading …" notice before a step runs.
-const PKG = { names: [], byImport: new Map(), loading: [] };
+// lock: the parsed lock file; offline: in the offline build, the lock keys that load from
+// the file (offlinePackages), else null.
+const PKG = { names: [], byImport: new Map(), loading: [], lock: null, offline: null };
+
+// The offline build's Pyodide wheels (file name -> Promise<Uint8Array>), inflated on their
+// first use, checked against the lock file's sha256 and kept for the page's life like the
+// bundled wheels. The worker gets copies per load and drops them after.
+const OFFLINE_WHEELS = new Map();
+function loadOfflineWheel(file, sha256) {
+    if (!OFFLINE_WHEELS.has(file)) {
+        const p = (async () => {
+            const inl = window.__PYODIDE_PACKAGES__;
+            if (!inl || typeof inl[file] !== "string") throw new Error(`${file} is missing from this build.`);
+            const bytes = await gunzipToBytes(inl[file]);
+            if (await sha256Hex(bytes) !== sha256) throw new Error(`${file} doesn't match the sha256 in pyodide-lock.json.`);
+            return bytes;
+        })();
+        p.catch(() => OFFLINE_WHEELS.delete(file));
+        OFFLINE_WHEELS.set(file, p);
+    }
+    return OFFLINE_WHEELS.get(file);
+}
 
 // The Pyodide core: inlined by build.py (gzip + base64), or fetched from the pinned
 // CDN when running the unbuilt source.
@@ -6694,7 +6761,15 @@ function loadPyodideCore() {
             try {
                 const lock = JSON.parse(new TextDecoder().decode(core.lock));
                 const bundled = Object.values(BUNDLED_LIBRARIES).map(l => l.imports[0]);
-                PKG.names = [...new Set([...packageImportNames(lock), ...bundled])].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                PKG.lock = lock;
+                // The offline build lists only what loads from the file, so the model
+                // doesn't reach for a package it can't have.
+                let listed = lock;
+                if (window.__PYODIDE_PACKAGES__) {
+                    PKG.offline = offlinePackages(lock, Object.keys(window.__PYODIDE_PACKAGES__));
+                    listed = { packages: Object.fromEntries(Object.entries(lock.packages || {}).filter(([k]) => PKG.offline.has(k))) };
+                }
+                PKG.names = [...new Set([...packageImportNames(listed), ...bundled])].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 PKG.byImport = importPackageIndex(lock);
             } catch (e) { console.error("pyodide-lock.json unreadable:", e); }
             return core;
@@ -6803,7 +6878,8 @@ function restartInterpreter() {
         const core = await loadPyodideCore();
         if (gen !== PY.gen) throw new Error("superseded");
         PY.worker = startWorker();
-        const info = await workerCall("boot", { core, packageBaseUrl: PYODIDE_CDN }, LIMITS.bootTimeoutMs);
+        // Offline build: packages come from the worker's virtual files, never the CDN.
+        const info = await workerCall("boot", { core, packageBaseUrl: window.__PYODIDE_PACKAGES__ ? "" : PYODIDE_CDN }, LIMITS.bootTimeoutMs);
         if (gen !== PY.gen) throw new Error("superseded");
         PY.info = info && typeof info === "object" ? { bootMs: Number(info.bootMs) || 0, pyVersion: String(info.pyVersion || "").slice(0, 20) } : null;
         PY.syncedVersion = -1;
@@ -6895,7 +6971,18 @@ async function packagesToLoad(code) {
     }
     const { bundles, pyodide } = planBundledLoad(all, texts, BUNDLED_LIBRARIES, [...loaded, ...packages]);
     if (files.length && (packages.length || bundles.length)) debugLog("tool", `imports read from the step's code and ${files.join(", ")}`);
-    return { packages: [...packages, ...pyodide, ...bundles], imports, pyodide, bundles };
+    return { packages: [...packages, ...pyodide, ...bundles], imports, pyodide, bundles, direct: packages };
+}
+
+// Offline build: the inlined wheels a load needs, or the packages this file doesn't have.
+// names: the Pyodide packages to load (the closure is added here). Returns { files } with
+// [{ file, bytes }] for the worker's load op, or { missing } with the package names.
+async function offlineFilesFor(names) {
+    const pk = (PKG.lock && PKG.lock.packages) || {};
+    const want = packageClosure(PKG.lock, names);
+    const missing = names.filter(n => !packageClosure(PKG.lock, [n]).every(k => PKG.offline.has(k)));
+    if (missing.length) return { missing };
+    return { files: await Promise.all(want.map(async (k) => ({ file: pk[k].file_name, bytes: await loadOfflineWheel(pk[k].file_name, pk[k].sha256) }))) };
 }
 
 function validateLoadResult(r) {
@@ -6917,13 +7004,27 @@ async function runInWorker(code, opts) {
     const gen = PY.gen;
     let phase = "packages", pkgNotes = [], pkgAttempts = [];
     try {
-        const { packages: need, imports: needImports, pyodide, bundles } = await packagesToLoad(code);
+        const { packages: need, imports: needImports, pyodide, bundles, direct } = await packagesToLoad(code);
         if (need.length) {
             PKG.loading = need;
             if (typeof setActivity === "function" && RUN.active) setActivity("packages");
             debugLog("tool", `loading packages: ${need.join(", ")}`);
             const listing = () => { const l = {}; for (const [p, f] of WS.files) l[p] = f.hash; return l; };
-            let wheels = [];
+            let wheels = [], files = [];
+            if (PKG.offline) {
+                let off;
+                try { off = await offlineFilesFor([...direct, ...pyodide]); } catch (e) { off = { error: e.message }; }
+                if (!off.files) {
+                    PKG.loading = [];
+                    setInterpreterState("idle");
+                    const msg = off.missing
+                        ? `${off.missing.join(", ")} isn't part of this offline build, which has no network to download packages from. Use the packages listed in your instructions instead. Nothing ran. The standard library and packages that loaded earlier still work.`
+                        : `Couldn't load ${need.join(", ")}: ${off.error} Nothing ran.`;
+                    debugLog("error", "offline package unavailable: " + (off.missing ? off.missing.join(", ") : off.error));
+                    return { status: "error", output: msg, notes: [], netAttempts: [], listing: listing(), files: {}, figures: [], packageError: true };
+                }
+                files = off.files;
+            }
             try {
                 wheels = await Promise.all(bundles.map(async (name) => ({
                     name, files: await Promise.all(BUNDLED_LIBRARIES[name].wheels.map(async (w) => ({ file: w.file, bytes: await loadBundledWheel(w) }))),
@@ -6940,16 +7041,16 @@ async function runInWorker(code, opts) {
             // also covers packages that only the step's workspace modules import. The bundled
             // libraries' own Pyodide packages go by name, their wheels as bytes (copied: the
             // cache keeps the originals for the next worker).
-            const lr = validateLoadResult(await workerCall("load", { code: needImports.map(i => "import " + i).join("\n"), packages: pyodide, wheels }, LIMITS.packageTimeoutMs));
+            const lr = validateLoadResult(await workerCall("load", { code: needImports.map(i => "import " + i).join("\n"), packages: pyodide, wheels, files }, LIMITS.packageTimeoutMs));
             PKG.loading = [];
             pkgAttempts = lr.netAttempts;
             if (lr.failed.length) {
-                const msg = packageFailureMessage(lr, typeof navigator !== "undefined" ? navigator.onLine : true, PYODIDE_CDN);
+                const msg = packageFailureMessage(lr, typeof navigator !== "undefined" ? navigator.onLine : true, PKG.offline ? "" : PYODIDE_CDN);
                 debugLog("error", "package load failed: " + lr.failed.join(", "), lr.errors.join("\n"));
                 setInterpreterState("idle");
                 return { status: "error", output: msg, notes: [], netAttempts: lr.netAttempts, listing: listing(), files: {}, figures: [], packageError: true };
             }
-            const note = packageLoadNote(lr);
+            const note = packageLoadNote(lr, !!PKG.offline);
             if (note) {
                 pkgNotes = [note];
                 debugLog("result", note);
@@ -6968,7 +7069,7 @@ async function runInWorker(code, opts) {
         const status = e.message === "timeout" ? "timeout" : e.message === "killed" ? "killed" : "crashed";
         if (gen === PY.gen) restartInterpreter();
         const output = status === "crashed" ? e.message
-            : phase === "packages" && status === "timeout" ? `Loading the packages this code imports took longer than ${Math.round(LIMITS.packageTimeoutMs / 1000)} s, so it was stopped. The package CDN may be slow or unreachable.`
+            : phase === "packages" && status === "timeout" ? `Loading the packages this code imports took longer than ${Math.round(LIMITS.packageTimeoutMs / 1000)} s, so it was stopped.${PKG.offline ? "" : " The package CDN may be slow or unreachable."}`
             : "";
         return { status, output, notes: [], netAttempts: [], listing: null, files: {}, figures: [], packagePhase: phase === "packages" };
     }

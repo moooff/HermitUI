@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.31** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.32** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-standalone.html`](dist/hermit-agent-standalone.html) (about 11 MB,
 > Python included), developed in this folder apart from the main app in [`../src/`](../src/).
 
@@ -98,6 +98,15 @@ There is no telemetry, and opening the file makes no network request. Using it s
 
 - **To the API Base URL you set:** the conversation, including what the agent reads from your files and what its code prints, the files it attaches to a separate request, plus the API key. Before the first request, and when the URL or model changes, the app also asks the server what it supports (`/models`, `/props`, `/api/show`), as does **Test Connection**.
 - **To jsDelivr (`cdn.jsdelivr.net/pyodide/...`):** only when agent code needs a Pyodide package that isn't in the file, such as numpy or pandas. jsDelivr sees your IP address and the package name, never the task or your files.
+
+Two offline builds never contact jsDelivr, because the packages are in the file:
+
+| File | Size | In the file | Where |
+|---|---|---|---|
+| [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) | about 38 MB | numpy, pandas, matplotlib | here |
+| `hermit-agent-offline-full.html` | about 59 MB | the same plus scipy | the Releases page |
+
+Other Pyodide packages (sympy, scikit-learn, ...) can't be imported in them; the agent is told which ones it has.
 
 A network audit (`tests/e2e_network.py`) checks this on every change: one agent run through a logging proxy, with a marker in the task, a file and the API key. The results are in [DESIGN §10](DESIGN.md#10-security).
 

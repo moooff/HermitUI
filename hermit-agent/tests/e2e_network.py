@@ -1,8 +1,11 @@
 """Network audit of the built app: one short agent run, every connection logged.
 
-    python3 build.py && ../benchmark/.venv/bin/python tests/e2e_network.py [--log out.json]
+    python3 build.py && ../benchmark/.venv/bin/python tests/e2e_network.py [--offline | --offline-full] [--log out.json]
 
 Runs on every change (see tests/README.md); findings in DESIGN §10. Needs cdn.jsdelivr.net.
+--offline audits dist/hermit-agent-offline.html instead, --offline-full the full one: no
+third-party host at all, the packages come from the file, and a package the file doesn't
+carry (sympy; scipy in the medium build) fails cleanly before the step runs.
 
 Two independent views of the traffic:
   1. A logging proxy that headless Chromium is forced through, loopback included, so
@@ -33,7 +36,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from mock_openai import serve  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-APP_URL = (ROOT / "dist" / "hermit-agent-standalone.html").as_uri()
+FULL = "--offline-full" in sys.argv
+OFFLINE = FULL or "--offline" in sys.argv
+APP_URL = (ROOT / "dist" / ("hermit-agent-offline-full.html" if FULL else "hermit-agent-offline.html" if OFFLINE else "hermit-agent-standalone.html")).as_uri()
+SOURCE = "from this file" if OFFLINE else "from the Pyodide CDN"
 CANARY = "CANARY7731xq"
 API_KEY = f"sk-{CANARY}-key"
 CSV = f"name,amount,note\nalice,120.5,{CANARY}-filedata\nbob,80,x\ncarol,99.5,y\n".encode()
@@ -72,6 +78,16 @@ from tabulate import tabulate
 import pandas as pd
 print(tabulate(pd.read_csv("data.csv"), headers="keys"))
 """),
+] + ([
+    py("""
+from scipy import stats
+print("t-test p", round(stats.ttest_1samp([120.5, 80, 99.5], 90).pvalue, 3))
+"""),
+    py("""
+import sympy
+print(sympy.symbols("x"))
+"""),
+] if OFFLINE else []) + [
     {"content": "Done: summary, chart and table."},
 ]}
 
@@ -177,25 +193,32 @@ def main():
         print("— running the task (numpy, pandas, matplotlib from the CDN; tabulate bundled)")
         page.click("#sendBtn")
         wait_for(page, "() => S.status", "done", 300, "the task")
-        st = page.evaluate("() => S.timeline.filter(t => t.type === 'step' && t.kind !== 'final').map(t => ({ status: t.status, notes: (t.notes || []).join(' | ') }))")
+        st = page.evaluate("() => S.timeline.filter(t => t.type === 'step' && t.kind !== 'final').map(t => ({ status: t.status, notes: (t.notes || []).join(' | '), output: String(t.output || '').slice(0, 600) }))")
         time.sleep(1)
         browser.close()
 
     print("— checks")
     check("the three steps ran", [s["status"] for s in st][:3] == ["ok"] * 3, st)
-    check("numpy and pandas came from the CDN", "numpy, pandas" in st[0]["notes"] and "from the Pyodide CDN" in st[0]["notes"], st[0]["notes"])
-    check("matplotlib came from the CDN", "matplotlib" in st[1]["notes"] and "from the Pyodide CDN" in st[1]["notes"], st[1]["notes"])
+    check(f"numpy and pandas came {SOURCE}", "numpy, pandas" in st[0]["notes"] and SOURCE in st[0]["notes"], st[0]["notes"])
+    check(f"matplotlib came {SOURCE}", "matplotlib" in st[1]["notes"] and SOURCE in st[1]["notes"], st[1]["notes"])
     check("tabulate came from the bundle", "Loaded tabulate from the libraries bundled" in st[2]["notes"], st[2]["notes"])
+    if OFFLINE:
+        if FULL:
+            check("scipy came from this file and ran", len(st) > 3 and st[3]["status"] == "ok" and "scipy" in st[3]["notes"] and SOURCE in st[3]["notes"], st[3:4])
+        else:
+            check("scipy, not in the medium build, fails cleanly", len(st) > 3 and st[3]["status"] == "error" and "isn't part of this offline build" in st[3]["output"], st[3:4])
+        check("sympy, not in the file, fails cleanly", len(st) > 4 and st[4]["status"] == "error" and "isn't part of this offline build" in st[4]["output"], st[4:5])
 
     third = sorted({p[1].rsplit(":", 1)[0] for p in PROXY_LOG if p[0] == "CONNECT"})
     plain = sorted({urlsplit(p[1]).netloc for p in PROXY_LOG if p[0] != "CONNECT"})
-    check(f"proxy: the only third-party host is {CDN_HOST}", third == [CDN_HOST], third)
+    want = [] if OFFLINE else [CDN_HOST]
+    check(f"proxy: third-party hosts are {want or 'none'}", third == want, third)
     check("proxy: plain HTTP only to the mock", plain == [mock_host], plain)
 
     web = [r for r in reqs if urlsplit(r["url"]).scheme in ("http", "https")]
     cdn = [r for r in web if urlsplit(r["url"]).netloc != mock_host]
     check("playwright: every third-party request is a GET of a pinned Pyodide wheel, no query",
-          cdn and all(r["method"] == "GET" and urlsplit(r["url"]).netloc == CDN_HOST
+          (OFFLINE or cdn) and all(r["method"] == "GET" and urlsplit(r["url"]).netloc == CDN_HOST
                       and urlsplit(r["url"]).path.startswith("/pyodide/v") and r["url"].endswith(".whl")
                       and not urlsplit(r["url"]).query for r in cdn),
           [r["method"] + " " + r["url"] for r in cdn if not r["url"].endswith(".whl") or r["method"] != "GET"])

@@ -1112,8 +1112,21 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   harness detects imports (`pyodide.code.find_imports`) and loads the needed packages
   through the harness, never through agent code, then shows "loaded pandas" in the
   timeline. They are held in memory only, never in a persistent cache.
-- Later, optionally: an "offline pack" build that inlines a curated set at a much
-  larger file size.
+- Two offline builds (2026-10-31, `OFFLINE_BUILDS` in `build.py`): the same file plus
+  numpy, pandas and matplotlib (`dist/hermit-agent-offline.html`, 21 wheels, 19.9 MB
+  raw, 37.6 MB in all, committed; the build fails at 50 MB, GitHub's warning size), or
+  those plus scipy (`dist/hermit-agent-offline-full.html`, 22 wheels, 36.3 MB raw,
+  59.2 MB, gitignored and published as a release download). Both carry the bundled
+  libraries' Pyodide packages (lxml, beautifulsoup4, …) and the small stdlib modules
+  Pyodide ships apart (sqlite3, lzma, pydecimal, pydoc_data). `build.py` checks each wheel against the lock file's sha256 and inlines
+  it as `window.__PYODIDE_PACKAGES__`. The worker boots without a package URL, so
+  Pyodide's package base is the virtual `indexURL` and `cdn` mode reaches no host. A
+  load gets the wheels of its packages' closure (`packageClosure`) as bytes, which the
+  worker serves as virtual files for that load only; the main thread inflates each once
+  and checks it against the lock's sha256 again (`loadOfflineWheel`). The system prompt
+  lists only the packages whose whole closure is inlined (`offlinePackages`); a step
+  that imports another one doesn't run and is told it isn't part of the offline build.
+  ssl and hashlib's OpenSSL module stay out (hashlib works on its built-in hashes).
 - If packages can't load (offline), the step fails with a clear observation, and the
   model is told which packages are available.
 
@@ -1347,6 +1360,10 @@ is the second.
     services) was contacted, and the browser added no background traffic.
   - The endpoint also gets the capability probes (`/props`, `/v1/models`,
     `/api/show`, `/api/v0/models`), with the API key.
+  - The offline builds (`e2e_network.py --offline` and `--offline-full`, same day)
+    contacted no third-party host at all: numpy, pandas and matplotlib (and scipy in
+    the full build) came from the file, and a package the file lacks (sympy; scipy in
+    the medium build) failed with the offline note before anything ran.
   - By design, jsDelivr sees the user's IP address, user agent and which packages a
     task loads; numpy plus matplotlib hints at the kind of work, never its content.
     Served from GitHub Pages, it would also see the page's origin as Referer (not

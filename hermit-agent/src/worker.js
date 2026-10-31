@@ -415,7 +415,9 @@ def hermit_clear_workspace():
             const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
             try { realImportScripts(url); } finally { URL.revokeObjectURL(url); }
         }
-        py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl, stdin: undefined });
+        // No package URL (the offline build): packages are virtual files too, handed over
+        // per load, and the harness reaches no host at all.
+        py = await self.loadPyodide({ indexURL: VIRT, packageBaseUrl: packageBase || VIRT, stdin: undefined });
         py.setStdin({ error: true });   // input() raises instead of hanging
         harness = py.globals.get("dict")();
         harness.set("INLINE_BACKEND_PY", INLINE_BACKEND_PY);
@@ -485,7 +487,9 @@ def hermit_clear_workspace():
     // it reports "Loaded …" / "Failed to load …" and the reasons through the callbacks.
     // packages: Pyodide packages by name (what bundled libraries import); wheels: the
     // bundled libraries to install, [{ name, files: [{ file, bytes }] }], after those.
-    async function load({ code, packages, wheels }) {
+    // files: the offline build's Pyodide wheels, [{ file, bytes }], served as virtual files
+    // for this load only.
+    async function load({ code, packages, wheels, files }) {
         const t0 = performance.now();
         const loaded = [], failed = [], errors = [], done = [];
         netAttempts = [];
@@ -497,6 +501,13 @@ def hermit_clear_workspace():
             },
             errorCallback: (m) => { if (errors.length < 20) errors.push(String(m).slice(0, 500)); },
         };
+        const served = [];
+        for (const f of Array.isArray(files) ? files : []) {
+            const name = String(f && f.file);
+            if (!/^[\w.+-]+\.(whl|zip)$/.test(name) || virtualFiles[name] || !(f.bytes instanceof Uint8Array)) continue;
+            virtualFiles[name] = [f.bytes, "application/octet-stream"];
+            served.push(name);
+        }
         netMode = "cdn";
         try {
             if (code) await py.loadPackagesFromImports(code, options);
@@ -506,6 +517,7 @@ def hermit_clear_workspace():
             if (!failed.length) failed.push("(packages)");
         } finally {
             netMode = "closed";
+            for (const name of served) delete virtualFiles[name];
         }
         // No network needed: the bytes came with the request. Not after a failed package:
         // a library counted as installed would never get its packages loaded again.

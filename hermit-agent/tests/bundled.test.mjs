@@ -78,6 +78,7 @@ section("3. Notes and hints");
         X.packageLoadNote({ loaded: ["lxml"], installed: ["python-docx"], ms: 1234 }) === "Loaded lxml from the Pyodide CDN and python-docx from the libraries bundled with HermitUI Agent (1.2 s).");
     check("…or just the CDN, worded as before", X.packageLoadNote({ loaded: ["six"], installed: [], ms: 500 }) === "Loaded six from the Pyodide CDN (0.5 s).");
     check("…and nothing when nothing loaded", X.packageLoadNote({ loaded: [], installed: [] }) === "" && X.packageLoadNote(null) === "");
+    check("…the offline build names the file as the source", X.packageLoadNote({ loaded: ["numpy"], installed: [], ms: 500 }, true) === "Loaded numpy from this file (0.5 s).");
     const bundled = [...X.bundledImportIndex(LIBS).keys()];
     const h = X.moduleNotFoundHint("ModuleNotFoundError: No module named 'docx'", ["docx", "numpy"], bundled);
     check("a bundled library imported where the harness couldn't see it: import it in the step", /docx is available but wasn't loaded/.test(h) && /Add "import docx"/.test(h), h);
@@ -104,6 +105,33 @@ section("4. The system prompt names the bundled libraries for their formats");
         check(`${pr}: each format names its library`, !missing.length, missing.join(" "));
         check(`${pr}: no longer says nothing writes .xlsx/.docx/.pptx`, !/Nothing here writes/.test(s));
     }
+}
+
+section("4. The offline build (packageClosure, offlinePackages)");
+{
+    const lock = { packages: {
+        numpy: { name: "numpy", file_name: "numpy.whl", depends: [] },
+        pillow: { name: "Pillow", file_name: "pillow.whl", depends: [] },
+        matplotlib: { name: "matplotlib", file_name: "mpl.whl", depends: ["numpy", "Pillow", "cycler"] },
+        cycler: { name: "cycler", file_name: "cycler.whl", depends: [] },
+        sympy: { name: "sympy", file_name: "sympy.whl", depends: ["mpmath"] },
+        mpmath: { name: "mpmath", file_name: "mpmath.whl", depends: [] },
+        loop: { name: "loop", file_name: "loop.whl", depends: ["loop"] },
+    } };
+    const j = JSON.stringify;
+    check("a closure holds the package and its dependencies, by lock key", j(X.packageClosure(lock, ["matplotlib"]).sort()) === j(["cycler", "matplotlib", "numpy", "pillow"]));
+    check("…names compare normalized (Pillow is pillow)", j(X.packageClosure(lock, ["Pillow"])) === j(["pillow"]));
+    check("…an unknown name comes back as given", j(X.packageClosure(lock, ["nope"])) === j(["nope"]));
+    check("…a self-dependency doesn't loop", j(X.packageClosure(lock, ["loop"])) === j(["loop"]));
+    check("…garbage gives nothing", j(X.packageClosure(null, null)) === j([]));
+    const ok = X.offlinePackages(lock, ["numpy.whl", "pillow.whl", "mpl.whl", "cycler.whl", "sympy.whl"]);
+    check("offline: a package loads when its whole closure is inlined", ok.has("matplotlib") && ok.has("numpy") && ok.has("pillow"));
+    check("…and not when a dependency is missing (sympy without mpmath)", !ok.has("sympy") && !ok.has("mpmath"));
+    check("…nothing inlined, nothing available", X.offlinePackages(lock, []).size === 0 && X.offlinePackages(null, null).size === 0);
+    const msg = X.packageFailureMessage({ failed: ["numpy"], errors: ["bad wheel"], netAttempts: [] }, true, "");
+    check("offline failure: the error, no CDN advice", /^Couldn't load numpy: bad wheel Nothing ran\./.test(msg) && !/CDN/.test(msg), msg);
+    const net = X.packageFailureMessage({ failed: ["six"], errors: [], netAttempts: ["fetch https://cdn.jsdelivr.net/x.whl"] }, true, "");
+    check("offline failure: any download attempt is reported as blocked", /never uses/.test(net) && /blocked/.test(net), net);
 }
 
 report();

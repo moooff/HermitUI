@@ -14,6 +14,12 @@ gzipped + base64-encoded as window.__HERMIT_WHEELS__; a library PyPI has no whee
 one built from its pinned source archive). Downloads are cached in libs/ (gitignored).
 Like the root build it fails loudly instead of writing an output that still points at a CDN.
 
+It also writes the offline builds in OFFLINE_BUILDS (dist/hermit-agent-offline.html and
+dist/hermit-agent-offline-full.html): the same file plus the build's Pyodide packages, their
+dependencies and the bundled libraries' Pyodide packages (verified against the sha256 in
+pyodide-lock.json, inlined gzipped + base64-encoded as window.__PYODIDE_PACKAGES__). An
+offline build never contacts the package CDN; a package it doesn't carry can't be imported.
+
 Adapted from ../build.py; it never reads from or writes to anything outside this folder.
 """
 import base64
@@ -47,6 +53,17 @@ PYODIDE_SHA256 = {
     "pyodide.asm.wasm": "54309a5a2cfd757b1f0fdbc9093c92503f7b341500110329d932487183912718",
     "python_stdlib.zip": "831fd1e535084b972f87c6a35275de3d236efd5166f5e77ce89497710635e73c",
     "pyodide-lock.json": "14d2c2dba101277999e17135e653d8f15389ad1437f53eae213bf0c3cdff723d",
+}
+
+# The offline builds: output file -> (size limit in MB, Pyodide packages by lock-file name).
+# Their dependencies and the bundled libraries' Pyodide packages are added. The stdlib
+# modules Pyodide ships separately are small; ssl and hashlib (OpenSSL) are left out,
+# hashlib works without. hermit-agent-offline.html is committed and must stay below
+# GitHub's 50 MB warning; the full one is gitignored and published as a release download.
+OFFLINE_STDLIB = ["sqlite3", "lzma", "pydecimal", "pydoc-data"]
+OFFLINE_BUILDS = {
+    "hermit-agent-offline.html": (50, ["numpy", "pandas", "matplotlib"] + OFFLINE_STDLIB),
+    "hermit-agent-offline-full.html": (None, ["numpy", "pandas", "matplotlib", "scipy"] + OFFLINE_STDLIB),
 }
 
 # The standalone file's policy: no remote script/style/font host at all, so agent
@@ -355,6 +372,37 @@ def main():
     print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e6:.2f} MB "
           f"(Pyodide core {raw_total / 1e6:.1f} MB raw, bundled libraries {wheel_total / 1e6:.2f} MB raw)")
 
+    if out.count(wheels_script) != 1:
+        fail("offline build: the bundled-wheels script isn't in the standalone output exactly once.")
+    keys = {norm(k): k for k in lock}
+    for file_name, (limit_mb, wanted) in OFFLINE_BUILDS.items():
+        print(f"📥 Offline packages: {file_name}")
+        closure, todo = [], wanted + [p for spec in BUNDLED.values() for p in spec["pyodide"]]
+        while todo:
+            n = todo.pop(0)
+            k = keys.get(norm(n))
+            if k is None:
+                fail(f"{file_name}: {n} isn't a package in pyodide-lock.json.")
+            if k not in closure:
+                closure.append(k)
+                todo += lock[k]["depends"]
+        packages, pkg_total = {}, 0
+        for k in sorted(closure):
+            file = lock[k]["file_name"]
+            if not re.fullmatch(r"[\w.+-]+\.(whl|zip)", file):
+                fail(f"{file_name}: {k} has an unexpected file name {file!r}.")
+            data = cached(m.group(1) + file, f"pyodide-{v.group(1)}/{file}", check=lock[k]["sha256"])
+            packages[file] = base64.b64encode(gzip.compress(data, 9, mtime=0)).decode()
+            pkg_total += len(data)
+        packages_script = "<script>window.__PYODIDE_PACKAGES__ = " + json.dumps(packages) + ";</script>"
+        print(f"  -> {len(packages)} packages ({', '.join(sorted(closure))}), {pkg_total / 1e6:.1f} MB "
+              f"({sum(map(len, packages.values())) / 1e6:.1f} MB inlined)")
+        target = DIST / file_name
+        target.write_text(out.replace(wheels_script, wheels_script + "\n" + packages_script), encoding="utf-8")
+        size = target.stat().st_size / 1e6
+        if limit_mb and size >= limit_mb:
+            fail(f"{file_name} is {size:.1f} MB, over its {limit_mb} MB limit (OFFLINE_BUILDS).")
+        print(f"  ✅ {target.relative_to(ROOT)}: {size:.2f} MB")
 
 if __name__ == "__main__":
     main()
