@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.33** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.34** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) (about 38 MB,
 > Python, numpy, pandas and matplotlib included), developed in this folder apart from the
 > main app in [`../src/`](../src/). The smaller
@@ -110,6 +110,8 @@ Two offline builds never contact jsDelivr, because the packages are in the file:
 | `hermit-agent-offline-full.html` | about 59 MB | the same plus scipy | the Releases page |
 
 Other Pyodide packages (sympy, scikit-learn, ...) can't be imported in them; the agent is told which ones it has.
+
+Each file carries the licenses of the third-party software inside it (Settings, "Third-party licenses"); the full set is in [`dist/THIRD-PARTY-LICENSES.txt`](dist/THIRD-PARTY-LICENSES.txt).
 
 A network audit (`tests/e2e_network.py`) checks this on every change: one agent run through a logging proxy, with a marker in the task, a file and the API key. The results are in [DESIGN §10](DESIGN.md#10-security).
 

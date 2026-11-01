@@ -217,6 +217,85 @@ def wheel_from_sdist(lib, spec, data):
     return out.getvalue()
 
 
+LICENSES = ROOT / "licenses"
+LICENSE_NAME = re.compile(r"(LICEN[CS]E|COPYING|NOTICE)", re.I)
+
+
+def wheel_license_texts(data):
+    """(path, text) for every license file inside a wheel: dist-info licenses and the
+    LICENSE/COPYING files vendored code carries in the package tree."""
+    out = []
+    z = zipfile.ZipFile(io.BytesIO(data))
+    for n in sorted(z.namelist()):
+        base = n.rsplit("/", 1)[-1]
+        if n.endswith("/") or base.endswith((".py", ".pyi", ".pyc", ".so", ".h", ".c")):
+            continue
+        if LICENSE_NAME.search(base) or "/licenses/" in n:
+            out.append((n, z.read(n).decode("utf-8", "replace").replace("\r\n", "\n").strip()))
+    return out
+
+
+def third_party_notices(title, version, lock, pyodide_wheels, bundled_wheels):
+    """The third-party notices for one build (DESIGN §8): the core components, then each
+    inlined wheel's own license files plus the texts licenses/manifest.json adds for it
+    (code compiled into the wheel whose license the wheel doesn't carry).
+    pyodide_wheels: lock key -> wheel bytes; bundled_wheels: wheel file -> bytes."""
+    man = json.loads((LICENSES / "manifest.json").read_text(encoding="utf-8"))
+    for k in man["packages"]:
+        if k not in lock:
+            fail(f"licenses/manifest.json names {k}, which isn't a package in pyodide-lock.json.")
+    sections, seen_files, credits = [], set(), []
+
+    def entry(e):
+        if e.get("credit") and man["credits"][e["credit"]] not in credits:
+            credits.append(man["credits"][e["credit"]])
+        body = [e["note"]] if e.get("note") else []
+        if e.get("text"):
+            body.append(e["text"])
+        for f in e.get("files", []):
+            path = LICENSES / f
+            if not path.exists():
+                fail(f"licenses/manifest.json: {f} doesn't exist in licenses/.")
+            body.append(path.read_text(encoding="utf-8").strip() if f not in seen_files else f"(The text of {f} is given above.)")
+            seen_files.add(f)
+        sections.append((f"{e['name']} ({e['license']})", "\n\n".join(body)))
+
+    for e in man["core"]:
+        entry(e)
+    for k in sorted(pyodide_wheels):
+        p = lock[k]
+        for path, text in wheel_license_texts(pyodide_wheels[k]):
+            sections.append((f"{p['name']} {p['version']}: {path}", text))
+        for e in man["packages"].get(k, []):
+            entry(e)
+    for file in sorted(bundled_wheels):
+        for path, text in wheel_license_texts(bundled_wheels[file]):
+            sections.append((f"{file.split('-')[0]} (bundled library): {path}", text))
+    for k in sorted(pyodide_wheels):
+        if not wheel_license_texts(pyodide_wheels[k]) and k not in man["packages"] and lock[k]["package_type"] != "cpython_module":
+            fail(f"{k}: its wheel carries no license file and licenses/manifest.json has nothing for it.")
+    rule = "=" * 78
+    head = (f"Third-party licenses: {title}, HermitUI Agent v{version}\n\n"
+            "HermitUI Agent is free software under the GNU Affero General Public License v3\n"
+            "(https://github.com/moooff/HermitUI). This text holds the copyright notices and\n"
+            "licenses of the third-party software inside it.\n\n"
+            + ("".join(c + "\n" for c in credits) + "\n" if credits else "")
+            + "Contents:\n" + "".join(f"  - {t}\n" for t, _ in sections))
+    return head + "".join(f"\n{rule}\n{t}\n{rule}\n\n{b}\n" for t, b in sections)
+
+
+def with_notices(html_text, notices):
+    """The built page with its notices as a text/plain block before </body>."""
+    if re.search(r"</script|<!--", notices, re.I):
+        fail("A license text contains </script or <!--, which can't go into a text/plain block as is.")
+    block = f'<script type="text/plain" id="thirdPartyLicenses">\n{notices}</script>\n'
+    # The last </body>: inlined scripts contain the string too.
+    i = html_text.rfind("</body>")
+    if i < 0 or html_text[i:].strip() != "</body>\n</html>":
+        fail("The built page doesn't end in </body></html>.")
+    return html_text[:i] + block + html_text[i:]
+
+
 BUNDLED = {}
 
 
@@ -296,7 +375,7 @@ def main():
     lock_names = {norm(k) for k in lock} | {norm(p["name"]) for p in lock.values()}
     lock_imports = {i for p in lock.values() for i in p.get("imports", [])}
     dist_of = lambda f: norm(f.split("-")[0])   # noqa: E731
-    wheels, wheel_total = {}, 0
+    wheels, wheel_total, bundled_bytes = {}, 0, {}
     for lib, spec in BUNDLED.items():
         if norm(lib) in lock_names or set(spec["imports"]) & lock_imports:
             fail(f"{lib}: Pyodide already has it (by name or import name); don't bundle it.")
@@ -330,6 +409,7 @@ def main():
             else:
                 data = cached(w["url"], "wheels/" + w["file"], check=w["sha256"])
             tops |= check_wheel(lib, w, data, dists)
+            bundled_bytes[w["file"]] = data
             if w["file"] not in wheels:
                 # gzip: a built wheel is stored, not deflated (that is what makes it reproducible).
                 wheels[w["file"]] = base64.b64encode(gzip.compress(data, 9, mtime=0)).decode()
@@ -367,14 +447,16 @@ def main():
     if re.search(r'(?:src|href)="https?://', out):
         fail("The standalone output still references a remote URL.")
 
+    version = re.search(r'const APP_VERSION = "([^"]+)";', script_js).group(1)
     target = DIST / "hermit-agent-standalone.html"
-    target.write_text(out, encoding="utf-8")
+    target.write_text(with_notices(out, third_party_notices("hermit-agent-standalone.html", version, lock, {}, bundled_bytes)), encoding="utf-8")
     print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e6:.2f} MB "
           f"(Pyodide core {raw_total / 1e6:.1f} MB raw, bundled libraries {wheel_total / 1e6:.2f} MB raw)")
 
     if out.count(wheels_script) != 1:
         fail("offline build: the bundled-wheels script isn't in the standalone output exactly once.")
     keys = {norm(k): k for k in lock}
+    every = set()
     for file_name, (limit_mb, wanted) in OFFLINE_BUILDS.items():
         print(f"📥 Offline packages: {file_name}")
         closure, todo = [], wanted + [p for spec in BUNDLED.values() for p in spec["pyodide"]]
@@ -386,23 +468,32 @@ def main():
             if k not in closure:
                 closure.append(k)
                 todo += lock[k]["depends"]
-        packages, pkg_total = {}, 0
+        packages, pkg_total, pkg_bytes = {}, 0, {}
         for k in sorted(closure):
             file = lock[k]["file_name"]
             if not re.fullmatch(r"[\w.+-]+\.(whl|zip)", file):
                 fail(f"{file_name}: {k} has an unexpected file name {file!r}.")
             data = cached(m.group(1) + file, f"pyodide-{v.group(1)}/{file}", check=lock[k]["sha256"])
             packages[file] = base64.b64encode(gzip.compress(data, 9, mtime=0)).decode()
+            pkg_bytes[k] = data
             pkg_total += len(data)
         packages_script = "<script>window.__PYODIDE_PACKAGES__ = " + json.dumps(packages) + ";</script>"
         print(f"  -> {len(packages)} packages ({', '.join(sorted(closure))}), {pkg_total / 1e6:.1f} MB "
               f"({sum(map(len, packages.values())) / 1e6:.1f} MB inlined)")
         target = DIST / file_name
-        target.write_text(out.replace(wheels_script, wheels_script + "\n" + packages_script), encoding="utf-8")
+        notices = third_party_notices(file_name, version, lock, pkg_bytes, bundled_bytes)
+        every |= set(pkg_bytes)
+        target.write_text(with_notices(out.replace(wheels_script, wheels_script + "\n" + packages_script), notices), encoding="utf-8")
         size = target.stat().st_size / 1e6
         if limit_mb and size >= limit_mb:
             fail(f"{file_name} is {size:.1f} MB, over its {limit_mb} MB limit (OFFLINE_BUILDS).")
         print(f"  ✅ {target.relative_to(ROOT)}: {size:.2f} MB")
+    # The last build carries every component the others do: its notices cover all.
+    if set(pkg_bytes) != every:
+        fail("The last entry of OFFLINE_BUILDS must hold every package of the others (THIRD-PARTY-LICENSES.txt is its notices).")
+    target = DIST / "THIRD-PARTY-LICENSES.txt"
+    target.write_text(notices.replace(f"Third-party licenses: {file_name}", "Third-party licenses: every build in dist/ and the release (each built file carries its own subset)", 1), encoding="utf-8")
+    print(f"  ✅ {target.relative_to(ROOT)}: {target.stat().st_size / 1e3:.0f} KB")
 
 if __name__ == "__main__":
     main()

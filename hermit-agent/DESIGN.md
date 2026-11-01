@@ -1127,6 +1127,20 @@ Pyodide 314+ is module-worker-only, so moving to it requires patching that check
   lists only the packages whose whole closure is inlined (`offlinePackages`); a step
   that imports another one doesn't run and is told it isn't part of the offline build.
   ssl and hashlib's OpenSSL module stay out (hashlib works on its built-in hashes).
+- **Third-party notices (v0.3.34).** Every built file carries the notices of what is
+  inside it as a `text/plain` block (`#thirdPartyLicenses`), shown by Settings → "Third-party
+  licenses" in the file viewer and downloadable from there; `dist/THIRD-PARTY-LICENSES.txt`
+  holds the full set. `build.py` assembles them per build: the core (Pyodide, CPython and
+  the software it incorporates, Emscripten, libffi, bzip2, zlib, marked, DOMPurify,
+  highlight.js, Inter), each inlined wheel's own license files, and the texts
+  `licenses/manifest.json` adds for code compiled into a wheel that the wheel doesn't
+  carry (Pyodide's builds drop them: OpenBLAS and LAPACK in scipy, FreeType, libjpeg and
+  libwebp in Pillow, FreeType and Agg in matplotlib, libxml2 and libxslt in lxml, the
+  vendored-component lists of numpy, scipy and pandas). The texts in `licenses/` are
+  copied from the pinned upstream versions, each with its source URL. Checked
+  2026-10-31: every license is permissive (MIT, BSD, PSF, Apache-2.0, MPL-2.0, OFL,
+  public domain) and compatible with the AGPL-3.0; nothing is GPL-only. The build fails
+  when an inlined wheel has neither a license file nor a manifest entry.
 - If packages can't load (offline), the step fails with a clear observation, and the
   model is told which packages are available.
 

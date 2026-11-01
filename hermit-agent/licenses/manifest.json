@@ -1,0 +1,53 @@
+{
+ "_about": "Third-party notices build.py embeds in every built file (DESIGN §8). core: in every build. packages: by pyodide-lock.json key, added when that package's wheel is inlined; each inlined wheel's own license files are added from the wheel itself. Each text file starts with the URL it was copied from.",
+ "credits": {
+  "freetype": "Portions of this software are copyright (c) The FreeType Project (www.freetype.org). All rights reserved.",
+  "libjpeg": "This software is based in part on the work of the Independent JPEG Group."
+ },
+ "core": [
+  {"name": "Pyodide 0.29.5", "license": "MPL-2.0", "files": ["pyodide-0.29.5.txt"],
+   "note": "The Pyodide files in this build are the unmodified release files from https://cdn.jsdelivr.net/pyodide/v0.29.5/full/ (pinned by sha256 in build.py). Source code: https://github.com/pyodide/pyodide/tree/0.29.5"},
+  {"name": "CPython 3.13.2 (inside Pyodide) and the software it incorporates", "license": "PSF-2.0 and others", "files": ["cpython-3.13.2.txt", "cpython-3.13.2-incorporated-software.rst"]},
+  {"name": "Emscripten 4.0.9 runtime and system libraries (inside Pyodide)", "license": "MIT OR NCSA, and others", "files": ["emscripten-4.0.9.txt"]},
+  {"name": "libffi (inside Pyodide)", "license": "MIT", "files": ["libffi-3.4.6.txt"]},
+  {"name": "bzip2 (inside Pyodide)", "license": "bzip2-1.0.6", "files": ["bzip2.txt"]},
+  {"name": "zlib (inside Pyodide, Pillow and lxml)", "license": "Zlib", "files": ["zlib.txt"]},
+  {"name": "marked 18.0.6", "license": "MIT", "files": ["marked-18.0.6.txt"]},
+  {"name": "DOMPurify 3.4.12", "license": "MPL-2.0 OR Apache-2.0", "files": ["dompurify-3.4.12.txt"]},
+  {"name": "highlight.js 11.11.1", "license": "BSD-3-Clause", "files": ["highlightjs-11.11.1.txt"]},
+  {"name": "Inter typeface", "license": "OFL-1.1", "files": ["inter-4.1.txt"]}
+ ],
+ "packages": {
+  "numpy": [
+   {"name": "Components bundled in NumPy 2.2.5", "license": "see list", "files": ["numpy-2.2.5-bundled.txt"]},
+   {"name": "LAPACK lite (in NumPy)", "license": "BSD-3-Clause", "files": ["numpy-2.2.5-lapack-lite.txt"]}
+  ],
+  "scipy": [
+   {"name": "Components bundled in SciPy 1.14.1", "license": "see list", "files": ["scipy-1.14.1-bundled.txt"]},
+   {"name": "OpenBLAS 0.3.26 (compiled into SciPy)", "license": "BSD-3-Clause", "files": ["openblas-0.3.26.txt"]},
+   {"name": "LAPACK (part of OpenBLAS, compiled into SciPy)", "license": "BSD-3-Clause-Open-MPI", "files": ["openblas-0.3.26-lapack.txt"]}
+  ],
+  "pandas": [
+   {"name": "Components bundled in pandas 2.3.3", "license": "see each", "files": ["pandas-2.3.3-bottleneck_licence.txt", "pandas-2.3.3-dateutil_license.txt", "pandas-2.3.3-haven_license.txt", "pandas-2.3.3-haven_mit.txt", "pandas-2.3.3-klib_license.txt", "pandas-2.3.3-musl_license.txt", "pandas-2.3.3-numpy_license.txt", "pandas-2.3.3-packaging_license.txt", "pandas-2.3.3-psf_license.txt", "pandas-2.3.3-pyperclip_license.txt", "pandas-2.3.3-pyupgrade_license.txt", "pandas-2.3.3-sas7bdat_license.txt", "pandas-2.3.3-ultrajson_license.txt", "pandas-2.3.3-xarray_license.txt"]}
+  ],
+  "pillow": [
+   {"name": "FreeType (compiled into Pillow)", "license": "FTL OR GPL-2.0-or-later (FTL used here)", "files": ["freetype.txt"], "credit": "freetype"},
+   {"name": "libjpeg (compiled into Pillow)", "license": "IJG", "files": ["libjpeg.txt"], "credit": "libjpeg"},
+   {"name": "libwebp (compiled into Pillow)", "license": "BSD-3-Clause", "files": ["libwebp.txt"]}
+  ],
+  "matplotlib": [
+   {"name": "FreeType (compiled into matplotlib)", "license": "FTL OR GPL-2.0-or-later (FTL used here)", "files": ["freetype.txt"], "credit": "freetype"},
+   {"name": "Anti-Grain Geometry 2.4 (compiled into matplotlib)", "license": "AGG notice", "files": ["agg-2.4.txt"]}
+  ],
+  "lxml": [
+   {"name": "libxml2 (compiled into lxml)", "license": "MIT", "files": ["libxml2.txt"]},
+   {"name": "libxslt (compiled into lxml)", "license": "MIT", "files": ["libxslt.txt"]}
+  ],
+  "lzma": [
+   {"name": "liblzma from XZ Utils (the lzma module)", "license": "0BSD / public domain", "files": ["liblzma.txt"]}
+  ],
+  "sqlite3": [
+   {"name": "SQLite (the sqlite3 module)", "license": "public domain", "text": "SQLite is in the public domain: https://www.sqlite.org/copyright.html"}
+  ]
+ }
+}

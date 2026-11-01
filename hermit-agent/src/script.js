@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.33";
+const APP_VERSION = "0.3.34";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -6473,6 +6473,26 @@ function openViewer(path, hash, prevHash) {
     openModal("viewerModal");
 }
 
+// The third-party notices build.py embeds in each built file (DESIGN §8), in the file viewer.
+function openLicenses() {
+    const node = document.getElementById("thirdPartyLicenses");
+    const text = node ? node.textContent.trim() : "build.py adds the third-party notices to the built files; this unbuilt source has none. The texts are in licenses/ in the repository.";
+    for (const u of viewerUrls) URL.revokeObjectURL(u);
+    viewerUrls = [];
+    $("viewerTitle").textContent = "Third-party licenses";
+    $("viewerMeta").textContent = "HermitUI Agent is licensed under the GNU AGPL v3. The software inside this file comes under these licenses.";
+    $("viewerTabs").replaceChildren();
+    $("viewerTabs").hidden = true;
+    const body = $("viewerBody");
+    body.innerHTML = "";
+    const pre = el("pre", "viewer-text");
+    pre.textContent = text;
+    body.appendChild(pre);
+    $("viewerDownload").disabled = false;
+    $("viewerDownload").onclick = () => downloadBytes(new TextEncoder().encode(text), "hermit-agent-third-party-licenses.txt", "text/plain");
+    openModal("viewerModal");
+}
+
 // A Markdown file: rendered (sanitised like every answer), or its highlighted source.
 function renderMarkdownFile(body, path, text) {
     const bar = el("div", "viewer-tabs md-toggle");
@@ -7305,6 +7325,7 @@ function wireEvents() {
         if (e.target.value === "custom") { e.target.hidden = true; $("settingModelInput").hidden = false; $("settingModelInput").focus(); }
     });
     $("viewerClose").addEventListener("click", () => closeModal("viewerModal"));
+    $("licensesLink").addEventListener("click", (e) => { e.preventDefault(); openLicenses(); });
     $("exportBtn").addEventListener("click", () => openModal("exportModal"));
     $("exportCancel").addEventListener("click", () => closeModal("exportModal"));
     $("exportSessionBtn").addEventListener("click", () => { closeModal("exportModal"); exportSession($("exportCheckpoints").checked); });
