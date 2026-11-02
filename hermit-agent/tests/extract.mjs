@@ -38,7 +38,7 @@ function jsonBlock(marker, name) {
     return `const ${name} = ${JSON.stringify(JSON.parse(m[1]))};`;
 }
 
-const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "READONLY_FILE_TOOLS", "FANCY_PUNCT", "CP1252_HIGH", "PLAN_FIRST_NOTE", "PLAN_FIRST_REJECT", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES", "LLM_SYSTEM_PROMPT", "LLM_EFFORTS"];
+const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FORMAT_VERSION", "LIMITS", "CLOUD_PROVIDERS", "REASONING_PARAM_KEYS", "CRC_TABLE", "STEP_STAT_KEYS", "FILE_TOOLS", "READONLY_FILE_TOOLS", "FANCY_PUNCT", "CP1252_HIGH", "PLAN_FIRST_NOTE", "PLAN_FIRST_REJECT", "AGENT_TOOL_NAMES", "HARNESS_ONLY_PACKAGES", "LLM_SYSTEM_PROMPT", "LLM_EFFORTS", "NETWORK_PROMPT_ON", "NETWORK_PROMPT_OFF"];
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
     "detectCloudProvider", "isLocalEndpoint", "describeRemoteEndpoint", "chatErrorHint", "isBlockedMixedContent", "endpointFetch",

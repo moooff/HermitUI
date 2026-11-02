@@ -189,9 +189,12 @@ section("8. Packages: the list, the index, failures");
         check(`${pr}: the list is the environment's last line, after its rules`, at > s.indexOf("Don't install anything") && at > s.indexOf("is killed, and the interpreter restarts") && at < s.indexOf(next) && /listed at the end of this section/.test(s));
     }
     check("…and names examples without a list", X.buildSystemPrompt("").includes("(numpy, pandas, matplotlib") && !X.buildSystemPrompt("").includes("only these packages") && !X.buildSystemPrompt("").includes("listed at the end"));
-    check("network is off, but the user can allow it for a step", /Network access is off\. A step that connects anywhere is held, and the user may run it again with network allowed for that step only/.test(p) && !/no network access/.test(p));
-    check("…the HTTP clients that work then, urllib and pandas included", /requests, httpx, urllib\.request and pandas\.read_csv\(url\) work then/.test(p));
-    check("…and that only CORS sites can be read", /only sites that allow requests from a browser page \(CORS\) can be read/.test(p));
+    // Network re-runs are a setting (off by default): the prompt says which applies.
+    check("re-runs off (the default): no network, no step can be allowed, ask for the data", /There is no network access: every request .* fails, and no step can be allowed to connect/.test(p) && /ask the user to add it to the workspace/.test(p) && /turn on "Allow network re-runs" in Settings, only if they are really sure: it is less safe/.test(p) && !/network allowed for that step only/.test(p));
+    const pn = X.buildSystemPrompt("", ["numpy", "pandas"], "text", 60, true);
+    check("re-runs on: network is off, but the user can allow it for a step", /Network access is off\. A step that connects anywhere is held, and the user may run it again with network allowed for that step only/.test(pn) && !/There is no network access/.test(pn));
+    check("…the HTTP clients that work then, urllib and pandas included", /requests, httpx, urllib\.request and pandas\.read_csv\(url\) work then/.test(pn));
+    check("…and that only CORS sites can be read", /only sites that allow requests from a browser page \(CORS\) can be read/.test(pn));
     const nf = X.networkFailureHint("requests.exceptions.ConnectionError: ('Connection aborted.', HTTPException('Failed to fetch'))");
     check("a failed request with network allowed: CORS, and don't retry with another client", /cross-origin requests \(CORS\)/.test(nf) && /Another HTTP client or header won't help/.test(nf), nf);
     check("…also for sync XHR (open_url) and the urllib handler's own message",

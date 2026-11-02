@@ -13,7 +13,7 @@
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.34";
+const APP_VERSION = "0.3.35";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -360,7 +360,12 @@ function looksLikeReasoningRejection(detail) {
 // rules aren't buried behind ~300 names; without them a few examples are named.
 // protocol: "tools" describes the native tools (DESIGN §5.6), else code-as-action (§5.1).
 // timeoutSec: the step time limit (Settings), named so the model can size its steps.
-function buildSystemPrompt(instructions, packages, protocol, timeoutSec) {
+// The system prompt's network line (DESIGN §10). Network re-runs are off unless the user
+// turned them on in Settings, so the model is told whether asking for one can work.
+const NETWORK_PROMPT_ON = '- Network access is off. A step that connects anywhere is held, and the user may run it again with network allowed for that step only: requests, httpx, urllib.request and pandas.read_csv(url) work then. Even with network allowed, only sites that allow requests from a browser page (CORS) can be read, such as many public APIs and raw.githubusercontent.com; most ordinary web pages fail with "Failed to fetch". Download data in one step and save it to /workspace, so later steps don\'t need the network again.';
+const NETWORK_PROMPT_OFF = "- There is no network access: every request (requests, httpx, urllib, pandas.read_csv(url) and the like) fails, and no step can be allowed to connect. Work with the files in /workspace. If the task needs data from the web, ask the user to add it to the workspace, or tell them they can turn on \"Allow network re-runs\" in Settings, only if they are really sure: it is less safe, because a step run with network access can send their files to any site.";
+
+function buildSystemPrompt(instructions, packages, protocol, timeoutSec, network) {
     const listed = Array.isArray(packages) && packages.length > 0;
     const pkgs = listed
         ? "the packages listed at the end of this section load automatically on their first import"
@@ -446,7 +451,7 @@ Environment: Pyodide (CPython 3.13 compiled to WebAssembly) running inside the u
 - The working directory is /workspace. Files the user gave you are there. Save deliverables there too: the user sees and downloads the files in /workspace.
 - If /workspace has an AGENTS.md file, read it before you start: it holds the project's instructions for agents (conventions, commands, what not to touch). Follow them unless they conflict with the user's task or these rules.
 - The standard library is available, and ${pkgs}. Don't install anything: there is no pip or micropip, so nothing else can be installed. input() does not work.
-- Network access is off. A step that connects anywhere is held, and the user may run it again with network allowed for that step only: requests, httpx, urllib.request and pandas.read_csv(url) work then. Even with network allowed, only sites that allow requests from a browser page (CORS) can be read, such as many public APIs and raw.githubusercontent.com; most ordinary web pages fail with "Failed to fetch". Download data in one step and save it to /workspace, so later steps don't need the network again.
+${network ? NETWORK_PROMPT_ON : NETWORK_PROMPT_OFF}
 - There are no subprocesses or threads: subprocess, os.system, multiprocessing, threading and concurrent.futures fail. Do the work sequentially, and run tests in-process, e.g. unittest.main(module="test_x", argv=["x"], exit=False).
 - Variables persist between your steps until the interpreter is restarted (you will be told when that happens). A module in /workspace that changed is read again the next time a step imports it, but names imported in an earlier step keep the old code: import again after you change a module.
 - Use a library for common jobs instead of producing a format by hand: pandas for tables, CSV and JSON; openpyxl or xlsxwriter for Excel .xlsx files (pandas read_excel and to_excel work too); odfpy (import odf) for OpenDocument .odt, .ods and .odp (for a table in .ods, pandas is simplest: df.to_excel("x.ods") and pd.read_excel("x.ods"); there is no to_ods or read_ods); python-docx (import docx) for Word .docx; python-pptx (import pptx) for PowerPoint .pptx, charts included; pymupdf (import pymupdf) to create, read and edit PDFs (page.insert_htmlbox lays out HTML with headings and tables; there is no reportlab or fpdf); matplotlib or seaborn for charts, also as PDF pages; markdown to turn Markdown into HTML, markdownify for HTML into Markdown; tabulate for plain-text tables; qrcode for QR codes; Pillow for images; jinja2 for HTML; beautifulsoup4 or lxml to parse HTML and XML, xmltodict to turn XML into dicts; python-dateutil for dates; pyyaml for YAML; sqlite3 for SQL. Don't assemble these file formats by hand.
@@ -4198,6 +4203,10 @@ const SETTINGS = {
     // DESIGN §5.6: "auto" (native tool calls when the endpoint reports support), "native"
     // or "text" (code-as-action).
     toolMode: "auto",
+    // DESIGN §10: whether a held step that tried the network may be re-run with network
+    // allowed. Off by default and never exported or imported: only the user turns it on,
+    // in Settings, for this tab.
+    networkRerun: false,
 };
 
 // The canonical workspace (DESIGN §4.1): path -> { hash, origin }, content-addressed blobs.
@@ -4455,7 +4464,7 @@ function requestMessages(protocol) {
 
 // Today's system prompt for a protocol: the current settings, package list and limits.
 function systemPromptFor(protocol) {
-    return buildSystemPrompt(SETTINGS.instructions, PKG.names, protocol, SETTINGS.stepTimeoutSec);
+    return buildSystemPrompt(SETTINGS.instructions, PKG.names, protocol, SETTINGS.stepTimeoutSec, SETTINGS.networkRerun);
 }
 
 // The system prompt is rebuilt before every request, so each one carries today's: after
@@ -5124,9 +5133,11 @@ async function executeStep(step, idx, notes) {
         step._held = effect.hashes;
         const origins = {};
         for (const [p, f] of WS.files) origins[p] = f.origin;
-        const risk = classifyEffect(effect.diff, origins, { bytesWritten: effect.bytesWritten, netAttempts: step.netAttempts, overLimit: effect.overLimit });
+        // With network re-runs off, a blocked attempt doesn't hold the step: there is nothing
+        // to allow. The note below still tells the model and shows in the card.
+        const risk = classifyEffect(effect.diff, origins, { bytesWritten: effect.bytesWritten, netAttempts: SETTINGS.networkRerun ? step.netAttempts : [], overLimit: effect.overLimit });
         step.risk = risk;
-        if (step.netAttempts.length) step.notes.push("Network access is blocked; these attempts failed: " + step.netAttempts.join(", "));
+        if (step.netAttempts.length) step.notes.push((SETTINGS.networkRerun ? "Network access is blocked; these attempts failed: " : "Network access is blocked, and the user has not enabled network re-runs; these attempts failed: ") + step.netAttempts.join(", "));
         const netHint = allowNetwork ? networkFailureHint(r.output) : "";
         if (netHint) step.notes.push(netHint);
         // Figures and other binary files: the model is told what they are (it can't see them).
@@ -5170,7 +5181,7 @@ async function executeStep(step, idx, notes) {
         }
         // "edit" or "rerun-net": run again on a fresh interpreter.
         if (decision.action === "edit") { code = decision.code; step.edited = true; step.decision = "edited"; }
-        if (decision.action === "rerun-net") { allowNetwork = true; step.decision = "approved (network)"; }
+        if (decision.action === "rerun-net" && SETTINGS.networkRerun) { allowNetwork = true; step.decision = "approved (network)"; }
         step.decidedBy = "user";
         notes = [...notes, "The interpreter was restarted before this run: variables from earlier steps are lost."];
     }
@@ -6037,7 +6048,7 @@ function buildStepCard(item, idx, old) {
             row.appendChild(button("✅ Approve", "approve", idx, "primary"));
             // A file step has nothing to re-run: nothing has been applied yet.
             if (item.kind !== "files") {
-                if ((item.netAttempts || []).length) row.appendChild(button("🌐 Allow network & re-run", "rerun-net", idx, "", "Roll back, restart the interpreter and run the same code with network access"));
+                if (SETTINGS.networkRerun && (item.netAttempts || []).length) row.appendChild(button("🌐 Allow network & re-run", "rerun-net", idx, "", "Roll back, restart the interpreter and run the same code with network access"));
                 row.appendChild(button("✏️ Edit & re-run", "edit-open", idx, "", "Roll back and run your edited version instead"));
             }
         }
@@ -6883,6 +6894,7 @@ function fillSettingsForm() {
     $("settingAutoCompact").value = SETTINGS.autoCompactPct;
     $("settingContextSize").value = SETTINGS.contextSize;
     $("settingToolMode").value = SETTINGS.toolMode;
+    $("settingNetworkRerun").checked = SETTINGS.networkRerun;
     $("reasoningStatus").textContent = REASONING.key ? `Reasoning control: ${REASONING.state} (${REASONING.source || ""}) · ${toolSupportText(REASONING)}` : "";
 }
 
@@ -6911,6 +6923,36 @@ function saveSettings() {
     if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = systemPromptFor(S.protocol);
     renderHeader();
     return true;
+}
+
+// Settings → Network re-runs (DESIGN §10). Turning it on takes a confirmation; while it
+// is on, the banner under the header says so (only Settings turns it off). Held steps
+// re-render, so the "Allow network & re-run" button follows the setting.
+async function saveSettingsAndNetwork() {
+    const want = $("settingNetworkRerun").checked;
+    if (!saveSettings()) return;
+    closeModal("settingsModal");
+    if (want && !SETTINGS.networkRerun) {
+        const ok = await confirmDialog("⚠️ Allow network re-runs? Agent code stays blocked from the network until you click “Allow network & re-run” on a held step. That run can reach any site that accepts requests from a browser page, and can send it your workspace files and anything the agent has read. A prompt-injected or confused model can use that to leak data. Only for this tab; turn it off in Settings.", "Allow network re-runs");
+        if (!ok) { showToast("✅ Settings saved. Network re-runs stay off."); return; }
+    }
+    setNetworkRerun(want);
+    showToast("✅ Settings saved (in memory only).");
+}
+
+function setNetworkRerun(on) {
+    const changed = SETTINGS.networkRerun !== on;
+    SETTINGS.networkRerun = on;
+    if (changed) {
+        debugLog("decision", on ? "network re-runs turned on in Settings" : "network re-runs turned off");
+        if (S.messages.length && S.messages[0].role === "system") S.messages[0].content = systemPromptFor(S.protocol);
+        renderTimeline();
+    }
+    renderNetworkWarning();
+}
+
+function renderNetworkWarning() {
+    $("networkWarning").hidden = !SETTINGS.networkRerun;
 }
 
 // What the probe found about native tool calls, for the settings dialog.
@@ -7201,7 +7243,7 @@ function handleTimelineClick(e) {
     if (action === "run") resolveDecision({ action: "run", code: code !== null ? code : item.proposedCode });
     else if (action === "approve") resolveDecision({ action: "approve" });
     else if (action === "reject") resolveDecision({ action: "reject", reason });
-    else if (action === "rerun-net") resolveDecision({ action: "rerun-net" });
+    else if (action === "rerun-net" && SETTINGS.networkRerun) resolveDecision({ action: "rerun-net" });
     else if (action === "edit-open") {
         item._editing = true;
         renderTimelineItem(idx);
@@ -7319,7 +7361,7 @@ function wireEvents() {
     });
     $("settingsBtn").addEventListener("click", () => { fillSettingsForm(); openModal("settingsModal"); });
     $("settingCancel").addEventListener("click", () => closeModal("settingsModal"));
-    $("settingSave").addEventListener("click", () => { if (saveSettings()) { closeModal("settingsModal"); showToast("✅ Settings saved (in memory only)."); } });
+    $("settingSave").addEventListener("click", () => saveSettingsAndNetwork());
     $("testConnectionBtn").addEventListener("click", testConnection);
     $("settingModelSelect").addEventListener("change", (e) => {
         if (e.target.value === "custom") { e.target.hidden = true; $("settingModelInput").hidden = false; $("settingModelInput").focus(); }

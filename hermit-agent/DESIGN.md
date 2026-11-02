@@ -180,7 +180,7 @@ checkpoint VFS ──► run step in worker ──► collect diff ──► cla
 | Only new files, or changes to files the agent itself created this session | **auto** |
 | Deletes, overwrites or renames a **user-provided** file (uploaded or imported) | **ask** |
 | More than *N* files touched, or more than *M* MB written in one step | **ask** |
-| A network attempt was blocked | **ask**: "allow network for this step?", then re-run |
+| A network attempt was blocked | **ask** with "allow network for this step?", then re-run, *only with Settings → Allow network re-runs on*; off (the default), **auto**: the attempt stays blocked and the model is told (§10) |
 | A package must be downloaded (see §8) | **auto** from the pinned Pyodide CDN, shown in the timeline (configurable) |
 | Timeout hit | step fails, worker killed, VFS rolled back |
 
@@ -1331,7 +1331,16 @@ is the second.
      is user-configured.
   3. Network modes: `closed` while agent code runs; `cdn` while the harness loads
      packages, where only URLs under the pinned Pyodide CDN pass; `open` only for
-     a step the user re-ran with "Allow network". (Since Phase 2a the packages load
+     a step the user re-ran with "Allow network". *(v0.3.35)* That re-run exists only
+     while **Settings → Allow network re-runs** is on. It is off by default, held in
+     memory for the tab, never exported or imported, and turning it on takes a
+     confirmation that says what a networked run can send. While it is on, a red
+     "Network not forbidden" banner under the header says so; only Settings turns it off.
+     Off, a blocked attempt doesn't hold the step (there is nothing to allow): the
+     step's note and the system prompt tell the model that no step can connect, and to
+     ask the user for the data or point them to the setting, to be turned on only if
+     they are really sure, since it is less safe. The click handler and `executeStep` both ignore a
+     `rerun-net` decision while the setting is off. (Since Phase 2a the packages load
      in a worker call of their own before the step, §8; the modes are unchanged.) The `cdn` mode closes a real
      hole. Agent code can rewrite Pyodide's package registry
      (`pyodide_js._api.lockfile_packages[...].file_name`), and Pyodide then
@@ -1358,7 +1367,8 @@ is the second.
   refuses for CORS fails as a bare "Failed to fetch"; the step then gets a note
   (`networkFailureHint`) saying so, because the model otherwise retried the same site
   with one client after another, each retry held again. The system prompt says the
-  network is off but can be allowed per step, and that only CORS sites can be read.
+  network is off but can be allowed per step, and that only CORS sites can be read
+  (since v0.3.35 only while network re-runs are on; off, it says there is no network).
 - **What the app itself sends (traffic audit, 2026-10-31, v0.3.30, Chromium 149,
   `tests/e2e_network.py`, run on every change).** One agent run from `file://` against
   the mock endpoint, through a logging proxy that sees every connection from the page,

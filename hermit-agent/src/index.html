@@ -43,7 +43,7 @@
     </div>
     <header class="app-header">
         <div class="brand">
-            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.34</span></h1>
+            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.35</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
             <span class="local-badge" id="localBadge" hidden>🏠 local</span>
             <span class="protocol-badge" id="protocolBadge">🔧 auto</span>
@@ -59,6 +59,10 @@
         </div>
     </header>
     <div class="cloud-warning" id="cloudWarning" hidden></div>
+    <!-- Shown while Settings → Network re-runs is on (DESIGN §10). -->
+    <div class="network-warning" id="networkWarning" role="alert" hidden>
+        <span>🌐 <b>Network not forbidden.</b> A held step that tried the network can be re-run with network access, and that run can send workspace files and outputs to any site that accepts them. Turn it off in Settings.</span>
+    </div>
     <div class="status-bar" role="status">
         <span class="stat" id="statState">ready</span>
         <span class="stat" id="statStep">Step 0</span>
@@ -149,6 +153,8 @@
                 <option value="native">Native tool calls (OpenAI tools)</option>
                 <option value="text">Code blocks and tags (any model)</option>
             </select>
+            <label class="check-row" title="Off: agent code is blocked from the network, and a step that tries is not held for it. On: such a step is held and offers &quot;Allow network &amp; re-run&quot;."><input type="checkbox" id="settingNetworkRerun"> Allow network re-runs (less safe)</label>
+            <p class="hint">Off by default and only for this tab. On, a held step that tried the network can be re-run with network access, and that run can send your files anywhere.</p>
             <label for="settingInstructions">Custom instructions</label>
             <textarea id="settingInstructions" rows="3" placeholder="Appended to the agent's system prompt, e.g. &quot;Prefer pandas. Write a short report.md at the end.&quot;"></textarea>
             <div class="modal-grid">

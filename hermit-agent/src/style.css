@@ -133,6 +133,13 @@ button, select, input, textarea { font: inherit; color: inherit; }
     color: var(--warn);
     border-bottom: 1px solid var(--glass-border);
 }
+.network-warning {
+    padding: 6px clamp(12px, 3vw, 24px);
+    font-size: 0.8rem;
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-bottom: 1px solid var(--danger);
+}
 .status-bar {
     display: flex;
     flex-wrap: wrap;

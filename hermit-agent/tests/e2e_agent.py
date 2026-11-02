@@ -444,6 +444,11 @@ print("OK pandas ods", pd.read_excel("p.ods").values.tolist())'''),
                         '```python\nimport js\nawait js.fetch("http://127.0.0.1:' + str(port) + '/exfil/?x=1")\nprint("sent")\n```'},
             final("Understood — I won't upload anything."),
         ],
+        # Network re-runs off (the default): a blocked attempt doesn't hold the step.
+        "E2E-NETOFF": [
+            py('import js\ntry:\n    await js.fetch("http://127.0.0.1:' + str(port) + '/exfil/?netoff=1")\nexcept Exception as e:\n    print("blocked", e)'),
+            final("The site can't be reached from here."),
+        ],
     }
 
 
@@ -469,6 +474,16 @@ def configure(page, port, timeout_s):
     page.fill("#settingApiKey", API_KEY)
     page.fill("#settingTimeout", str(timeout_s))
     page.click("#settingSave")
+
+
+def enable_network_rerun(page):
+    """Settings → Allow network re-runs, through the confirmation (DESIGN §10)."""
+    page.click("#settingsBtn")
+    page.check("#settingNetworkRerun")
+    page.click("#settingSave")
+    page.wait_for_selector("#confirmModal.active", timeout=5000)
+    page.click("#confirmOk")
+    wait_until(page, "() => SETTINGS.networkRerun === true", 5, "network re-runs on")
 
 
 def steps(page):
@@ -510,6 +525,17 @@ def risk_scenario(browser, port, state, downloads=True):
     print("— risk-based: auto commit, reject + rollback, timeout, network guard, final")
     page = open_app(browser)
     configure(page, port, 5)
+    check("network re-runs are off by default, no banner", page.evaluate("() => SETTINGS.networkRerun") is False and not page.is_visible("#networkWarning"))
+    # Turning them on asks first: Cancel keeps them off.
+    page.click("#settingsBtn")
+    page.check("#settingNetworkRerun")
+    page.click("#settingSave")
+    page.wait_for_selector("#confirmModal.active", timeout=5000)
+    check("turning network re-runs on asks for confirmation", "Allow network re-runs?" in page.inner_text("#confirmText"))
+    page.click("#confirmCancel")
+    check("…Cancel keeps them off", page.evaluate("() => SETTINGS.networkRerun") is False and not page.is_visible("#networkWarning"))
+    enable_network_rerun(page)
+    check("on: the 'network not forbidden' banner shows", page.is_visible("#networkWarning") and "Network not forbidden" in page.inner_text("#networkWarning"))
     page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV}])
     wait_until(page, "() => WS.files.has('data.csv')", 10, "upload")
     page.fill("#taskInput", "E2E-RISK: summarise data.csv")
@@ -2243,6 +2269,7 @@ def redress_scenario(browser, port, state):
     page.set_input_files("#wsFileInput", files=[{"name": "data.csv", "mimeType": "text/csv", "buffer": DATA_CSV}])
     wait_until(page, "() => WS.files.has('data.csv')", 10, "upload")
     before = len(state.exfil)
+    enable_network_rerun(page)
     page.fill("#taskInput", "E2E-REDRESS: back up data.csv")
     page.click("#sendBtn")
     wait_until(page, "() => S.status === 'awaiting-approval' && S.stepCount === 1", 60, "step held")
@@ -2268,6 +2295,35 @@ def redress_scenario(browser, port, state):
     st = steps(page)
     check("clicking Reject rejected the step, not 'approved (network)'", st[0]["decision"] == "rejected", st[0].get("decision"))
     check("nothing was exfiltrated past the gate", len(state.exfil) == before, str(state.exfil[before:]))
+    page.context.close()
+
+
+def netoff_scenario(browser, port, state):
+    print("— network re-runs off (default): a blocked attempt isn't held, no re-run offered, the model is told")
+    page = open_app(browser)
+    configure(page, port, 5)
+    before = len(state.exfil)
+    n0 = len(state.requests)
+    page.fill("#taskInput", "E2E-NETOFF: fetch the totals")
+    page.click("#sendBtn")
+    wait_until(page, "() => S.status === 'done'", 60, "final answer")
+    st = steps(page)
+    check("the step ran without being held", st[0]["decision"] == "auto" and st[0]["netAttempts"], st[0])
+    check("no 'Allow network & re-run' button anywhere", page.locator("[data-action=rerun-net]").count() == 0)
+    sys_prompt = state.requests[n0]["messages"][0]["content"]
+    check("the system prompt says no step can be allowed to connect", "There is no network access" in sys_prompt and "network allowed for that step only" not in sys_prompt)
+    obs = last_user_msg(state)
+    check("the observation says re-runs are not enabled", "has not enabled network re-runs" in obs, obs[-600:])
+    check("nothing reached the mock's /exfil", len(state.exfil) == before, str(state.exfil[before:]))
+    # Settings turns it on and off again; the prompt and the banner follow.
+    enable_network_rerun(page)
+    check("enabling switches the prompt to per-step re-runs", "network allowed for that step only" in page.evaluate("() => systemPromptFor(S.protocol)"))
+    check("the banner has no button (Settings is the only switch)", page.locator("#networkWarning button").count() == 0)
+    page.click("#settingsBtn")
+    page.uncheck("#settingNetworkRerun")
+    page.click("#settingSave")
+    check("unticking in Settings hides the banner and turns re-runs off", not page.is_visible("#networkWarning") and page.evaluate("() => SETTINGS.networkRerun") is False)
+    check("…and the prompt says there is no network again", "There is no network access" in page.evaluate("() => systemPromptFor(S.protocol)"))
     page.context.close()
 
 
@@ -2300,7 +2356,7 @@ def main():
                 for n, fn in [("workspace", workspace_scenario), ("compaction", compaction_scenario), ("vllm_compact", vllm_compact_scenario),
                               ("checkpoint_budget", checkpoint_budget_scenario), ("outage", outage_scenario), ("send_now", send_now_scenario),
                               ("diff_edit", diff_edit_scenario), ("edit_fix", edit_fix_scenario), ("encoding", encoding_scenario), ("repeat", repeat_scenario), ("errloop", errloop_scenario), ("thrash", thrash_scenario), ("edit_task", edit_task_scenario), ("plan_first", plan_first_scenario), ("markdown_viewer", markdown_viewer_scenario),
-                              ("redress", redress_scenario)]:
+                              ("redress", redress_scenario), ("netoff", netoff_scenario)]:
                     if want(n):
                         fn(browser, port, state)
                 if want("plan"):

@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.34** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.35** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) (about 38 MB,
 > Python, numpy, pandas and matplotlib included), developed in this folder apart from the
 > main app in [`../src/`](../src/). The smaller
@@ -61,7 +61,8 @@ The model can also run on another computer, with the agent on a phone, for examp
 </div>
 
 - **You see every step:** the model's reasoning, the code, the result, any charts or images, and a diff of the changed files.
-- **Risky steps wait for you.** Harmless steps run on their own. A step that deletes, overwrites or moves one of your files, or tries to reach the network, waits until you approve it.
+- **Risky steps wait for you.** Harmless steps run on their own. A step that deletes, overwrites or moves one of your files waits until you approve it.
+- **The network stays blocked.** Agent code is blocked from the network (best effort, see [What leaves your machine](#what-leaves-your-machine)). If you turn on *Allow network re-runs* in Settings (off by default, after a warning), a step that tried the network waits for you and can be re-run with network access; a red banner shows while that is on.
 - **You see the plan.** On longer tasks the agent keeps a short plan above the steps and ticks it off. A note from you changes its course. With supervision set to **Plan first**, it shows you the plan before it changes anything.
 - **It doesn't loop.** The same code three times in a row is not run, and the agent is told why; a fourth time pauses the run. Repeated failures with the same error get the same treatment ([DESIGN §5.8](DESIGN.md#58-the-loop-guard-added-in-v0314)).
 - **You can undo any step.** The workspace is saved after each step, and you can go back to any of them, or to the start to rephrase the task.
