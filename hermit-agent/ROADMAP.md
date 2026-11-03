@@ -515,9 +515,46 @@ public docs. Each is a small patch release of its own.
 
 ---
 
+## Elision that depends on the context (found 2026-11-02; first part built in v0.3.36)
+
+*Built in v0.3.36:* elide only above `LIMITS.elideAtPct` (60 %) of a known context,
+oldest first in blocks of 4 (`elideToBudget`, DESIGN §5.4); unknown context unchanged.
+*Still open:* eliding code output and file writes before read results.
+
+**Finding.** `elideHistory` (DESIGN §5.4) cuts every observation older than the last 4 to 7
+steps to its first and last 600 characters, however much context is free. On a review
+across many documents that is the wrong default: the agent compares the document it reads
+now with one it read 15 steps ago, of which only the head and the tail are left. A larger
+context alone hardly helps, because elision runs anyway; only compactions get rarer.
+
+**Proposal.**
+- Elide only when the request would otherwise grow past a share of the context
+  (`LIMITS.elideAtPct`, e.g. 50 % of `contextLimit`), not by step count. Below it, send
+  every observation in full.
+- When it does elide, oldest first and in blocks, so the prompt prefix stays
+  byte-identical for several requests (today's reason for the 4-step blocks).
+- Read results (`read_file`, `search_files`) are the most expensive to lose: elide code
+  output and file writes first, reads last.
+- Keep the note that says what was elided, and keep the summariser reading the full history.
+- No change when the context is unknown (`contextLimit` 0): today's behaviour.
+
+**Tests.**
+- Unit (`elideHistory`, `planCompaction`): nothing elided below the threshold; above it,
+  oldest first, block-stable prefix, reads after code output; unknown context unchanged.
+- Mock e2e: the elide and compaction scenarios keep passing; a new one with a large
+  context checks that an old `read_file` result is still sent in full.
+- Real model: a review task across many documents, before and after, 2 runs each, at
+  the same context; plus the quick reference run and the app task, since
+  coding tasks lose the token saving.
+
+**Open questions.** Whether long coding sessions get slower or compact earlier without
+the step-based elision (the reason it exists); the threshold (50 % or tied to
+`autoCompactPct`); whether llama.cpp's cache reuse on the hybrid model still works when
+the elision boundary moves less often.
+
 ## Later — more tool ideas (not planned yet)
 
-From the same comparison; none is scheduled.
+From the comparison with pi, opencode and Claude Code (2026-10-24); none is scheduled.
 - **`view_image`**, only when the endpoint has vision: copy HermitUI's vision detection
   back in (dropped from `testConnection`), and send the image as an `image_url` part in
   a follow-up `user` message (tool messages with images aren't portable). The agent

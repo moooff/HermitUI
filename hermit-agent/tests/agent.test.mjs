@@ -79,6 +79,12 @@ section("3. truncateOutput — first 2 KB + last 4 KB (DESIGN §5.2)");
     check("tail kept", t.endsWith("t".repeat(4096)));
     check("omission marked in KB", /\[… 2\d KB omitted …\]/.test(t), t.slice(2040, 2080));
     check("boundary: exactly head+tail is unchanged", X.truncateOutput("x".repeat(6144)).length === 6144);
+    // The observation's marker says what to do: printing again shows the same cut.
+    const adv = X.truncateOutput(long, 2048, 4096, "print less");
+    check("advice goes inside the marker", /\[… 2\d KB omitted: print less …\]/.test(adv) && adv.endsWith("t".repeat(4096)));
+    const obs = X.buildObservation({ step: 5, status: "ok", output: long });
+    check("observation: cut output tells the model to print less or use read_file", obs.includes("omitted: you see only the start and the end") && obs.includes("read files with read_file …]"), obs.slice(2040, 2300));
+    check("…but short output carries no advice", !X.buildObservation({ step: 5, status: "ok", output: "abc" }).includes("read_file"));
 }
 
 section("4. diffListings / formatChanges");

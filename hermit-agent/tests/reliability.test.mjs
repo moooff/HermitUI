@@ -100,6 +100,19 @@ section("3. elideHistory — old outputs shortened in blocks, the history untouc
     check("roles and count unchanged", out.length === m.length && out.every((x, i) => x.role === m[i].role));
     const smallObs = X.elideHistory([{ role: "system", content: "s" }, { role: "user", content: "t" }, ...Array.from({ length: 8 }, (_, i) => [{ role: "assistant", content: "a" }, { role: "user", content: obs(i + 1, "short output") }]).flat()], 4, 2000);
     check("short observations are never elided", !smallObs.some(x => x.content.includes("elided")));
+
+    // v0.3.36: elide only as much as the context needs (elideToBudget).
+    const m12 = build(12);
+    const count = (out) => out.filter(x => x.content.includes("elided to save context")).length;
+    const full = X.estimateTokens(m12, 0);
+    check("budget above the whole history: nothing elided", count(X.elideToBudget(m12, 4, 2000, full + 1, 0)) === 0);
+    check("…and the request is the history, unchanged", JSON.stringify(X.elideToBudget(m12, 4, 2000, full + 1, 0)) === JSON.stringify(m12));
+    const four = X.estimateTokens(X.elideHistory(m12, 4, 2000, 4), 0);
+    const mid = X.elideToBudget(m12, 4, 2000, four, 0);
+    check("a budget that four elided steps meet: the oldest four, no more", count(mid) === 4 && mid[3].content.includes("of step 1's output elided") && mid[11].content.includes("x".repeat(5000)), count(mid));
+    check("a budget nothing meets: today's elision (8 of 12)", count(X.elideToBudget(m12, 4, 2000, 10, 0)) === 8);
+    check("unknown context (budget 0): today's elision", JSON.stringify(X.elideToBudget(m12, 4, 2000, 0, 0)) === JSON.stringify(X.elideHistory(m12, 4, 2000)));
+    check("maxElide never elides more than the default would", count(X.elideHistory(build(8), 4, 2000, 100)) === 4);
 }
 
 section("4. Retry: what is worth retrying, and how long to wait");

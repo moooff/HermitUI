@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.35** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.36** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) (about 38 MB,
 > Python, numpy, pandas and matplotlib included), developed in this folder apart from the
 > main app in [`../src/`](../src/). The smaller

@@ -1774,19 +1774,31 @@ def figures_scenario(browser, port, state, downloads=True):
 
 def elide_scenario(browser, port, state):
     print("— old long outputs are elided from requests, in blocks, while the history keeps them")
-    page = open_app(browser)
-    configure(page, port, 10)
-    page.select_option("#autonomySelect", "autopilot")
-    page.fill("#taskInput", "E2E-ELIDE: print a lot")
-    page.click("#sendBtn")
-    wait_until(page, "() => S.status === 'done'", 90, "elide task")
-    reqs = [r for r in state.requests if "E2E-ELIDE" in r["messages"][1]["content"]]
-    elided = [sum("elided to save context" in m["content"] for m in r["messages"]) for r in reqs]
-    check("nothing elided until 8 steps, then the oldest 4 at once", elided == [0, 0, 0, 0, 0, 0, 0, 0, 4, 4], elided)
+    def run(context_blind):
+        page = open_app(browser)
+        configure(page, port, 10)
+        if context_blind:
+            # v0.3.36 elides by the context's fill (elideToBudget); with no budget it falls back to
+            # the step-based blocks. The mock reports 100 prompt tokens for any request, so its
+            # history always "fits": this switch tests the fallback on its own.
+            page.evaluate("() => { LIMITS.elideAtPct = 0; }")
+        page.select_option("#autonomySelect", "autopilot")
+        n0 = len(state.requests)
+        page.fill("#taskInput", "E2E-ELIDE: print a lot")
+        page.click("#sendBtn")
+        wait_until(page, "() => S.status === 'done'", 90, "elide task")
+        reqs = [r for r in state.requests[n0:] if "E2E-ELIDE" in r["messages"][1]["content"]]
+        return page, reqs, [sum("elided to save context" in m["content"] for m in r["messages"]) for r in reqs]
+    page, reqs, elided = run(True)
+    check("no context budget: nothing elided until 8 steps, then the oldest 4 at once", elided == [0, 0, 0, 0, 0, 0, 0, 0, 4, 4], elided)
     check("requests 5–8 share their prefix (the server's prompt cache stays valid)",
           all(reqs[i]["messages"][3]["content"] == reqs[4]["messages"][3]["content"] for i in range(4, 8)))
     full = page.evaluate("() => S.messages[3].content")
     check("the history keeps the full output", "1" * 3000 in full and "elided" not in full)
+    page.context.close()
+    page, reqs, elided = run(False)
+    check("a known context with room: nothing elided, old outputs go out in full", elided == [0] * len(reqs) and len(reqs) == 10, elided)
+    check("…the oldest output is in the last request whole", "1" * 3000 in reqs[-1]["messages"][3]["content"])
     page.context.close()
 
 

@@ -683,7 +683,11 @@ def run_task(page, task, deadline_s, tool_mode="auto"):
             # again with reasoning off (DESIGN §5.9), kept for passed runs too.
             "llm_calls": ev(page, "() => S.timeline.filter(t => t.type === 'step' && t.kind === 'llm').map(t => ({ n: t.n, effort: t.llmEffort || '', status: t.status || '', retried: (t.notes || []).some(x => x.includes('sent again with reasoning off')), files: t.llmFiles || [] }))")}
     if status != "done":
-        return {**base, "passed": False, "detail": f"ended in state {status}" + ("" if time.time() - t0 < deadline_s else " (deadline)")}
+        # A paused run (step limit, loop guard) gets the same diagnostics as a failed check:
+        # without them a 40-step loop could only be guessed from the step log.
+        return {**base, "passed": False, "detail": f"ended in state {status}" + ("" if time.time() - t0 < deadline_s else " (deadline)"),
+                "code": agent_code(page)[-4000:],
+                "replies": ev(page, "() => S.timeline.filter(t => t.type === 'step').map(t => (t.content || '').slice(-1500))")}
     problems = []
     # Phase 3: a run meant to measure one protocol must have used only that one.
     want = {"native": "tools", "text": "text"}.get(tool_mode)

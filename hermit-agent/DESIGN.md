@@ -613,6 +613,14 @@ files changed: +report.md  ~data/clean.csv  -tmp/
 The full, untruncated output stays in the UI and in the session export. Tracebacks
 are trimmed to the last frames plus the exception line.
 
+*v0.3.36:* the marker says what to do instead (`TRUNCATION_ADVICE`): "you see only the
+start and the end. Printing the same again shows the same. Print less at a time (a
+summary, or one part per step), or read files with read_file". Without it, Qwen3.8-27B
+printed whole files of an 80-file document set with Python, saw only the first and the
+last of each batch and printed them again, 40 steps without a result (2026-11-02). The
+system prompt's "print short summaries" line hadn't stopped it.
+Summaries for compaction keep the short marker.
+
 ### 5.3 System prompt contract
 The system prompt describes:
 - the environment: Pyodide (CPython in WASM), `/workspace` as the working
@@ -693,6 +701,16 @@ The last 4–7 steps are sent in full: the boundary moves in blocks of 4 steps, 
 prompt cache (a boundary that moved every step would make it re-read the tail every
 time). The token estimate, the compaction trigger and the context gauge all measure
 the elided request; the summariser reads the full history.
+
+*v0.3.36: only as much as the context needs* (`elideToBudget`). With a known context
+(Settings → Context size, or the server's n_ctx), the history goes out unelided while
+its estimate stays under `LIMITS.elideAtPct` (60 %) of the context; above that, the
+oldest steps are elided in the same blocks of 4 until the request fits, and at most as
+many as before. 60 % leaves room below auto-compaction (85 %). With the context unknown,
+the step-based elision above is unchanged. Why: on a review across many documents the
+agent compares what it reads now with what it read 20 steps ago, of which only 600 + 600
+characters were left (ROADMAP "elision that depends on the context"). Not built yet:
+eliding code output before read results.
 
 *As built (Phase 2b): the periodic file listing.* Every 5th step (`LIMITS.fileListEvery`),
 "Files in /workspace now: …" (names and sizes, sorted, at most 50) follows that step's
@@ -1049,11 +1067,18 @@ answer, are the same idea; subagents stay unplanned, ROADMAP "Later".)
   Practical options are a local llama.cpp server (`--jinja`) or Ollama with a capable
   coder or instruct model, or any cloud OpenAI-compatible API. Model-specific advice
   goes in the README once real tasks have been tried. No claims before then.
-- **In-browser (wllama), later.** HermitUI's benchmark numbers ([`../benchmark/README.md`](../benchmark/README.md),
-  dev machine, July 2026) give the realistic floor. Qwen3 0.6B/1.7B are too weak for
-  multi-step work. 4B is marginal. gpt-oss-20b loads via Memory64 and decodes at
-  ≈ 43 t/s on GPU, which makes it the most plausible fully offline agent model.
-  CPU-only devices will likely not run a usable agent model.
+- **In-browser (wllama), later.** Speed comes from HermitUI's benchmark
+  ([`../benchmark/README.md`](../benchmark/README.md), dev machine, July 2026), whether a
+  small model can drive the agent from the Phase 4 floor runs on a native llama.cpp
+  server (2026-10-25, ROADMAP Phase 4; all runs in
+  [`../reports/hermit-agent-model-runs.md`](../reports/hermit-agent-model-runs.md)).
+  Qwen3.5-4B and Gemma-4-E4B (Q4_K_M) pass 21 of 27 short tasks with native tool calls;
+  no small Qwen finished the long app task (0 of 12). In the browser a 4B model decodes
+  at about 47 t/s on a GPU and about 3 t/s on a CPU, so CPU-only devices and phones
+  won't run a usable agent model. gpt-oss-20b loads via Memory64 and decodes at
+  ≈ 43 t/s on GPU, but it can't drive the agent (2026-10-30: 0/12 with native tool
+  calls, at most 5/12 in text mode; it calls its built-in harmony `python` tool
+  instead of writing a code block, and natively writes headers llama.cpp rejects).
 - The reasoning-effort control (Off/Low/Med/High) carries over unchanged.
 
 ---

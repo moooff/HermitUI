@@ -2458,7 +2458,7 @@ pre.live-output { border-color: var(--primary); }
     </div>
     <header class="app-header">
         <div class="brand">
-            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.35</span></h1>
+            <h1>HermitUI Agent <span class="version-badge" id="versionBadge">v0.3.36</span></h1>
             <span class="model-badge" id="modelBadge">🤖 model</span>
             <span class="local-badge" id="localBadge" hidden>🏠 local</span>
             <span class="protocol-badge" id="protocolBadge">🔧 auto</span>
@@ -3270,7 +3270,7 @@ def hermit_clear_workspace():
 // of this file by name.
 
 // ========== 1. Configuration ==========
-const APP_VERSION = "0.3.35";
+const APP_VERSION = "0.3.36";
 const PYODIDE_VERSION = "0.29.5";
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/";
 // Pure-Python libraries bundled into the HTML (Phase 3.5, DESIGN §8). Pyodide leaves
@@ -3316,7 +3316,7 @@ const BUNDLED_LIBRARIES = {
 const SESSION_FORMAT = "hermit-agent-session";
 // 2: native tool calls (assistant tool_calls, "tool" messages; Phase 3). 1 still reads.
 const SESSION_FORMAT_VERSION = 2;
-const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxScanChars: 65536, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200, planMaxItems: 12, planMaxStepChars: 200, planReminderStep: 2, repeatLimit: 3, errorRepeatWarn: 3, errorRepeatPause: 5, compactFocusChars: 300, thrashCompactions: 3, thrashSteps: 4, llmMaxFiles: 20, llmMaxChars: 200000, llmMaxAnswerChars: 16000, llmTokenFactor: 2 };
+const LIMITS = { maxFiles: 5000, maxWorkspaceBytes: 256 * 1024 * 1024, maxArchiveEntries: 20000, maxArchiveBytes: 512 * 1024 * 1024, maxPathLength: 512, riskMaxFiles: 20, riskMaxBytes: 10 * 1024 * 1024, bootTimeoutMs: 120000, stepLimitIncrement: 10, readMaxLines: 400, readMaxChars: 32000, readMaxTotalChars: 64000, readMaxLineChars: 2000, compactKeepSteps: 4, compactMinSteps: 2, checkpointBudgetBytes: 512 * 1024 * 1024, checkpointKeepMin: 3, elideKeepSteps: 4, elideMinChars: 2000, elideAtPct: 60, retryFirstMs: 2000, retryMaxMs: 30000, retryWindowMs: 120000, streamStallMs: 180000, packageTimeoutMs: 120000, uploadWarnBytes: 50 * 1024 * 1024, uploadWarnFileBytes: 25 * 1024 * 1024, uploadWarnFiles: 500, fileListEvery: 5, stepImagesMax: 8, searchMaxMatches: 100, searchMaxFiles: 200, searchMaxLineChars: 300, searchMaxScanChars: 65536, searchMaxFileBytes: 10 * 1024 * 1024, searchMaxMs: 3000, askMaxOptions: 6, askMaxOptionChars: 200, planMaxItems: 12, planMaxStepChars: 200, planReminderStep: 2, repeatLimit: 3, errorRepeatWarn: 3, errorRepeatPause: 5, compactFocusChars: 300, thrashCompactions: 3, thrashSteps: 4, llmMaxFiles: 20, llmMaxChars: 200000, llmMaxAnswerChars: 16000, llmTokenFactor: 2 };
 const THROTTLE_MS = 80;
 
 // ========== 2. Helpers copied from HermitUI ==========
@@ -3821,13 +3821,19 @@ function parseReplyText(t, fa, pl, finishReason, lc) {
 }
 
 // DESIGN §5.2: first 2 KB + last 4 KB of a step's output go to the model.
-function truncateOutput(s, head = 2048, tail = 4096) {
+// advice: what to do instead, inside the marker. A model that printed several files saw only
+// the first and the last and printed them all again, step after step, until the step limit
+// (2026-11-02, Qwen3.8-27B, 40 steps without a result); "omitted" alone didn't tell it why.
+function truncateOutput(s, head = 2048, tail = 4096, advice = "") {
     const str = String(s || "");
     if (str.length <= head + tail) return str;
     const omitted = str.length - head - tail;
     const kb = omitted >= 1024 ? Math.round(omitted / 1024) + " KB" : omitted + " characters";
-    return str.slice(0, head) + `\n[… ${kb} omitted …]\n` + str.slice(-tail);
+    return str.slice(0, head) + `\n[… ${kb} omitted${advice ? ": " + advice : ""} …]\n` + str.slice(-tail);
 }
+
+// What the model is told when its output was cut (DESIGN §5.2).
+const TRUNCATION_ADVICE = "you see only the start and the end. Printing the same again shows the same. Print less at a time (a summary, or one part per step), or read files with read_file";
 
 // before/after: { path: sha256 }. Sorted so the timeline and the model see a stable order.
 function diffListings(before, after) {
@@ -3877,7 +3883,7 @@ function buildObservation(o) {
     if (o.status === "rejected") lines.push("The user rejected this step." + (o.reason ? " Reason: " + o.reason : ""));
     if (typeof o.output === "string") {
         // File steps cap their own reads; truncating would cut a read in the middle.
-        const out = o.truncate === false ? o.output : truncateOutput(o.output);
+        const out = o.truncate === false ? o.output : truncateOutput(o.output, 2048, 4096, TRUNCATION_ADVICE);
         lines.push(out.trim() ? out.replace(/\s+$/, "") : "(no output)");
     }
     if (o.changes) lines.push("files changed: " + formatChanges(o.changes));
@@ -5723,11 +5729,14 @@ function diffHunks(ops, context = 3) {
 // export). The last keepSteps to 2·keepSteps−1 steps stay in full: the boundary moves in
 // blocks of keepSteps, so the prompt prefix stays the same for several requests and the
 // server can keep reusing its prompt cache, instead of re-reading the tail every step.
-function elideHistory(messages, keepSteps, minChars) {
+// maxElide: elide at most this many of the oldest steps (elideToBudget picks it); without it,
+// everything but the last keepSteps to 2 × keepSteps − 1 steps.
+function elideHistory(messages, keepSteps, minChars, maxElide) {
     const keep = Math.max(1, keepSteps || 1), min = Math.max(200, minChars || 0);
     const at = [];
     for (let i = 2; i < messages.length; i++) if (messages[i].role === "assistant") at.push(i);
-    const elideSteps = Math.floor(Math.max(0, at.length - keep) / keep) * keep;
+    const most = Math.floor(Math.max(0, at.length - keep) / keep) * keep;
+    const elideSteps = Number.isInteger(maxElide) && maxElide >= 0 ? Math.min(most, maxElide) : most;
     const out = messages.map(copyMessage);
     if (!elideSteps) return out;
     const end = at[elideSteps];   // messages[2..end) belong to the elided steps
@@ -5754,6 +5763,25 @@ function elideHistory(messages, keepSteps, minChars) {
         }
     }
     return out;
+}
+
+// DESIGN §5.4 (v0.3.36): elide only as much as the context needs. Below budget (tokens) the
+// whole history goes out unchanged; above it, the oldest steps are elided in blocks of
+// keepSteps until the request fits, so the prompt prefix stays the same for several requests.
+// budget 0 (context unknown): today's elision, everything but the last few steps. A document
+// review compares what it reads now with what it read 20 steps ago; with step-based elision
+// only the first and last 600 characters of that were left (2026-11-02).
+function elideToBudget(messages, keepSteps, minChars, budget, ratio) {
+    if (!(budget > 0)) return elideHistory(messages, keepSteps, minChars);
+    const keep = Math.max(1, keepSteps || 1);
+    let steps = 0;
+    for (let i = 2; i < messages.length; i++) if (messages[i].role === "assistant") steps++;
+    const most = Math.floor(Math.max(0, steps - keep) / keep) * keep;
+    for (let n = 0; n < most; n += keep) {
+        const out = elideHistory(messages, keepSteps, minChars, n);
+        if (estimateTokens(out, ratio) <= budget) return out;
+    }
+    return elideHistory(messages, keepSteps, minChars);
 }
 
 // ---------- Endpoint errors: retry and resume ----------
@@ -7715,7 +7743,8 @@ async function requestWithRetry(attempt, onRetry) {
 // What the model is sent: the history with older long outputs elided (DESIGN §5.4), in
 // code-as-action form unless the request uses native tool calls (DESIGN §5.6).
 function requestMessages(protocol) {
-    const msgs = elideHistory(S.messages, LIMITS.elideKeepSteps, LIMITS.elideMinChars);
+    const budget = contextLimit(SETTINGS.contextSize, REASONING.nCtx) * LIMITS.elideAtPct / 100;
+    const msgs = elideToBudget(S.messages, LIMITS.elideKeepSteps, LIMITS.elideMinChars, budget, RUN.tokenRatio);
     return (protocol || currentProtocol()) === "tools" ? msgs : toolHistoryAsText(msgs);
 }
 
@@ -10702,7 +10731,7 @@ if (typeof document !== "undefined") init();
 
 </script>
 <script type="text/plain" id="thirdPartyLicenses">
-Third-party licenses: hermit-agent-offline.html, HermitUI Agent v0.3.35
+Third-party licenses: hermit-agent-offline.html, HermitUI Agent v0.3.36
 
 HermitUI Agent is free software under the GNU Affero General Public License v3
 (https://github.com/moooff/HermitUI). This text holds the copyright notices and
