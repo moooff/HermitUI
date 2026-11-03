@@ -1452,8 +1452,12 @@ is the second.
   - **The claim we can make:** code in the worker can reach only the endpoint and the pinned
     Pyodide path, enforced by the browser and tested in Chromium and Firefox. Not "no
     network" for the page.
-  - **Not proved:** an https page (GitHub Pages) reaching a LAN endpoint through Chrome's
-    Local Network Access with the lock set. CSP checks the URL before LNA; check it by hand.
+  - **Checked by hand (2026-11-03, v0.3.37, Chrome):** the GitHub Pages build (https)
+    reaches a plain-http llama-server on a LAN address through Chrome's
+    Local Network Access with the lock set: after the first task started, the model's
+    replies still arrived, and agent code's `fetch("https://example.com")` was stopped by
+    the guard with the re-runs-off note. Firefox blocks the http endpoint from the https
+    page before any lock (mixed content, no LNA); use `file://` or an https server there.
 - **What the app itself sends (traffic audit, 2026-10-31, v0.3.30, Chromium 149,
   `tests/e2e_network.py`, run on every change).** One agent run from `file://` against
   the mock endpoint, through a logging proxy that sees every connection from the page,
