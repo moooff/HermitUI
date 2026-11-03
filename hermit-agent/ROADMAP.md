@@ -552,6 +552,20 @@ the step-based elision (the reason it exists); the threshold (50 % or tied to
 `autoCompactPct`); whether llama.cpp's cache reuse on the hybrid model still works when
 the elision boundary moves less often.
 
+## Open bug: context overflow after an import is not compacted (found 2026-11-03)
+
+Qwen3.8-27B, 70,144 context, v0.3.36, a long review task (115 files): at the step limit
+the session was exported, imported into a fresh tab and continued. Five steps later the
+server refused the request, "request (70440 tokens) exceeds the available context size
+(70144 tokens)". The overflow path (`isContextOverflowError` → `compactHistory("overflow")`)
+should have compacted and asked again; instead the error card came up, and both Retry
+presses sent the same oversized request. Suspects: `RUN.overflowRetried` staying true
+across Retry, the token ratio (`RUN.tokenRatio`) unset after the import so the estimate
+is too low, or `elideToBudget` plus a step whose observation alone fills the last 15 %.
+Repro: an exported session of that run (kept locally), import it, Continue, at 70,144
+context. Fix with a mock e2e case: the endpoint answers 400 with that message once the
+prompt passes a limit; the run must compact and go on, and Retry must too.
+
 ## Later — more tool ideas (not planned yet)
 
 From the comparison with pi, opencode and Claude Code (2026-10-24); none is scheduled.
