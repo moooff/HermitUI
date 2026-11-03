@@ -31,7 +31,7 @@
   </a>
 </div>
 
-> **Status: v0.3.36** (Phase 3.7, a plan you can see). One self-contained HTML file,
+> **Status: v0.3.37** (Phase 3.7, a plan you can see). One self-contained HTML file,
 > [`dist/hermit-agent-offline.html`](dist/hermit-agent-offline.html) (about 38 MB,
 > Python, numpy, pandas and matplotlib included), developed in this folder apart from the
 > main app in [`../src/`](../src/). The smaller
@@ -116,7 +116,7 @@ Each file carries the licenses of the third-party software inside it (Settings, 
 
 A network audit (`tests/e2e_network.py`) checks this on every change: one agent run through a logging proxy, with a marker in the task, a file and the API key. The results are in [DESIGN §10](DESIGN.md#10-security).
 
-Blocking the network for agent code is best effort: 17 known paths are tested and closed ([DESIGN §10](DESIGN.md#10-security)), but it is a denylist, not a guarantee. Don't put secrets in the workspace that you couldn't afford to leak. (The unbuilt `src/index.html` also loads its libraries and font from CDNs; `dist/` has them inlined.)
+Blocking the network for agent code is best effort: 17 known paths are tested and closed ([DESIGN §10](DESIGN.md#10-security)), but it is a denylist, not a guarantee. When the first task starts, and while *Allow network re-runs* is off, the tab also locks its connections: the browser then lets the page and the Python worker reach only your endpoint and the pinned Pyodide path (tested in Chromium and Firefox). Agent code can still reach the endpoint itself, without the API key. Changing the endpoint to another server after that means exporting the session and reloading the tab. Don't put secrets in the workspace that you couldn't afford to leak. (The unbuilt `src/index.html` also loads its libraries and font from CDNs; `dist/` has them inlined.)
 
 ## Relationship to HermitUI
 

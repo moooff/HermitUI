@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<!-- Same shape as hermit-agent's built CSP (plus the CDN in script-src for importScripts of pyodide.js). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; connect-src * blob: data:; worker-src blob:; base-uri 'none'; form-action 'none'">
+<title>CSP spike</title>
+</head><body>
+<pre id="out">running</pre>
+<script>
+// Shared probe code, run in the page and in both workers.
+const PROBE_SRC = `
+async function probeAll(t, ctx) {
+    const r = {};
+    const tag = (kind, name) => "via=" + ctx + "-" + kind + "-" + name;
+    for (const [name, spec] of Object.entries(t.http || {})) {
+        const url = spec.url + "/" + "?" + tag("fetch", name);
+        const init = spec.las ? { targetAddressSpace: spec.las } : {};
+        r["fetch " + name] = await fetch(url, init).then(x => "ok " + x.status, e => "err " + e.name + ": " + e.message);
+        r["xhr " + name] = await new Promise(res => {
+            try {
+                const x = new XMLHttpRequest();
+                x.open("GET", spec.url + "/?" + tag("xhr", name));
+                x.onload = () => res("ok " + x.status);
+                x.onerror = () => res("error");
+                x.send();
+            } catch (e) { res("throw " + e.name + ": " + e.message); }
+        });
+    }
+    for (const [name, url] of Object.entries(t.ws || {})) {
+        r["ws " + name] = await new Promise(res => {
+            try {
+                const s = new WebSocket(url + "/?" + tag("ws", name));
+                s.onopen = () => res("open");
+                s.onerror = () => res("error");
+                s.onclose = e => res("close " + e.code);
+                setTimeout(() => res("timeout"), 4000);
+            } catch (e) { res("throw " + e.name + ": " + e.message); }
+        });
+    }
+    return r;
+}`;
+</script>
+<script>
+// Page copy of the probe (identical text, defined statically).
+async function probeAll(t, ctx) {
+    const r = {};
+    const tag = (kind, name) => "via=" + ctx + "-" + kind + "-" + name;
+    for (const [name, spec] of Object.entries(t.http || {})) {
+        const url = spec.url + "/" + "?" + tag("fetch", name);
+        const init = spec.las ? { targetAddressSpace: spec.las } : {};
+        r["fetch " + name] = await fetch(url, init).then(x => "ok " + x.status, e => "err " + e.name + ": " + e.message);
+        r["xhr " + name] = await new Promise(res => {
+            try {
+                const x = new XMLHttpRequest();
+                x.open("GET", spec.url + "/?" + tag("xhr", name));
+                x.onload = () => res("ok " + x.status);
+                x.onerror = () => res("error");
+                x.send();
+            } catch (e) { res("throw " + e.name + ": " + e.message); }
+        });
+    }
+    for (const [name, url] of Object.entries(t.ws || {})) {
+        r["ws " + name] = await new Promise(res => {
+            try {
+                const s = new WebSocket(url + "/?" + tag("ws", name));
+                s.onopen = () => res("open");
+                s.onerror = () => res("error");
+                s.onclose = e => res("close " + e.code);
+                setTimeout(() => res("timeout"), 4000);
+            } catch (e) { res("throw " + e.name + ": " + e.message); }
+        });
+    }
+    return r;
+}
+
+const WORKER_SRC = PROBE_SRC + `
+const violations = [];
+self.addEventListener("securitypolicyviolation", e => violations.push({ blockedURI: e.blockedURI, directive: e.effectiveDirective, policy: e.originalPolicy.slice(0, 80) }));
+self.onmessage = async (ev) => {
+    const m = ev.data;
+    try {
+        if (m.cmd === "probe") {
+            const results = await probeAll(m.targets, m.ctx);
+            await new Promise(r => setTimeout(r, 300));
+            postMessage({ id: m.id, ok: true, results, violations: violations.splice(0) });
+        } else if (m.cmd === "pyodide") {
+            const t0 = Date.now();
+            importScripts(m.cdn + "pyodide.js");
+            const py = await loadPyodide({ indexURL: m.cdn });
+            await py.loadPackage(["numpy", "pandas"]);
+            const out = py.runPython("import numpy as np, pandas as pd; str(np.arange(5).sum()) + ' ' + pd.__version__");
+            postMessage({ id: m.id, ok: true, results: { pyodide: out, ms: Date.now() - t0 }, violations: violations.splice(0) });
+        }
+    } catch (e) {
+        postMessage({ id: m.id, ok: false, error: String(e && e.message || e).slice(0, 300), violations: violations.splice(0) });
+    }
+};`;
+
+function makeWorker() {
+    const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" }));
+    const w = new Worker(url);
+    URL.revokeObjectURL(url);
+    let n = 0; const pending = new Map();
+    w.onmessage = e => { const p = pending.get(e.data.id); if (p) { pending.delete(e.data.id); p(e.data); } };
+    w.onerror = e => { for (const p of pending.values()) p({ ok: false, error: "worker error " + e.message }); pending.clear(); };
+    return { call: (msg, ms = 120000) => new Promise(res => { const id = ++n; pending.set(id, res); w.postMessage({ ...msg, id }); setTimeout(() => { if (pending.delete(id)) res({ ok: false, error: "timeout" }); }, ms); }) };
+}
+
+const pageViolations = [];
+document.addEventListener("securitypolicyviolation", e => pageViolations.push({ blockedURI: e.blockedURI, directive: e.effectiveDirective, policy: e.originalPolicy.slice(0, 80) }));
+
+window.runSpike = async (P) => {
+    const out = {};
+    const A = makeWorker();                                // created before the insert
+    out.pre_page = await probeAll(P.targets, "pre_page");  // baseline: everything open
+    out.pre_page_violations = pageViolations.splice(0);
+    // The stricter second policy, inserted by script.
+    const meta = document.createElement("meta");
+    meta.httpEquiv = "Content-Security-Policy";
+    meta.content = "connect-src " + P.allow.join(" ");
+    document.head.appendChild(meta);
+    out.inserted = meta.content;
+    const B = makeWorker();                                // created after the insert
+    out.page = await probeAll(P.targets, "page");
+    await new Promise(r => setTimeout(r, 300));
+    out.page_violations = pageViolations.splice(0);
+    out.workerA = await A.call({ cmd: "probe", targets: P.targets, ctx: "workerA" });
+    out.workerB = await B.call({ cmd: "probe", targets: P.targets, ctx: "workerB" });
+    if (P.pyodide) out.pyodideB = await B.call({ cmd: "pyodide", cdn: P.cdn }, 240000);
+    document.getElementById("out").textContent = JSON.stringify(out, null, 1);
+    return out;
+};
+</script>
+</body></html>

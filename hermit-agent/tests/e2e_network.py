@@ -46,6 +46,30 @@ CSV = f"name,amount,note\nalice,120.5,{CANARY}-filedata\nbob,80,x\ncarol,99.5,y\
 CDN_HOST = "cdn.jsdelivr.net"
 FAILS = []
 
+# The connection lock (DESIGN §10): a server on another loopback port that nothing may
+# reach once the first task has started, not the page, a new worker or agent code.
+FORBIDDEN_HITS = []
+
+
+class Forbidden(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _hit(self):
+        FORBIDDEN_HITS.append(self.command + " " + self.path)
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    do_GET = do_POST = do_OPTIONS = _hit
+
+
+FORBIDDEN = ThreadingHTTPServer(("127.0.0.1", 0), Forbidden)
+FORBIDDEN.daemon_threads = True
+threading.Thread(target=FORBIDDEN.serve_forever, daemon=True).start()
+FORBIDDEN_URL = f"http://127.0.0.1:{FORBIDDEN.server_address[1]}"
+
 
 def check(name, cond, detail=""):
     print(("  PASS  " if cond else "  FAIL  ") + name + ("" if cond or not detail else f"\n        {detail}"))
@@ -88,6 +112,16 @@ import sympy
 print(sympy.symbols("x"))
 """),
 ] if OFFLINE else []) + [
+    # FontFace isn't on the worker guard's list: only the CSP (font-src) stops it, and the
+    # step's notes must say so (the worker's securitypolicyviolation listener).
+    py(f"""
+import js
+try:
+    await js.FontFace.new("x", "url({FORBIDDEN_URL}/font-{CANARY})").load()
+    print("font loaded")
+except Exception as e:
+    print("font blocked:", type(e).__name__)
+"""),
     {"content": "Done: summary, chart and table."},
 ]}
 
@@ -175,6 +209,10 @@ def main():
                                            "--proxy-bypass-list=<-loopback>"])
         ctx = browser.new_context()
         ctx.on("request", lambda r: reqs.append({"method": r.method, "url": r.url, "headers": r.headers, "post": r.post_data or ""}))
+        # Playwright reports a request the CSP refused too; it never left the browser (the
+        # forbidden server's log is the proof), so the checks below leave it out.
+        csp_blocked = []
+        ctx.on("requestfailed", lambda r: csp_blocked.append(r.url) if r.failure in ("csp", "net::ERR_BLOCKED_BY_CSP") else None)
         page = ctx.new_page()
         print("— opening the app (Pyodide boot)")
         page.goto(APP_URL)
@@ -194,6 +232,22 @@ def main():
         page.click("#sendBtn")
         wait_for(page, "() => S.status", "done", 300, "the task")
         st = page.evaluate("() => S.timeline.filter(t => t.type === 'step' && t.kind !== 'final').map(t => ({ status: t.status, notes: (t.notes || []).join(' | '), output: String(t.output || '').slice(0, 600) }))")
+        lock = page.evaluate("() => ({ policy: CONN.policy, origin: CONN.origin, workerLocked: PY.workerLocked })")
+        print("— probing the connection lock from the page and from a new worker")
+        probe = page.evaluate("""async (url) => {
+            const out = {};
+            try { await fetch(url + "/page-fetch"); out.page = "reached"; } catch (e) { out.page = "blocked"; }
+            const src = `fetch(${JSON.stringify(url)} + "/worker-fetch").then(() => postMessage("reached"), () => postMessage("blocked"));`;
+            const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+            out.worker = await new Promise((r) => { w.onmessage = (e) => r(e.data); setTimeout(() => r("timeout"), 10000); });
+            w.terminate();
+            return out;
+        }""", FORBIDDEN_URL)
+        page.click("#settingsBtn")
+        page.fill("#settingUrl", FORBIDDEN_URL + "/v1")
+        page.click("#settingSave")
+        time.sleep(0.5)
+        moved = page.evaluate("() => SETTINGS.apiUrl")
         time.sleep(1)
         browser.close()
 
@@ -209,13 +263,27 @@ def main():
             check("scipy, not in the medium build, fails cleanly", len(st) > 3 and st[3]["status"] == "error" and "isn't part of this offline build" in st[3]["output"], st[3:4])
         check("sympy, not in the file, fails cleanly", len(st) > 4 and st[4]["status"] == "error" and "isn't part of this offline build" in st[4]["output"], st[4:5])
 
+    mock_origin = f"http://{mock_host}"
+    check("the first task locked the connections to the endpoint",
+          lock["origin"] == mock_origin and lock["policy"].startswith(f"connect-src {mock_origin} ")
+          and (CDN_HOST in lock["policy"]) != OFFLINE and "/pyodide/v" in lock["policy"] or OFFLINE and lock["origin"] == mock_origin, lock)
+    check("the agent's worker started after the lock", lock["workerLocked"] is True, lock)
+    check("locked: the page can't reach another host", probe["page"] == "blocked", probe)
+    check("locked: a worker started after the lock can't either", probe["worker"] == "blocked", probe)
+    font = st[-1]
+    check("agent code: FontFace to another host is blocked by the browser, and the step says so",
+          "font blocked" in font["output"] and "blocked by the browser (font-src) " + FORBIDDEN_URL in font["notes"], font)
+    check("the forbidden server got no request at all", not FORBIDDEN_HITS, FORBIDDEN_HITS)
+    check("Settings refuses an endpoint on another origin after the lock", moved == mock_origin + "/v1", moved)
+
     third = sorted({p[1].rsplit(":", 1)[0] for p in PROXY_LOG if p[0] == "CONNECT"})
     plain = sorted({urlsplit(p[1]).netloc for p in PROXY_LOG if p[0] != "CONNECT"})
     want = [] if OFFLINE else [CDN_HOST]
     check(f"proxy: third-party hosts are {want or 'none'}", third == want, third)
     check("proxy: plain HTTP only to the mock", plain == [mock_host], plain)
 
-    web = [r for r in reqs if urlsplit(r["url"]).scheme in ("http", "https")]
+    check("Playwright saw the FontFace request refused by the CSP", any("/font-" in u for u in csp_blocked), csp_blocked)
+    web = [r for r in reqs if urlsplit(r["url"]).scheme in ("http", "https") and r["url"] not in csp_blocked]
     cdn = [r for r in web if urlsplit(r["url"]).netloc != mock_host]
     check("playwright: every third-party request is a GET of a pinned Pyodide wheel, no query",
           (OFFLINE or cdn) and all(r["method"] == "GET" and urlsplit(r["url"]).netloc == CDN_HOST

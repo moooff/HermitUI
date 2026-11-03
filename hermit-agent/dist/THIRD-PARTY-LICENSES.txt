@@ -1,4 +1,4 @@
-Third-party licenses: every build in dist/ and the release (each built file carries its own subset), HermitUI Agent v0.3.36
+Third-party licenses: every build in dist/ and the release (each built file carries its own subset), HermitUI Agent v0.3.37
 
 HermitUI Agent is free software under the GNU Affero General Public License v3
 (https://github.com/moooff/HermitUI). This text holds the copyright notices and

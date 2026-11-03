@@ -606,6 +606,29 @@ Three fixes from a review of the agent against a misbehaving/prompt-injected mod
   "no timer" in `workerCall`). They are now clamped to the same bounds the Settings form
   uses.
 
+## Prompt injection hardening (v0.3.37, 2026-11-03), decided while building it
+
+- ⭐ **The connection lock is set when the first task starts**, not at page load or at
+  Settings save (DESIGN §10). A CSP can't be loosened and settings don't survive a reload:
+  locked at load, the tab would be stuck on the default endpoint; locked at save, a typo
+  would need a reload. The cost is one worker restart at the first task, which overlaps
+  the model's first request.
+- ⭐ **Owner's decisions (2026-11-03):** no lock while Allow network re-runs is on
+  (turning it on afterwards means export and reload), and worker code may still reach
+  the endpoint, because the worker never has the API key.
+- **An IPv6 endpoint isn't locked:** CSP host sources have no syntax for one. The debug
+  console says so; the JS guard still applies.
+- **`<output>` tags, not a random nonce:** the escaping (`quoteOutput`) is what makes the
+  tags unforgeable, so a nonce would add nothing but a format that changes with each
+  session (and breaks prompt-cache reuse across an import).
+- **Link confirmation, not link stripping:** model answers cite sources, and a stripped
+  link would be worse to use. The context menu's "open in new tab" bypasses the dialog.
+- **Not done, for review: taint escalation.** After a step reads a user file not read
+  before, the next step that writes or deletes would ask, even when it touches only the
+  agent's own files. That would catch an injected model that quietly falsifies a
+  deliverable, at the cost of a hold on most tasks that read input and write output. The
+  red-team results (`tests/e2e_injection.py`) should decide whether it is needed.
+
 ## Not covered by automated tests
 
 - Drag-drop of a *folder* (entry-based): the folder input and a synthetic file drop are

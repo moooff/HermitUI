@@ -48,6 +48,15 @@ function hermitWorkerMain() {
         return new TypeError("Network access is blocked in HermitUI Agent (" + kind + ").");
     }
 
+    // DESIGN §10 (v0.3.37): a request the page's CSP refused got past the guard above (or
+    // used an API the guard doesn't know, such as FontFace). Recorded like an attempt, origin
+    // only. Display only: agent code can dispatch a fake event, so nothing decides on it.
+    self.addEventListener("securitypolicyviolation", (e) => {
+        let where = String(e.blockedURI || "");
+        try { where = new URL(where).origin; } catch (err) { where = where.slice(0, 40); }
+        if (netAttempts.length < 50) netAttempts.push("blocked by the browser (" + String(e.effectiveDirective || "csp").slice(0, 30) + ") " + where);
+    });
+
     function replaceEverywhere(name, value) {
         for (let o = self; o; o = Object.getPrototypeOf(o)) {
             if (Object.prototype.hasOwnProperty.call(o, name)) {
@@ -563,6 +572,7 @@ def hermit_clear_workspace():
             errorText = trimTraceback(e && e.message || e);
         }
         netMode = "closed";
+        await new Promise((r) => setTimeout(r, 0));   // queued CSP violation events (above)
         // Figures still open are saved too (a failed step's included), then closed.
         let figures = [];
         try {

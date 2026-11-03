@@ -42,6 +42,7 @@ const CONSTS = ["FILE_EXTENSIONS", "APP_VERSION", "SESSION_FORMAT", "SESSION_FOR
 const FUNCS = [
     "escapeHtml", "createThrottle", "parseThinkSegments", "apiEndpoint", "normalizeApiUrl", "apiRoot",
     "detectCloudProvider", "isLocalEndpoint", "describeRemoteEndpoint", "chatErrorHint", "isBlockedMixedContent", "endpointFetch",
+    "connectionLockPolicy", "lockedEndpointHint", "quoteOutput", "agentsFileNote", "externalLinkInfo",
     "parseReasoningTemplateSupport", "buildReasoningParams", "looksLikeReasoningRejection",
     "buildSystemPrompt", "formatBytes", "buildTaskMessage", "splitReply", "parseReply", "truncateOutput",
     "diffListings", "formatChanges", "classifyEffect", "buildObservation", "appendToLastUserMessage",
